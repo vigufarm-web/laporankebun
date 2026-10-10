@@ -682,11 +682,14 @@ async function apiRequest(req, res, url) {
   });
 }
 
+// Vercel menjalankan server.js sebagai satu fungsi (export default di bawah); isi public/ dilayani CDN Vercel.
+// Halaman utama dibaca dengan alamat tetap supaya ikut terbawa dalam paket fungsi.
+const INDEX_HTML = VERCEL ? fs.readFileSync(new URL('./public/index.html', import.meta.url)) : null;
+
 export default async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
-  // Vercel: semua /api/* diarahkan ke satu fungsi; jalur asli dibawa lewat ?__p=
-  if (url.searchParams.has('__p')) { url.pathname = '/api/' + url.searchParams.get('__p'); url.searchParams.delete('__p'); }
   try {
+    if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
     if (BELUM_ONLINE && url.pathname.startsWith('/api/')) return send(res, 503, { error: 'Database online belum disambungkan. Di Vercel: buka proyek → Storage → Create Database → Turso → Connect ke proyek ini, lalu Deployments → Redeploy.' });
     if (url.pathname.startsWith('/api/')) {
       await apiRequest(req, res, url);

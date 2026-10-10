@@ -81,7 +81,7 @@ Variabel lingkungan (opsional): `PORT` (bawaan 3000), `DATA_DIR` (folder databas
 
 ```
 server.js            server HTTP + API + sinkron Excel (node:http, node:sqlite)
-api/index.js         pintu masuk versi online (Vercel) · vercel.json = pengaturannya
+vercel.json          pengaturan versi online (Vercel menjalankan server.js sebagai satu fungsi)
 lib/turso.js         sambungan ke database online Turso (lewat HTTP, tanpa paket tambahan)
 lib/excel.js         baca/tulis file Excel input
 lib/exceljs.min.cjs  pustaka ExcelJS (file tunggal)
