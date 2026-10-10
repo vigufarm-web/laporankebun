@@ -19,12 +19,12 @@ fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
 const { TABLES, SEED, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
-const { turso } = await import('./lib/turso.js');
+const { turso, onlineConfig } = await import('./lib/turso.js');
 
 // ---------- database online (Turso) — dari variabel lingkungan (Vercel) atau file data/online.json {url, token}
 const ONLINE = (() => {
-  const url = process.env.TURSO_DATABASE_URL, token = process.env.TURSO_AUTH_TOKEN;
-  if (url && token) return { url, token };
+  const env = onlineConfig(process.env);
+  if (env) return env;
   try { const j = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'online.json'), 'utf8')); return j.url && j.token ? j : null; } catch { return null; }
 })();
 const BELUM_ONLINE = VERCEL && !ONLINE; // di Vercel tapi database Turso belum disambungkan → tampilkan petunjuk
