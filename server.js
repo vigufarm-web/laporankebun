@@ -7,47 +7,126 @@ import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const VERCEL = !!process.env.VERCEL; // berjalan online di Vercel: tidak ada folder tetap, hanya /tmp
 const PORT = Number(process.env.PORT) || 3000;
-const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : VERCEL ? path.join(os.tmpdir(), 'kebun') : path.join(ROOT, 'data');
 const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const DB_FILE = path.join(DATA_DIR, 'kebun.db');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-const { TABLES, SEED, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS } = await import(pathToFileURL(path.join(ROOT, 'public/js/schema.js')).href);
-const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import(pathToFileURL(path.join(ROOT, 'lib/excel.js')).href);
+const { TABLES, SEED, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS } = await import('./public/js/schema.js');
+const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
+const { turso } = await import('./lib/turso.js');
 
-const db = new DatabaseSync(DB_FILE);
-db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA journal_size_limit=1048576;');
-// rapikan file database: buang ruang kosong bekas data terhapus & kecilkan log transaksi
-{
-  const free = db.prepare('PRAGMA freelist_count').get().freelist_count * db.prepare('PRAGMA page_size').get().page_size;
-  if (free > 256 * 1024) db.exec('VACUUM');
-  db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-  setInterval(() => { try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} }, 10 * 60e3).unref();
+// ---------- database online (Turso) — dari variabel lingkungan (Vercel) atau file data/online.json {url, token}
+const ONLINE = (() => {
+  const url = process.env.TURSO_DATABASE_URL, token = process.env.TURSO_AUTH_TOKEN;
+  if (url && token) return { url, token };
+  try { const j = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'online.json'), 'utf8')); return j.url && j.token ? j : null; } catch { return null; }
+})();
+const BELUM_ONLINE = VERCEL && !ONLINE; // di Vercel tapi database Turso belum disambungkan → tampilkan petunjuk
+const cloud = ONLINE ? turso(ONLINE.url, ONLINE.token) : null;
+
+// Mode online: data dibaca dari salinan di memori (cepat), setiap perubahan dikirim ke database online sebagai satu transaksi.
+// Nomor versi (_ver) mencegah dua tempat menimpa perubahan satu sama lain.
+let raw = null, ver = 0, txMark = -1;
+const pend = [];
+const WRITE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP)\b/i;
+const db = {
+  prepare(sql) {
+    const st = raw.prepare(sql);
+    if (!cloud || !WRITE.test(sql)) return st;
+    return { run: (...a) => { const r = st.run(...a); pend.push({ sql, args: a }); return r; }, get: (...a) => st.get(...a), all: (...a) => st.all(...a) };
+  },
+  exec(sql) {
+    raw.exec(sql);
+    if (!cloud) return;
+    const s = sql.trim().toUpperCase();
+    if (s === 'BEGIN') txMark = pend.length;
+    else if (s === 'COMMIT') txMark = -1;
+    else if (s === 'ROLLBACK') { if (txMark >= 0) pend.length = txMark; txMark = -1; }
+    else if (WRITE.test(sql)) pend.push({ sql });
+  },
+};
+const q = (s) => `"${s.replace(/"/g, '')}"`;
+async function loadCloud() {
+  const [master] = await cloud.query(["SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'libsql_%' AND name NOT LIKE '\\_litestream%' ESCAPE '\\'"]);
+  const tables = master.filter((t) => !t.name.startsWith('sqlite_'));
+  const hasSeq = master.some((t) => t.name === 'sqlite_sequence'), hasVer = tables.some((t) => t.name === '_ver');
+  const res = await cloud.query([...tables.map((t) => `SELECT * FROM ${q(t.name)}`), ...(hasSeq ? ['SELECT name, seq FROM sqlite_sequence'] : []), ...(hasVer ? ['SELECT MAX(v) v FROM _ver'] : [])]);
+  const mem = new DatabaseSync(':memory:');
+  mem.exec('BEGIN');
+  tables.forEach((t, i) => {
+    mem.exec(t.sql);
+    const rows = res[i]; if (!rows.length) return;
+    const cols = Object.keys(rows[0]);
+    const st = mem.prepare(`INSERT INTO ${q(t.name)} (${cols.map(q).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`);
+    for (const r of rows) st.run(...cols.map((c) => r[c]));
+  });
+  if (hasSeq) { mem.exec('DELETE FROM sqlite_sequence'); const st = mem.prepare('INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)'); for (const s of res[tables.length]) st.run(s.name, s.seq); }
+  mem.exec('COMMIT');
+  const old = raw; raw = mem; old?.close();
+  ver = hasVer ? Number(res[res.length - 1][0]?.v || 0) : 0;
+}
+// kirim perubahan yang tertunda ke database online (dipecah bila sangat besar, mis. pulihkan database)
+async function flush() {
+  if (!cloud || !pend.length) return;
+  const list = pend.splice(0), nv = ver + 1, chunks = [[]];
+  let size = 0;
+  for (const s of list) { const z = JSON.stringify(s.args || '').length + s.sql.length; if (size + z > 3e6 && chunks.at(-1).length) { chunks.push([]); size = 0; } chunks.at(-1).push(s); size += z; }
+  try {
+    for (const [i, c] of chunks.entries()) await cloud.batch([...(i === 0 ? [{ sql: 'INSERT INTO _ver (v) VALUES (?)', args: [nv] }] : []), ...c, ...(i === chunks.length - 1 ? [{ sql: 'DELETE FROM _ver WHERE v < ?', args: [nv - 20] }] : [])]);
+    ver = nv;
+  } catch (e) { await loadCloud(); throw e; } // salinan di memori disamakan lagi dengan isi online
+}
+// ada perubahan dari tempat lain (perangkat/instance lain)? → muat ulang salinan
+async function syncCloud() {
+  if (!cloud) return false;
+  const [[r]] = await cloud.query(['SELECT MAX(v) v FROM _ver']);
+  if (Number(r.v || 0) === ver) return false;
+  await loadCloud(); return true;
+}
+// satu permintaan pada satu waktu dalam mode online (urutan perubahan & nomor versi tetap rapi)
+let lock = Promise.resolve();
+const serial = (fn) => { const p = lock.then(fn, fn); lock = p.catch(() => {}); return p; };
+
+if (cloud) { await cloud.batch(['CREATE TABLE IF NOT EXISTS _ver (v INTEGER PRIMARY KEY)']); await loadCloud(); }
+else if (BELUM_ONLINE) raw = new DatabaseSync(':memory:');
+else {
+  raw = new DatabaseSync(DB_FILE);
+  raw.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA journal_size_limit=1048576;');
+  // rapikan file database: buang ruang kosong bekas data terhapus & kecilkan log transaksi
+  const free = raw.prepare('PRAGMA freelist_count').get().freelist_count * raw.prepare('PRAGMA page_size').get().page_size;
+  if (free > 256 * 1024) raw.exec('VACUUM');
+  raw.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  setInterval(() => { try { raw.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} }, 10 * 60e3).unref();
 }
 
 // ---------- migrasi otomatis: buat tabel & tambah kolom baru sesuai schema.js
 const colType = (f) => (f.t === 'int' ? 'INTEGER' : f.t === 'num' || f.t === 'money' ? 'REAL' : 'TEXT');
-const q = (s) => `"${s.replace(/"/g, '')}"`;
-db.exec(`CREATE TABLE IF NOT EXISTS _log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, aksi TEXT, tabel TEXT, row_id INTEGER, data TEXT)`);
-db.exec(`CREATE TABLE IF NOT EXISTS _settings (k TEXT PRIMARY KEY, v TEXT)`);
-db.exec(`CREATE TABLE IF NOT EXISTS _users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, nama TEXT, peran TEXT, salt TEXT, hash TEXT, aktif INTEGER DEFAULT 1, created_at TEXT, last_login TEXT)`);
-db.exec(`CREATE TABLE IF NOT EXISTS _sessions (token TEXT PRIMARY KEY, user_id INTEGER, expires TEXT)`);
-if (!db.prepare('PRAGMA table_info(_log)').all().some((c) => c.name === 'oleh')) db.exec('ALTER TABLE _log ADD COLUMN oleh TEXT');
-for (const [name, t] of Object.entries(TABLES)) {
-  db.exec(`CREATE TABLE IF NOT EXISTS ${q(name)} (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, updated_at TEXT)`);
-  const have = new Set(db.prepare(`PRAGMA table_info(${q(name)})`).all().map((c) => c.name));
-  const baru = have.size <= 3; // tabel baru dibuat (hanya id, created_at, updated_at) — tidak perlu daftar kolom
-  for (const f of t.f) {
-    if (f.t !== 'calc' && !have.has(f.k)) {
-      db.exec(`ALTER TABLE ${q(name)} ADD COLUMN ${q(f.k)} ${colType(f)}`);
-      if (!baru) console.log(`  + kolom baru ${name}.${f.k}`);
+function migrate() {
+  const ada = (n) => !!raw.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(n);
+  if (!ada('_log')) db.exec(`CREATE TABLE IF NOT EXISTS _log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, aksi TEXT, tabel TEXT, row_id INTEGER, data TEXT)`);
+  if (!ada('_settings')) db.exec(`CREATE TABLE IF NOT EXISTS _settings (k TEXT PRIMARY KEY, v TEXT)`);
+  if (!ada('_users')) db.exec(`CREATE TABLE IF NOT EXISTS _users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, nama TEXT, peran TEXT, salt TEXT, hash TEXT, aktif INTEGER DEFAULT 1, created_at TEXT, last_login TEXT)`);
+  if (!ada('_sessions')) db.exec(`CREATE TABLE IF NOT EXISTS _sessions (token TEXT PRIMARY KEY, user_id INTEGER, expires TEXT)`);
+  if (!db.prepare('PRAGMA table_info(_log)').all().some((c) => c.name === 'oleh')) db.exec('ALTER TABLE _log ADD COLUMN oleh TEXT');
+  for (const [name, t] of Object.entries(TABLES)) {
+    const have = new Set(db.prepare(`PRAGMA table_info(${q(name)})`).all().map((c) => c.name));
+    if (!have.size) db.exec(`CREATE TABLE IF NOT EXISTS ${q(name)} (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, updated_at TEXT)`);
+    const baru = have.size === 0; // tabel baru dibuat — tidak perlu daftar kolom
+    for (const f of t.f) {
+      if (f.t !== 'calc' && !have.has(f.k)) {
+        db.exec(`ALTER TABLE ${q(name)} ADD COLUMN ${q(f.k)} ${colType(f)}`);
+        if (!baru) console.log(`  + kolom baru ${name}.${f.k}`);
+      }
     }
   }
 }
+migrate();
 
 // ---------- backup otomatis (simpan 10 terakhir; saat start hanya bila ada perubahan sejak backup terakhir)
 // backup disimpan terkompres (.db.gz, ±5× lebih kecil). Memulihkan: ekstrak dengan 7-Zip/WinRAR → ganti data/kebun.db
@@ -56,6 +135,7 @@ const backupFiles = () => fs.readdirSync(BACKUP_DIR).filter((f) => /\.db(\.gz)?$
   .map((f) => ({ f, t: fs.statSync(path.join(BACKUP_DIR, f)).mtimeMs })).sort((a, b) => a.t - b.t);
 function pruneBackups() { const files = backupFiles(); while (files.length > BACKUP_KEEP) fs.unlinkSync(path.join(BACKUP_DIR, files.shift().f)); }
 function backup(tag = 'auto', { gzip = true } = {}) {
+  if (VERCEL) return ''; // online: tidak ada folder tetap; cadangan ada di database online
   const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const file = path.join(BACKUP_DIR, `kebun_${tag}_${ts}.db`);
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
@@ -64,7 +144,7 @@ function backup(tag = 'auto', { gzip = true } = {}) {
   pruneBackups();
   return out;
 }
-try {
+if (!VERCEL) try {
   // backup lama yang belum dikompres → dikompres (isi sama persis, ukuran ±5× lebih kecil)
   for (const { f } of backupFiles().filter((x) => x.f.endsWith('.db'))) {
     const src = path.join(BACKUP_DIR, f), st = fs.statSync(src);
@@ -170,13 +250,43 @@ function tx(fn) {
 }
 
 // data awal untuk tabel yang masih kosong
-for (const [name, rows] of Object.entries(SEED)) {
-  if (db.prepare(`SELECT COUNT(*) c FROM ${q(name)}`).get().c === 0) for (const r of rows) insertRow(name, r, false);
+function seed() {
+  for (const [name, rows] of Object.entries(SEED)) {
+    if (db.prepare(`SELECT COUNT(*) c FROM ${q(name)}`).get().c === 0) for (const r of rows) insertRow(name, r, false);
+  }
+  // urutan aktivitas progres tanam dipisah per komoditas (data lama = Pisang); tambahkan urutan Padi bila belum ada
+  if (db.prepare(`SELECT 1 FROM lahan_aktivitas WHERE untuk IS NULL OR untuk=''`).get()) db.exec(`UPDATE lahan_aktivitas SET untuk='Pisang' WHERE untuk IS NULL OR untuk=''`);
+  if (!db.prepare(`SELECT 1 FROM lahan_aktivitas WHERE untuk='Padi'`).get())
+    for (const r of SEED.lahan_aktivitas.filter((x) => x.untuk === 'Padi')) insertRow('lahan_aktivitas', r, false);
 }
-// urutan aktivitas progres tanam dipisah per komoditas (data lama = Pisang); tambahkan urutan Padi bila belum ada
-db.exec(`UPDATE lahan_aktivitas SET untuk='Pisang' WHERE untuk IS NULL OR untuk=''`);
-if (!db.prepare(`SELECT 1 FROM lahan_aktivitas WHERE untuk='Padi'`).get())
-  for (const r of SEED.lahan_aktivitas.filter((x) => x.untuk === 'Padi')) insertRow('lahan_aktivitas', r, false);
+seed();
+await flush(); // mode online: tabel/kolom baru & data awal ikut dibuat di database online
+
+// pulihkan / pindahkan seluruh isi database dari file .db (mis. dari komputer kantor ke online)
+function restoreFrom(file) {
+  const src = new DatabaseSync(file, { readOnly: true });
+  try {
+    const tables = src.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_ver', '_sessions')").all();
+    if (!tables.some((t) => t.name === '_users') || !tables.some((t) => t.name === 'lahan_blok')) throw new Error('File ini bukan database Monitoring Kebun');
+    const counts = {};
+    tx(() => {
+      const keep = new Set(['_ver', '_sessions']);
+      for (const t of raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()) if (!keep.has(t.name)) db.exec(`DROP TABLE ${q(t.name)}`);
+      for (const t of tables) {
+        db.exec(t.sql);
+        const rows = src.prepare(`SELECT * FROM ${q(t.name)}`).all();
+        counts[t.name] = rows.length;
+        if (!rows.length) continue;
+        const cols = Object.keys(rows[0]);
+        const sql = `INSERT INTO ${q(t.name)} (${cols.map(q).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
+        for (const r of rows) db.prepare(sql).run(...cols.map((c) => r[c]));
+      }
+      db.prepare('DELETE FROM _sessions').run();
+      migrate(); seed();
+    });
+    return counts;
+  } finally { src.close(); }
+}
 
 // ---------- HTTP
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.map': 'application/json' };
@@ -238,7 +348,7 @@ async function api(req, res, url) {
   currentUser = user;
 
   // --- akun pertama (admin) & login
-  if (parts[1] === 'me' && m === 'GET') return send(res, 200, { user, setup: userCount() === 0, roles: ROLES });
+  if (parts[1] === 'me' && m === 'GET') return send(res, 200, { user, setup: userCount() === 0, roles: ROLES, online: !!cloud, vercel: VERCEL });
   if (parts[1] === 'setup' && m === 'POST') {
     if (userCount() > 0) return send(res, 403, { error: 'Admin sudah dibuat' });
     const b = await readBody(req);
@@ -407,15 +517,31 @@ async function api(req, res, url) {
   }
   if ((parts[1] === 'backup' || parts[1] === 'backups') && !isAdmin(user)) return send(res, 403, { error: 'Khusus admin' });
   if (parts[1] === 'backup') {
-    if (m === 'POST') return send(res, 200, { file: path.basename(backup('manual')) });
+    if (m === 'POST') return VERCEL ? send(res, 400, { error: 'Versi online tidak menyimpan file backup — pakai "Download backup database".' }) : send(res, 200, { file: path.basename(backup('manual')) });
     if (m === 'GET') {
       // salinan database siap pakai (tidak dikompres), langsung dikirim lalu dihapus dari server
       const file = path.join(DATA_DIR, `kebun_download_${Date.now()}.db`);
-      db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="kebun_${new Date().toISOString().slice(0, 10)}.db"` });
-      const s = fs.createReadStream(file); s.pipe(res); s.on('close', () => fs.unlink(file, () => {}));
-      return;
+      raw.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
+      const buf = fs.readFileSync(file); fs.unlink(file, () => {});
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="kebun_${new Date().toISOString().slice(0, 10)}.db"`, 'Content-Length': buf.length });
+      return res.end(buf);
     }
+  }
+  // pulihkan / pindahkan database: unggah file .db (boleh dikompres .gz) → seluruh isi diganti
+  if (parts[1] === 'restore' && m === 'POST') {
+    if (!isAdmin(user)) return send(res, 403, { error: 'Khusus admin' });
+    let buf = await readRaw(req);
+    if (buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
+    if (buf.subarray(0, 15).toString() !== 'SQLite format 3') return send(res, 400, { error: 'File harus database .db (dari "Download backup database")' });
+    const file = path.join(DATA_DIR, `kebun_restore_${Date.now()}.db`);
+    fs.writeFileSync(file, buf);
+    try {
+      const sebelum = backup('sebelum-pulihkan');
+      const counts = restoreFrom(file);
+      res.setHeader('Set-Cookie', 'kebun_sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
+      log('pulihkan database', null, null, { baris: counts, backup_sebelumnya: path.basename(sebelum || '') || undefined, oleh: user.nama || user.username });
+      return send(res, 200, { ok: true, counts });
+    } finally { fs.unlink(file, () => {}); }
   }
   if (parts[1] === 'backups' && m === 'GET') {
     return send(res, 200, backupFiles().reverse().map(({ f }) => ({ file: f, size: fs.statSync(path.join(BACKUP_DIR, f)).size })));
@@ -440,10 +566,13 @@ const getSetting = (k) => db.prepare('SELECT v FROM _settings WHERE k=?').get(k)
 const makeWorkbook = () => buildWorkbook({ TABLES, SHEETS: EXCEL_SHEETS, rowsOf, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA' });
 const excelLocked = () => fs.existsSync(path.join(path.dirname(EXCEL_FILE), '~$' + path.basename(EXCEL_FILE)));
 function excelStatus() {
+  const laporan = xl.lastReport || JSON.parse(getSetting('excel_laporan') || 'null');
+  if (VERCEL) return { online: true, ada: false, laporan }; // online: tidak ada file Excel di server — pakai download & upload
   let mtime = null; try { mtime = fs.statSync(EXCEL_FILE).mtime.toISOString(); } catch {}
-  return { file: EXCEL_FILE, ada: !!mtime, diubah: mtime, sedangDibuka: excelLocked(), stale: xl.stale, staleSince: xl.staleSince, laporan: xl.lastReport || JSON.parse(getSetting('excel_laporan') || 'null') };
+  return { file: EXCEL_FILE, ada: !!mtime, diubah: mtime, sedangDibuka: excelLocked(), stale: xl.stale, staleSince: xl.staleSince, laporan };
 }
 async function writeExcelFile() {
+  if (VERCEL) return false;
   if (excelLocked()) { if (!xl.stale) { xl.stale = true; xl.staleSince = now(); } return false; }
   const tmp = EXCEL_FILE + '.tmp';
   fs.writeFileSync(tmp, Buffer.from(await (await makeWorkbook()).xlsx.writeBuffer()));
@@ -451,9 +580,9 @@ async function writeExcelFile() {
   xl.lastWriteMtime = fs.statSync(EXCEL_FILE).mtimeMs; xl.stale = false; xl.staleSince = null;
   return true;
 }
-function scheduleExcelWrite(ms = 4000) { clearTimeout(xl.timer); xl.timer = setTimeout(() => writeExcelFile().catch((e) => console.warn('Tulis Excel gagal:', e.message)), ms); }
+function scheduleExcelWrite(ms = 4000) { if (VERCEL) return; clearTimeout(xl.timer); xl.timer = setTimeout(() => writeExcelFile().catch((e) => console.warn('Tulis Excel gagal:', e.message)), ms); }
 // jika file sempat terkunci, coba tulis ulang setelah Excel ditutup
-setInterval(() => { if (xl.stale && !excelLocked()) writeExcelFile().catch(() => {}); }, 15000);
+if (!VERCEL) setInterval(() => { if (xl.stale && !excelLocked()) writeExcelFile().catch(() => {}); }, 15000);
 
 const sig = (table, cfg, r) => { const c = clean(table, r); return JSON.stringify(sheetFields(TABLES, cfg).map((f) => (c[f.k] == null ? null : c[f.k]))); };
 async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file' } = {}) {
@@ -478,7 +607,7 @@ async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file'
     todo.push({ p, s });
   }
   if (preview || !todo.length) { if (!preview) { xl.lastReport = rep; } return rep; }
-  rep.backup = path.basename(backup('excel'));
+  rep.backup = path.basename(backup('excel') || '') || null;
   const prevUser = currentUser; currentUser = { nama: oleh };
   try {
     tx(() => {
@@ -503,7 +632,7 @@ async function onExcelChanged() {
     let buf = null;
     for (let i = 0; i < 5 && !buf; i++) { try { buf = fs.readFileSync(EXCEL_FILE); } catch { await new Promise((r) => setTimeout(r, 1500)); } }
     if (!buf) return;
-    const rep = await syncExcel(buf, { oleh: 'Excel (otomatis)', sumber: 'file' });
+    const rep = await serial(async () => { await syncCloud(); const r = await syncExcel(buf, { oleh: 'Excel (otomatis)', sumber: 'file' }); await flush(); return r; });
     const ub = rep.sheets.filter((s) => s.status === 'diperbarui'), er = rep.sheets.filter((s) => s.jumlahError);
     console.log(`  Excel disinkron: ${ub.length} sheet diperbarui${er.length ? `, ${er.length} sheet ada kesalahan` : ''}`);
     xl.lastWriteMtime = st.mtimeMs;
@@ -513,11 +642,14 @@ async function onExcelChanged() {
   finally { xl.busy = false; }
 }
 let watchTimer = null;
-fs.watchFile(EXCEL_FILE, { interval: 2000 }, (cur, prev) => {
+if (!VERCEL) fs.watchFile(EXCEL_FILE, { interval: 2000 }, (cur, prev) => {
   if (!cur.mtimeMs || cur.mtimeMs === prev.mtimeMs) return;
   clearTimeout(watchTimer); watchTimer = setTimeout(onExcelChanged, 2500);
 });
-if (!fs.existsSync(EXCEL_FILE)) writeExcelFile().then((ok) => ok && console.log('  File Excel input dibuat:', EXCEL_FILE)).catch((e) => console.warn('Buat Excel gagal:', e.message));
+// komputer lokal yang memakai database online: cek perubahan dari online tiap menit → file Excel ikut diperbarui
+if (cloud && !VERCEL) setInterval(() => serial(async () => { if (await syncCloud()) scheduleExcelWrite(1000); }).catch((e) => console.warn('Cek database online gagal:', e.message)), 60e3).unref();
+if (VERCEL) { /* online: tanpa file Excel */ }
+else if (!fs.existsSync(EXCEL_FILE)) writeExcelFile().then((ok) => ok && console.log('  File Excel input dibuat:', EXCEL_FILE)).catch((e) => console.warn('Buat Excel gagal:', e.message));
 else {
   // saat start: mana yang lebih baru — data di aplikasi atau file Excel?
   const fileTime = fs.statSync(EXCEL_FILE).mtime.toISOString();
@@ -527,11 +659,37 @@ else {
   else if (fileTime > last) setTimeout(onExcelChanged, 1500);                          // file diubah saat server mati → baca file
 }
 
-const server = http.createServer(async (req, res) => {
+// mode online: respons ditahan sampai perubahan benar-benar tersimpan di database online
+function holdResponse(res) {
+  const wh = res.writeHead, end = res.end; let a = null, b = null;
+  res.writeHead = (...x) => { a = x; return res; };
+  res.end = (...x) => { b = x; return res; };
+  const restore = () => { res.writeHead = wh; res.end = end; };
+  return { release() { restore(); if (a) res.writeHead(...a); if (b) res.end(...b); }, discard() { restore(); res.removeHeader('Set-Cookie'); } };
+}
+async function apiRequest(req, res, url) {
+  if (!cloud) return api(req, res, url);
+  return serial(async () => {
+    if (await syncCloud() && !VERCEL) scheduleExcelWrite(1000);
+    const hold = holdResponse(res);
+    try { await api(req, res, url); await flush(); hold.release(); }
+    catch (e) {
+      hold.discard(); txMark = -1;
+      if (pend.length) { pend.length = 0; await loadCloud(); } // perubahan setengah jalan dibatalkan → samakan lagi dengan isi online
+      if (!e.conflict) throw e;
+      send(res, 409, { error: 'Data baru saja diubah dari tempat lain. Muat ulang halaman lalu ulangi.' });
+    }
+  });
+}
+
+export default async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
+  // Vercel: semua /api/* diarahkan ke satu fungsi; jalur asli dibawa lewat ?__p=
+  if (url.searchParams.has('__p')) { url.pathname = '/api/' + url.searchParams.get('__p'); url.searchParams.delete('__p'); }
   try {
+    if (BELUM_ONLINE && url.pathname.startsWith('/api/')) return send(res, 503, { error: 'Database online belum disambungkan. Di Vercel: buka proyek → Storage → Create Database → Turso → Connect ke proyek ini, lalu Deployments → Redeploy.' });
     if (url.pathname.startsWith('/api/')) {
-      await api(req, res, url);
+      await apiRequest(req, res, url);
       // perubahan lewat aplikasi → samakan file Excel
       const t = url.pathname.split('/')[3];
       if (req.method !== 'GET' && url.pathname.startsWith('/api/t/') && res.statusCode < 300 && EXCEL_TABLES.has(t)) scheduleExcelWrite();
@@ -542,14 +700,14 @@ const server = http.createServer(async (req, res) => {
     return f ? serveFile(res, f) : send(res, 403, 'Forbidden', 'text/plain');
   } catch (e) {
     console.error(e);
-    send(res, 500, { error: e.message });
+    if (!res.headersSent) send(res, 500, { error: e.message });
   }
-});
+}
 
-server.listen(PORT, '0.0.0.0', () => {
+if (!VERCEL) http.createServer(handler).listen(PORT, '0.0.0.0', () => {
   console.log('\n  Monitoring Kebun berjalan:');
   console.log(`   Komputer ini : http://localhost:${PORT}`);
   for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs || [])
     if (i.family === 'IPv4' && !i.internal) console.log(`   Jaringan/HP  : http://${i.address}:${PORT}`);
-  console.log(`   Database     : ${DB_FILE}\n   Excel input  : ${EXCEL_FILE}\n   Tutup jendela ini untuk menghentikan server.\n`);
+  console.log(`   Database     : ${cloud ? 'ONLINE (Turso) — data sama dengan versi internet' : DB_FILE}\n   Excel input  : ${EXCEL_FILE}\n   Tutup jendela ini untuk menghentikan server.\n`);
 });

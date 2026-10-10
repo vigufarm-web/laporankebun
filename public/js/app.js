@@ -4,6 +4,7 @@ import { renderOwner } from './owner.js';
 import { renderKomoditas, KOM } from './komoditas.js';
 
 let me = null;                                  // pengguna yang login
+let server = {};                                // info server: online (database Turso) / vercel
 const can = (t) => canEdit(me, t);              // boleh ubah tabel t?
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -439,10 +440,12 @@ async function renderExcel(main) {
   const st = await api.get('/api/excel/status');
   const rep = st.laporan;
   main.innerHTML = `<div class="page-head"><div><h1>📥 Input Excel</h1>
-      <p class="desc">Isi data lewat Excel: ubah, tambah, atau hapus baris di file Excel lalu <b>simpan</b> — aplikasi otomatis ikut ter-update dalam beberapa detik. Perubahan lewat aplikasi juga otomatis ditulis ke file Excel.</p></div>
+      <p class="desc">${st.online ? 'Isi data lewat Excel: download file berisi data terbaru, ubah/tambah/hapus baris, lalu upload kembali.' : 'Isi data lewat Excel: ubah, tambah, atau hapus baris di file Excel lalu <b>simpan</b> — aplikasi otomatis ikut ter-update dalam beberapa detik. Perubahan lewat aplikasi juga otomatis ditulis ke file Excel.'}</p></div>
       <div class="actions"><a class="btn primary" href="/api/excel/download">⬇ Download Excel (data terbaru)</a></div></div>
     <div class="cols-2">
-      <div class="card"><h3>File Excel input</h3>
+      ${st.online ? `<div class="card"><h3>Isi lewat Excel (versi online)</h3>
+        <ol class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>Klik <b>Download Excel</b> — isinya data terbaru.</li><li>Ubah / tambah / hapus baris, lalu simpan.</li><li>Upload file itu di kotak sebelah (khusus admin) → periksa ringkasan perubahan → <b>Terapkan</b>.</li></ol>
+      </div>` : `<div class="card"><h3>File Excel input</h3>
         <div class="small muted">Lokasi file (di komputer server):</div>
         <div style="font-family:monospace;font-size:12.5px;background:#f3f6f4;padding:8px;border-radius:6px;margin:4px 0 10px;word-break:break-all">${esc(st.file)}</div>
         <table class="mini">
@@ -451,7 +454,7 @@ async function renderExcel(main) {
           ${st.stale ? `<tr><td colspan="2" style="color:var(--warn)">⚠ Ada perubahan dari aplikasi sejak ${new Date(st.staleSince).toLocaleString('id-ID')} yang belum masuk ke file (file sedang dibuka). Tutup Excel — file akan diperbarui otomatis. Kalau Excel disimpan sebelum itu, isi Excel yang dipakai.</td></tr>` : ''}
         </table>
         <p class="small muted" style="margin:10px 0 0">Buka file itu langsung di komputer ini (dobel klik), isi, lalu Ctrl+S. Dari HP/komputer lain: download → isi → upload di sini (khusus admin).</p>
-      </div>
+      </div>`}
       <div class="card"><h3>Upload Excel</h3>
         ${isAdmin(me) ? `<p class="small muted">Pilih file Excel hasil isian. Aplikasi menampilkan dulu apa yang akan berubah sebelum diterapkan.</p>
           <input type="file" id="xF" accept=".xlsx"><div id="xP" style="margin-top:10px"></div>` : `<p class="small muted">${me ? 'Upload Excel khusus admin.' : 'Login sebagai admin untuk upload Excel.'}</p>`}
@@ -506,19 +509,40 @@ async function renderSettings(main) {
         <div style="margin-top:10px"><button class="btn primary" id="sSave">Simpan</button></div>
       </div>
       <div class="card"><h3>Backup data</h3>
-        <p class="small muted">Database: <code>data/kebun.db</code>. Backup otomatis (terkompres .db.gz) dibuat saat server dinyalakan bila ada perubahan & sebelum setiap sinkron Excel — 10 terakhir disimpan di <code>data/backup</code>. Memulihkan: ekstrak .gz (7-Zip) lalu ganti <code>data/kebun.db</code> saat server mati.</p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn primary" href="/api/backup">⬇ Download backup database</a><button class="btn" id="bBk">Buat backup sekarang</button><button class="btn" id="bExpAll">⬇ Export semua data (Excel)</button></div>
-        <table class="mini" style="margin-top:10px"><tr><th>File backup</th><th class="num">Ukuran</th></tr>${bk.slice(0, 8).map((b) => `<tr><td>${esc(b.file)}</td><td class="num">${fmtNum(b.size / 1024)} KB</td></tr>`).join('')}</table>
+        <p class="small muted">${server.vercel ? 'Versi online: data tersimpan di database online (Turso). Klik "Download backup database" sesekali untuk menyimpan salinan di komputer.' : `Database: <code>${server.online ? 'online (Turso) — salinan cadangan tetap disimpan di komputer ini' : 'data/kebun.db'}</code>. Backup otomatis (terkompres .db.gz) dibuat saat server dinyalakan bila ada perubahan & sebelum setiap sinkron Excel — 10 terakhir disimpan di <code>data/backup</code>.`}</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn primary" href="/api/backup">⬇ Download backup database</a>${server.vercel ? '' : '<button class="btn" id="bBk">Buat backup sekarang</button>'}<button class="btn" id="bExpAll">⬇ Export semua data (Excel)</button></div>
+        ${bk.length ? `<table class="mini" style="margin-top:10px"><tr><th>File backup</th><th class="num">Ukuran</th></tr>${bk.slice(0, 8).map((b) => `<tr><td>${esc(b.file)}</td><td class="num">${fmtNum(b.size / 1024)} KB</td></tr>`).join('')}</table>` : ''}
       </div>
-      <div class="card"><h3>Akses dari HP / komputer lain</h3>
+      <div class="card"><h3>Pindahkan / pulihkan database</h3>
+        <p class="small muted">Ganti <b>seluruh</b> isi data dengan file database (.db hasil "Download backup database", atau .db.gz dari folder backup) — mis. memindahkan data dari komputer kantor ke versi online. Akun pengguna ikut dari file tersebut; semua orang perlu login ulang.</p>
+        <input type="file" id="rsF" accept=".db,.gz"><div id="rsP" class="small" style="margin-top:8px"></div>
+      </div>
+      ${server.vercel ? '' : `<div class="card"><h3>Akses dari HP / komputer lain</h3>
         <p class="small">Selama server menyala, perangkat lain di jaringan WiFi yang sama bisa membuka alamat <b>Jaringan/HP</b> yang tampil di jendela server (contoh <code>http://192.168.x.x:3000</code>). Jika tidak bisa, izinkan Node.js di Windows Firewall (jaringan Private).</p>
       </div>
       <div class="card"><h3>Menambah kolom / tabel baru</h3>
         <p class="small">Struktur data ada di <code>public/js/schema.js</code>. Tambahkan field baru di tabel yang diinginkan, lalu tutup & jalankan ulang server — kolom baru otomatis dibuat tanpa menghapus data lama.</p>
-      </div>
+      </div>`}
     </div>`;
   $('#sSave').onclick = async () => { await api.put('/api/settings', { nama: $('#sName').value }); settings.nama = $('#sName').value; applySettings(); toast('Tersimpan'); };
-  $('#bBk').onclick = async () => { const r = await api.post('/api/backup'); toast('Backup dibuat: ' + r.file); renderSettings(main); };
+  $('#rsF').onchange = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    if (!confirm(`Ganti SELURUH data dengan isi "${file.name}"?
+Data yang ada sekarang akan diganti (salinan cadangan dibuat dulu bila memungkinkan).`)) { e.target.value = ''; return; }
+    $('#rsP').textContent = 'Mengirim & memulihkan…';
+    try {
+      let body = file;
+      const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+      if (!(head[0] === 0x1f && head[1] === 0x8b) && window.CompressionStream) body = await new Response(file.stream().pipeThrough(new CompressionStream('gzip'))).blob(); // dikompres agar muat batas upload online
+      const r = await fetch('/api/restore', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
+      const n = Object.entries(j.counts || {}).filter(([k]) => !k.startsWith('_')).reduce((a, [, v]) => a + v, 0);
+      alert(`Database dipulihkan: ${fmtNum(n)} baris data, ${fmtNum(j.counts?._users || 0)} akun.
+Silakan login ulang.`);
+      location.hash = '#/'; location.reload();
+    } catch (err) { $('#rsP').innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`; e.target.value = ''; }
+  };
+  if ($('#bBk')) $('#bBk').onclick = async () => { const r = await api.post('/api/backup'); toast('Backup dibuat: ' + r.file); renderSettings(main); };
   $('#bExpAll').onclick = exportAll;
 }
 function applySettings() {
@@ -574,6 +598,7 @@ async function boot() {
   applySettings();
   me = r.user || null;
   needSetup = !!r.setup;
+  server = { online: !!r.online, vercel: !!r.vercel };
   renderUserChip();
   route();
 }

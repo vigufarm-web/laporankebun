@@ -17,7 +17,24 @@ Aplikasi web untuk memantau kebun **Pisang** dan **Padi**: stok bibit/benih, blo
 
 HP/komputer lain di WiFi yang sama: buka alamat "Jaringan/HP" yang tampil di jendela server.
 
-> Aplikasi ini butuh server Node.js yang menyala. GitHub hanya menyimpan kodenya — aplikasi tidak bisa dijalankan langsung dari GitHub Pages.
+## Versi online (Vercel + Turso)
+
+Repo ini bisa langsung di-deploy ke Vercel. Data online disimpan di database **Turso** (gratis).
+
+1. Vercel → **Create New → Project → Import** repo ini → Framework Preset **Other** → **Deploy**.
+2. Di proyek Vercel: **Storage → Create Database → Turso** → hubungkan (**Connect**) ke proyek ini.
+   Variabel `TURSO_DATABASE_URL` dan `TURSO_AUTH_TOKEN` otomatis terisi.
+3. **Deployments → ⋯ → Redeploy** supaya variabel baru terbaca.
+4. Buka link proyek → **Login Admin → Buat Admin**.
+5. Memindahkan data dari komputer: di aplikasi komputer **Pengaturan & Backup → Download backup database**,
+   lalu di versi online **Pengaturan & Backup → Pindahkan / pulihkan database** → pilih file tersebut.
+
+Di versi online: input Excel lewat **Download → isi → Upload** (tidak ada file Excel yang dipantau), backup lewat **Download backup database**.
+
+**Komputer kantor memakai data yang sama dengan versi online (opsional):** buat file `data/online.json` berisi
+`{"url": "<TURSO_DATABASE_URL>", "token": "<TURSO_AUTH_TOKEN>"}` lalu jalankan ulang `Jalankan.bat`.
+File Excel di komputer tetap tersinkron dua arah, dan perubahan dari online masuk ke file Excel dalam ±1 menit.
+File `data/` tidak pernah ikut ke GitHub.
 
 ## Menu
 
@@ -58,12 +75,14 @@ Ubah/tambah/hapus baris di `Input Data Kebun.xlsx` lalu simpan → aplikasi otom
 
 ## Pengaturan lanjutan
 
-Variabel lingkungan (opsional): `PORT` (bawaan 3000), `DATA_DIR` (folder database), `EXCEL_FILE` (lokasi file Excel).
+Variabel lingkungan (opsional): `PORT` (bawaan 3000), `DATA_DIR` (folder database), `EXCEL_FILE` (lokasi file Excel), `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` (pakai database online).
 
 ## Struktur
 
 ```
 server.js            server HTTP + API + sinkron Excel (node:http, node:sqlite)
+api/index.js         pintu masuk versi online (Vercel) · vercel.json = pengaturannya
+lib/turso.js         sambungan ke database online Turso (lewat HTTP, tanpa paket tambahan)
 lib/excel.js         baca/tulis file Excel input
 lib/exceljs.min.cjs  pustaka ExcelJS (file tunggal)
 public/              tampilan web (HTML, CSS, JS modul)
