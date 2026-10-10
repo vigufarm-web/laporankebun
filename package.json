@@ -1,0 +1,15 @@
+{
+  "name": "monitoring-kebun-web",
+  "version": "1.0.0",
+  "description": "Monitoring Kebun PT VIGU FARM INDONESIA — pisang, padi, iklim, peta. Tanpa npm install.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=22.13"
+  },
+  "private": true
+}

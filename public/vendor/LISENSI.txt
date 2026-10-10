@@ -1,0 +1,5 @@
+Pustaka pihak ketiga (salinan file tunggal, lisensi bebas):
+- Leaflet 1.9.4 (BSD-2-Clause)        leaflet.js, leaflet.css, images/
+- Chart.js 4.4.1 (MIT)                chart.umd.js
+- shpjs 4.0.4 (MIT)                   shp.min.js
+- ExcelJS 4.4.0 (MIT)                 ../../lib/exceljs.min.cjs
