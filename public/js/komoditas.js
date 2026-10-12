@@ -71,7 +71,7 @@ export async function renderKomoditas(main, A, komKey, tabKey, sub) {
 }
 
 // ================================================================ estimasi vs realisasi panen pisang (box per bulan)
-// realisasi = Box Panen (Packing House); kelas MIX dihitung sebagai B (sama dengan laporan FIKS)
+// realisasi = Box Panen (Packing House). MIX = gabungan kelas → tidak dibandingkan per kelas (permintaan user), tetap masuk total box
 function estimasiVsRealisasi(el, A) {
   const { fmtNum } = A; const P = A.ctx.rows;
   const est = P('pisang_estimasi').filter((r) => r.bulan);
@@ -79,7 +79,7 @@ function estimasiVsRealisasi(el, A) {
   if (!est.length) { el.innerHTML = `<div class="card o-card">${head}<div class="small muted">Belum ada estimasi. Tambahkan di tabel "Estimasi Panen" di bawah, atau lewat tombol ⬇ Excel halaman ini.</div></div>`; return; }
   const months = [...new Set(est.map((r) => String(r.bulan).slice(0, 7)))].sort();
   const box = P('pisang_box');
-  const kls = (r, k) => (k === 'B' ? r.kelas === 'B' || r.kelas === 'MIX' : r.kelas === k);
+  const kls = (r, k) => r.kelas === k;
   const now = util.today(), ymNow = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const lbl = (ym) => `${BULAN[+ym.slice(5) - 1]} ${ym.slice(0, 4)}`;
   const tot = { e: [0, 0, 0, 0], r: [0, 0, 0, 0], eJalan: 0 }; // eJalan = estimasi bulan yang sudah/sedang berjalan
@@ -89,7 +89,8 @@ function estimasiVsRealisasi(el, A) {
     const B = box.filter((r) => String(r.tanggal).slice(0, 7) === m);
     const r = [sum(B, (x) => x.jumlah_box), ...['A', 'B', 'C'].map((k) => sum(B.filter((x) => kls(x, k)), (x) => x.jumlah_box))];
     const akhir = B.map((x) => x.tanggal).sort().pop();
-    const ket = m > ymNow ? 'belum berjalan' : m === ymNow ? `berjalan${akhir ? ' · s/d ' + A.fmtDate(akhir) : ''}` : 'selesai';
+    const mix = sum(B.filter((x) => x.kelas === 'MIX'), (x) => x.jumlah_box);
+    const ket = (m > ymNow ? 'belum berjalan' : m === ymNow ? `berjalan${akhir ? ' · s/d ' + A.fmtDate(akhir) : ''}` : 'selesai') + (mix ? ` · termasuk ${fmtNum(mix)} box MIX` : '');
     e.forEach((v, i) => (tot.e[i] += v)); if (m <= ymNow) { r.forEach((v, i) => (tot.r[i] += v)); tot.eJalan += e[0]; }
     const pct = e[0] ? r[0] / e[0] : null;
     const warna = m >= ymNow || pct == null ? 'inherit' : pct >= 1 ? 'var(--ok)' : 'var(--warn)';
@@ -101,7 +102,7 @@ function estimasiVsRealisasi(el, A) {
     <tr><th class="num">Box</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">Box</th><th class="num">A</th><th class="num">B</th><th class="num">C</th></tr>
     ${rows.join('')}
     <tr style="font-weight:600"><td>Total</td>${tot.e.map((v) => `<td class="num">${fmtNum(v)}</td>`).join('')}${tot.r.map((v) => `<td class="num">${fmtNum(v)}</td>`).join('')}<td class="num" title="Dibanding estimasi bulan yang sudah/sedang berjalan">${pctT == null ? '–' : fmtNum(pctT * 100, 0) + '%'}</td></tr></table>
-    <div class="small muted" style="margin-top:6px">Capaian = realisasi ÷ estimasi box; capaian total hanya dibanding bulan yang sudah/sedang berjalan. Bulan berjalan dihitung sampai data box terakhir; kelas MIX dihitung sebagai B. Estimasi diubah lewat tabel "Estimasi Panen" di bawah atau tombol ⬇ Excel / ⬆ Upload Excel.</div></div>`;
+    <div class="small muted" style="margin-top:6px">Capaian = realisasi ÷ estimasi box; capaian total hanya dibanding bulan yang sudah/sedang berjalan. Bulan berjalan dihitung sampai data box terakhir. Box MIX (gabungan kelas) tidak dibandingkan per kelas A/B/C, tetapi tetap masuk total box. Estimasi diubah lewat tabel "Estimasi Panen" di bawah atau tombol ⬇ Excel / ⬆ Upload Excel.</div></div>`;
 }
 
 // ================================================================ ringkasan per tab
@@ -182,7 +183,7 @@ const SUMMARY = {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang');
     estimasiVsRealisasi(el.appendChild(document.createElement('div')), A);
     const P = A.ctx.rows;
-    monthlyChart(el, A, 'Box panen per bulan (per kelas)', ['A', 'B', 'C', 'MIX'].map((k, i) => ({ label: 'Kelas ' + k, color: ['#2f6b3f', '#d4a017', '#b45309', '#94a3b8'][i], rows: P('pisang_box').filter((r) => r.kelas === k), fn: (r) => r.jumlah_box })), true);
+    monthlyChart(el, A, 'Box panen per bulan (per kelas)', ['A', 'B', 'C', 'MIX'].map((k, i) => ({ label: 'Kelas ' + k, color: ['#2f6b3f', '#d4a017', '#b45309', '#94a3b8'][i], rows: P('pisang_box').filter((r) => r.kelas === k), fn: (r) => r.jumlah_box })), true, true);
   },
   async pisang_jual(el, A) {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang', /Penjualan|terjual/);
@@ -289,7 +290,8 @@ async function progres(el, A, kom) {
     ${bl.sort((a, b) => String(a.r.blok).localeCompare(String(b.r.blok), 'id', { numeric: true })).map((x) => `<tr><td><b>${esc(x.r.blok)}</b></td><td class="num">${fmtNum(x.r.luas_ha, 2)}</td>${x.p.per.map((p) => `<td class="h" style="${heat(p.pct)}" title="${fmtNum(p.ha, 2)} ha">${p.pct ? Math.round(p.pct * 100) + '%' : '·'}</td>`).join('')}<td style="min-width:90px"><div class="bar"><i style="width:${x.p.total * 100}%"></i></div></td></tr>`).join('')}</table>` : `<div class="empty">Belum ada rencana blok ${esc(kom.toLowerCase())}.</div>`}</div>`;
 }
 
-function monthlyChart(el, A, title, series, stacked) {
+// pct = saat grafik disentuh/diarahkan: tampil persen tiap seri terhadap total bulan itu (bukan angka)
+function monthlyChart(el, A, title, series, stacked, pct) {
   const { b } = week();
   const end = b.slice(0, 7);
   const months = Array.from({ length: 12 }, (_, i) => { const [y, m] = end.split('-').map(Number); return util.iso(new Date(y, m - 1 - (11 - i), 1)).slice(0, 7); });
@@ -298,5 +300,22 @@ function monthlyChart(el, A, title, series, stacked) {
   card.innerHTML = `<h3>${A.esc(title)}</h3><div class="chart-box"><canvas></canvas></div>`;
   el.appendChild(card);
   A.chart(card.querySelector('canvas'), { type: 'bar', data: { labels: months.map((m) => `${BULAN[+m.slice(5) - 1]} ${m.slice(2, 4)}`), datasets: series.map((s) => ({ label: s.label, backgroundColor: s.color, data: months.map((m) => sum(s.rows.filter((r) => String(r.tanggal).slice(0, 7) === m), s.fn)) })) },
-    options: stacked ? { scales: { x: { stacked: true }, y: { stacked: true } } } : {} });
+    options: {
+      ...(stacked ? { scales: { x: { stacked: true }, y: { stacked: true } } } : {}),
+      ...(pct ? {
+        interaction: { mode: 'index', intersect: false }, // satu sentuhan → semua kelas di bulan itu
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12 } },
+          tooltip: {
+            filter: (it) => it.raw > 0,
+            callbacks: {
+              label: (it) => {
+                const tot = it.chart.data.datasets.reduce((t, d) => t + (Number(d.data[it.dataIndex]) || 0), 0);
+                return ` ${it.dataset.label}: ${tot ? (it.raw / tot * 100).toLocaleString('id-ID', { maximumFractionDigits: 1 }) : 0}%`;
+              },
+            },
+          },
+        },
+      } : {}),
+    } });
 }
