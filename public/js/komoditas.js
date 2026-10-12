@@ -183,7 +183,7 @@ const SUMMARY = {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang');
     estimasiVsRealisasi(el.appendChild(document.createElement('div')), A);
     const P = A.ctx.rows;
-    monthlyChart(el, A, 'Box panen per bulan (per kelas)', ['A', 'B', 'C', 'MIX'].map((k, i) => ({ label: 'Kelas ' + k, color: ['#2f6b3f', '#d4a017', '#b45309', '#94a3b8'][i], rows: P('pisang_box').filter((r) => r.kelas === k), fn: (r) => r.jumlah_box })), true, true);
+    monthlyChart(el, A, 'Total box panen per bulan', [{ label: 'Total box', color: '#2f6b3f', rows: P('pisang_box'), fn: (r) => r.jumlah_box }]); // total saja, tanpa per kelas (permintaan user)
   },
   async pisang_jual(el, A) {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang', /Penjualan|terjual/);
@@ -290,8 +290,7 @@ async function progres(el, A, kom) {
     ${bl.sort((a, b) => String(a.r.blok).localeCompare(String(b.r.blok), 'id', { numeric: true })).map((x) => `<tr><td><b>${esc(x.r.blok)}</b></td><td class="num">${fmtNum(x.r.luas_ha, 2)}</td>${x.p.per.map((p) => `<td class="h" style="${heat(p.pct)}" title="${fmtNum(p.ha, 2)} ha">${p.pct ? Math.round(p.pct * 100) + '%' : '·'}</td>`).join('')}<td style="min-width:90px"><div class="bar"><i style="width:${x.p.total * 100}%"></i></div></td></tr>`).join('')}</table>` : `<div class="empty">Belum ada rencana blok ${esc(kom.toLowerCase())}.</div>`}</div>`;
 }
 
-// pct = saat grafik disentuh/diarahkan: tampil persen tiap seri terhadap total bulan itu (bukan angka)
-function monthlyChart(el, A, title, series, stacked, pct) {
+function monthlyChart(el, A, title, series, stacked) {
   const { b } = week();
   const end = b.slice(0, 7);
   const months = Array.from({ length: 12 }, (_, i) => { const [y, m] = end.split('-').map(Number); return util.iso(new Date(y, m - 1 - (11 - i), 1)).slice(0, 7); });
@@ -300,22 +299,5 @@ function monthlyChart(el, A, title, series, stacked, pct) {
   card.innerHTML = `<h3>${A.esc(title)}</h3><div class="chart-box"><canvas></canvas></div>`;
   el.appendChild(card);
   A.chart(card.querySelector('canvas'), { type: 'bar', data: { labels: months.map((m) => `${BULAN[+m.slice(5) - 1]} ${m.slice(2, 4)}`), datasets: series.map((s) => ({ label: s.label, backgroundColor: s.color, data: months.map((m) => sum(s.rows.filter((r) => String(r.tanggal).slice(0, 7) === m), s.fn)) })) },
-    options: {
-      ...(stacked ? { scales: { x: { stacked: true }, y: { stacked: true } } } : {}),
-      ...(pct ? {
-        interaction: { mode: 'index', intersect: false }, // satu sentuhan → semua kelas di bulan itu
-        plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 12 } },
-          tooltip: {
-            filter: (it) => it.raw > 0,
-            callbacks: {
-              label: (it) => {
-                const tot = it.chart.data.datasets.reduce((t, d) => t + (Number(d.data[it.dataIndex]) || 0), 0);
-                return ` ${it.dataset.label}: ${tot ? (it.raw / tot * 100).toLocaleString('id-ID', { maximumFractionDigits: 1 }) : 0}%`;
-              },
-            },
-          },
-        },
-      } : {}),
-    } });
+    options: stacked ? { scales: { x: { stacked: true }, y: { stacked: true } } } : {} });
 }
