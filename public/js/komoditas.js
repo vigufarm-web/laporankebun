@@ -27,9 +27,9 @@ const lahanFilters = (A, kom) => {
 export const KOM = {
   pisang: { nama: 'Pisang', icon: '🍌', key: 'Pisang', tabs: [
     { k: 'bibit', l: 'Stok Bibit', tables: ['pisang_bibit'] },
-    { k: 'tertanam', l: 'Tertanam', tables: ['pisang_kegiatan'], excel: ['pisang_blok'] }, // tabel Blok Tanam disembunyikan (permintaan user) — diubah lewat Excel halaman ini
+    // menu Tertanam disembunyikan (permintaan user); data blok tetap ada — dipakai Ringkasan & peta, diubah lewat Input Excel
     { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], week: true },
-    { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
+    { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_estimasi', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
   ] },
   padi: { nama: 'Padi', icon: '🌾', key: 'Padi', tabs: [
     { k: 'bibit', l: 'Stok Benih', tables: ['padi_benih'] },
@@ -68,6 +68,40 @@ export async function renderKomoditas(main, A, komKey, tabKey, sub) {
   if (S) await S(sumEl, A, K, rerender);
   const opt = K.key === 'Pisang' || K.key === 'Padi' ? lahanFilters(A, K.key)[table] || {} : {};
   A.renderTable($('#kTbl'), table, { embed: true, ...opt, onChange: rerender });
+}
+
+// ================================================================ estimasi vs realisasi panen pisang (box per bulan)
+// realisasi = Box Panen (Packing House); kelas MIX dihitung sebagai B (sama dengan laporan FIKS)
+function estimasiVsRealisasi(el, A) {
+  const { fmtNum } = A; const P = A.ctx.rows;
+  const est = P('pisang_estimasi').filter((r) => r.bulan);
+  const head = '<h3>Estimasi vs realisasi panen (box)</h3>';
+  if (!est.length) { el.innerHTML = `<div class="card o-card">${head}<div class="small muted">Belum ada estimasi. Tambahkan di tabel "Estimasi Panen" di bawah, atau lewat tombol ⬇ Excel halaman ini.</div></div>`; return; }
+  const months = [...new Set(est.map((r) => String(r.bulan).slice(0, 7)))].sort();
+  const box = P('pisang_box');
+  const kls = (r, k) => (k === 'B' ? r.kelas === 'B' || r.kelas === 'MIX' : r.kelas === k);
+  const now = util.today(), ymNow = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const lbl = (ym) => `${BULAN[+ym.slice(5) - 1]} ${ym.slice(0, 4)}`;
+  const tot = { e: [0, 0, 0, 0], r: [0, 0, 0, 0], eJalan: 0 }; // eJalan = estimasi bulan yang sudah/sedang berjalan
+  const rows = months.map((m) => {
+    const E = est.filter((r) => String(r.bulan).slice(0, 7) === m);
+    const e = [sum(E, (r) => r.box), sum(E, (r) => r.box_a), sum(E, (r) => r.box_b), sum(E, (r) => r.box_c)];
+    const B = box.filter((r) => String(r.tanggal).slice(0, 7) === m);
+    const r = [sum(B, (x) => x.jumlah_box), ...['A', 'B', 'C'].map((k) => sum(B.filter((x) => kls(x, k)), (x) => x.jumlah_box))];
+    const akhir = B.map((x) => x.tanggal).sort().pop();
+    const ket = m > ymNow ? 'belum berjalan' : m === ymNow ? `berjalan${akhir ? ' · s/d ' + A.fmtDate(akhir) : ''}` : 'selesai';
+    e.forEach((v, i) => (tot.e[i] += v)); if (m <= ymNow) { r.forEach((v, i) => (tot.r[i] += v)); tot.eJalan += e[0]; }
+    const pct = e[0] ? r[0] / e[0] : null;
+    const warna = m >= ymNow || pct == null ? 'inherit' : pct >= 1 ? 'var(--ok)' : 'var(--warn)';
+    return `<tr><td>${lbl(m)}<div class="small muted">${ket}</div></td>${e.map((v) => `<td class="num">${fmtNum(v)}</td>`).join('')}${m > ymNow ? '<td class="muted" colspan="4" style="text-align:center">belum ada realisasi</td><td class="num muted">–</td>' : `${r.map((v, i) => `<td class="num"${i === 0 ? ' style="font-weight:600"' : ''}>${fmtNum(v)}</td>`).join('')}<td class="num" style="color:${warna};font-weight:600">${pct == null ? '–' : fmtNum(pct * 100, 0) + '%'}</td>`}</tr>`;
+  });
+  const pctT = tot.eJalan ? tot.r[0] / tot.eJalan : null;
+  el.innerHTML = `<div class="card o-card" style="overflow:auto">${head}
+    <table class="mini"><tr><th rowspan="2">Bulan</th><th class="num" colspan="4" style="text-align:center">Estimasi</th><th class="num" colspan="4" style="text-align:center">Realisasi (Packing House)</th><th class="num" rowspan="2">Capaian</th></tr>
+    <tr><th class="num">Box</th><th class="num">A</th><th class="num">B</th><th class="num">C</th><th class="num">Box</th><th class="num">A</th><th class="num">B</th><th class="num">C</th></tr>
+    ${rows.join('')}
+    <tr style="font-weight:600"><td>Total</td>${tot.e.map((v) => `<td class="num">${fmtNum(v)}</td>`).join('')}${tot.r.map((v) => `<td class="num">${fmtNum(v)}</td>`).join('')}<td class="num" title="Dibanding estimasi bulan yang sudah/sedang berjalan">${pctT == null ? '–' : fmtNum(pctT * 100, 0) + '%'}</td></tr></table>
+    <div class="small muted" style="margin-top:6px">Capaian = realisasi ÷ estimasi box; capaian total hanya dibanding bulan yang sudah/sedang berjalan. Bulan berjalan dihitung sampai data box terakhir; kelas MIX dihitung sebagai B. Estimasi diubah lewat tabel "Estimasi Panen" di bawah atau tombol ⬇ Excel / ⬆ Upload Excel.</div></div>`;
 }
 
 // ================================================================ ringkasan per tab
@@ -143,22 +177,9 @@ const SUMMARY = {
     ${rows.length ? `<div class="card o-card"><h3>Stok per batch</h3><table class="mini"><tr><th>Datang</th><th>Keterangan</th><th>Klon</th><th class="num">Datang</th><th class="num">Ditanam</th><th class="num">Mati+afkir</th><th class="num">Stok</th><th class="num">Umur (bln)</th></tr>
       ${rows.sort((a, b) => String(b.r.tanggal_datang).localeCompare(String(a.r.tanggal_datang))).map((x) => `<tr><td>${fmtDate(x.r.tanggal_datang)}</td><td>${A.esc(x.r.keterangan || '')}</td><td>${A.esc(x.r.klon || '')}</td><td class="num">${fmtNum(n(x.r.qty_datang) + n(x.r.splitting))}</td><td class="num">${fmtNum(x.r.ditanam)}</td><td class="num">${fmtNum(n(x.r.afkir) + n(x.r.mortal))}</td><td class="num"><b>${fmtNum(x.saldo)}</b></td><td class="num">${fmtNum(x.umur, 1)}</td></tr>`).join('')}</table></div>` : ''}`;
   },
-  async pisang_tertanam(el, A) {
-    const { fmtNum, esc, ctx } = A; const P = ctx.rows;
-    const t = tanamRows(A, 'Pisang');
-    const st = {}; for (const x of t) { st[x.st || '-'] ??= { b: 0, l: 0, p: 0 }; st[x.st || '-'].b++; st[x.st || '-'].l += n(x.luas); st[x.st || '-'].p += n(x.pop); }
-    const belum = P('pisang_blok').filter((r) => r.status === 'Belum Tanam');
-    el.innerHTML = `<div class="kpis">
-      ${tile('Luas tertanam', `${fmtNum(sum(t, (x) => x.luas), 2)} <small>ha</small>`, `${t.length} blok`)}
-      ${tile('Populasi', fmtNum(sum(t, (x) => x.pop)), 'pokok hidup')}
-      ${Object.entries(st).map(([k, v]) => tile(`Status ${esc(k)}`, `${v.b} <small>blok</small>`, `${fmtNum(v.l, 2)} ha · ${fmtNum(v.p)} pkk`)).join('')}
-      ${belum.length ? tile('Blok belum tanam', `${belum.length} <small>blok</small>`, `${fmtNum(sum(belum, (r) => r.luas_ha), 2)} ha (luas peta)`) : ''}
-    </div><h2 class="o-h">Tanggal tanam per blok</h2><div id="kT"></div>`;
-    renderTanggalTanam($('#kT', el), A, 'Pisang');
-  },
-  async pisang_progres(el, A) { await progres(el, A, 'Pisang'); },
   async pisang_panen(el, A) {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang');
+    estimasiVsRealisasi(el.appendChild(document.createElement('div')), A);
     const P = A.ctx.rows;
     monthlyChart(el, A, 'Box panen per bulan (per kelas)', ['A', 'B', 'C', 'MIX'].map((k, i) => ({ label: 'Kelas ' + k, color: ['#2f6b3f', '#d4a017', '#b45309', '#94a3b8'][i], rows: P('pisang_box').filter((r) => r.kelas === k), fn: (r) => r.jumlah_box })), true);
   },
