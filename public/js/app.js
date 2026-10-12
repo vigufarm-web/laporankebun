@@ -1,4 +1,4 @@
-import { DIVISIONS, TABLES, ROLES, util, displayOf, canEdit, isAdmin } from './schema.js';
+import { DIVISIONS, TABLES, ROLES, util, displayOf, canEdit, isAdmin, EXCEL_SHEETS } from './schema.js';
 import { renderGIS } from './gis.js';
 import { renderOwner } from './owner.js';
 import { renderKomoditas, KOM } from './komoditas.js';
@@ -436,6 +436,44 @@ function excelReportTable(rep) {
       ${s.jumlahError ? `<tr><td></td><td colspan="4" class="small" style="color:var(--danger)">${s.errors.map((e) => `Baris ${e.row}: ${esc(e.msg)}`).join('<br>')}${s.jumlahError > s.errors.length ? `<br>… dan ${s.jumlahError - s.errors.length} kesalahan lain` : ''}</td></tr>` : ''}`).join('')}
     </table>${rep.backup ? `<p class="small muted" style="margin:6px 0 0">Backup sebelum sinkron: ${esc(rep.backup)}</p>` : ''}`;
 }
+// ================================================================ Excel per halaman: download → isi/ubah → upload (hanya data halaman itu)
+const EXCEL_TABLES = new Set(EXCEL_SHEETS.map((s) => s.table));
+function excelPanel(el, { tables, kom, label, onDone }) {
+  const T = (tables || []).filter((t) => EXCEL_TABLES.has(t));
+  if (!el || !T.length) return;
+  const qs = `tables=${T.join(',')}${kom ? `&kom=${encodeURIComponent(kom)}` : ''}&panel=${encodeURIComponent(label)}`;
+  const bolehUp = !!me && T.every((t) => can(t));
+  el.innerHTML = `<a class="btn" href="/api/excel/download?${qs}" title="Download data halaman ini ke Excel untuk diisi / diubah">⬇ Excel</a>${bolehUp ? '<button class="btn" id="xpUp" title="Upload Excel halaman ini — hanya data halaman ini yang diperbarui">⬆ Upload Excel</button><input type="file" id="xpF" accept=".xlsx" hidden>' : ''}`;
+  if (!bolehUp) return;
+  const f = $('#xpF', el);
+  $('#xpUp', el).onclick = () => f.click();
+  f.onchange = async () => {
+    const file = f.files[0]; f.value = ''; if (!file) return;
+    const buf = await file.arrayBuffer();
+    const go = async (preview) => {
+      const r = await fetch(`/api/excel/upload?${qs}${preview ? '&preview=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: buf });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j;
+    };
+    const md = openModal(`<div class="modal-head"><h2>⬆ Upload Excel · ${esc(label)}</h2><button class="x">×</button></div>
+      <div class="modal-body"><div class="small muted" style="margin-bottom:8px">File: <b>${esc(file.name)}</b> — hanya data halaman ini yang diperbarui, data halaman lain tidak tersentuh.</div><div id="xpB">Membaca file…</div></div>
+      <div class="modal-foot"><span class="sp"></span><button class="btn" id="xpNo">Batal</button><button class="btn primary" id="xpOk" disabled>Terapkan</button></div>`, true);
+    $('#xpNo', md).onclick = closeModal;
+    try {
+      const pv = await go(true);
+      const n = pv.sheets.filter((s) => s.status.startsWith('akan')).length;
+      const tidakAda = pv.sheets.every((s) => s.status.startsWith('sheet tidak ada'));
+      $('#xpB', md).innerHTML = excelReportTable(pv) + (tidakAda ? '<p style="color:var(--danger)">File ini tidak berisi sheet untuk halaman ini. Pakai file dari tombol "⬇ Excel" di halaman ini.</p>' : n ? '' : '<p class="small muted">Tidak ada perubahan untuk diterapkan.</p>');
+      const ok = $('#xpOk', md);
+      ok.disabled = !n; if (n) ok.textContent = `Terapkan ${n} sheet`;
+      ok.onclick = async () => {
+        ok.disabled = true; ok.textContent = 'Menerapkan…';
+        try { await go(false); closeModal(); await syncAll(); toast('Data dari Excel sudah diterapkan'); onDone?.(); }
+        catch (e) { toast(e.message, true); ok.disabled = false; ok.textContent = `Terapkan ${n} sheet`; }
+      };
+    } catch (e) { $('#xpB', md).innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
+  };
+}
+
 async function renderExcel(main) {
   const st = await api.get('/api/excel/status');
   const rep = st.laporan;
@@ -538,7 +576,7 @@ Data yang ada sekarang akan diganti (salinan cadangan dibuat dulu bila memungkin
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText);
       const n = Object.entries(j.counts || {}).filter(([k]) => !k.startsWith('_')).reduce((a, [, v]) => a + v, 0);
       alert(`Database dipulihkan: ${fmtNum(n)} baris data, ${fmtNum(j.counts?._users || 0)} akun.
-Silakan login ulang.`);
+Silakan login ulang — bisa dengan akun dari file, atau akun Anda sekarang (${me.username}).`);
       location.hash = '#/'; location.reload();
     } catch (err) { $('#rsP').innerHTML = `<span style="color:var(--danger)">${esc(err.message)}</span>`; e.target.value = ''; }
   };
@@ -551,7 +589,7 @@ function applySettings() {
 }
 
 // ================================================================ start
-export const App = { api, cache, ctx, loadTable, openForm, renderTable, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
+export const App = { api, cache, ctx, loadTable, openForm, renderTable, excelPanel, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
 // ================================================================ LOGIN & PENGGUNA
 const peranLabel = (u) => (u.peran || []).map((r) => ROLES[r]?.label || r).join(', ') || '—';
 function renderUserChip() {

@@ -17,7 +17,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const DB_FILE = path.join(DATA_DIR, 'kebun.db');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-const { TABLES, SEED, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS } = await import('./public/js/schema.js');
+const { TABLES, SEED, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
 const { turso, onlineConfig } = await import('./lib/turso.js');
 
@@ -52,11 +52,17 @@ const db = {
   },
 };
 const q = (s) => `"${s.replace(/"/g, '')}"`;
-async function loadCloud() {
-  const [master] = await cloud.query(["SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'libsql_%' AND name NOT LIKE '\\_litestream%' ESCAPE '\\'"]);
+async function loadCloud(coba = 0) {
+  // daftar tabel + nomor versi dulu, lalu semua isi dibaca dalam SATU transaksi baca (potret yang konsisten).
+  // Kalau ada yang menyimpan di antara keduanya (versi berubah) → ulangi.
+  const [master, [v0]] = await cloud.query(["SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'libsql_%' AND name NOT LIKE '\\_litestream%' ESCAPE '\\'", 'SELECT MAX(v) v FROM _ver']);
   const tables = master.filter((t) => !t.name.startsWith('sqlite_'));
-  const hasSeq = master.some((t) => t.name === 'sqlite_sequence'), hasVer = tables.some((t) => t.name === '_ver');
-  const res = await cloud.query([...tables.map((t) => `SELECT * FROM ${q(t.name)}`), ...(hasSeq ? ['SELECT name, seq FROM sqlite_sequence'] : []), ...(hasVer ? ['SELECT MAX(v) v FROM _ver'] : [])]);
+  const hasSeq = master.some((t) => t.name === 'sqlite_sequence'), hasVer = true;
+  const res = (await cloud.query(['BEGIN', ...tables.map((t) => `SELECT * FROM ${q(t.name)}`), ...(hasSeq ? ['SELECT name, seq FROM sqlite_sequence'] : []), 'SELECT MAX(v) v FROM _ver', 'COMMIT'])).slice(1, -1);
+  if (Number(res[res.length - 1][0]?.v || 0) !== Number(v0?.v || 0)) {
+    if (coba < 5) return loadCloud(coba + 1);
+    throw new Error('Database online sedang sibuk, coba lagi sebentar');
+  }
   const mem = new DatabaseSync(':memory:');
   mem.exec('BEGIN');
   tables.forEach((t, i) => {
@@ -260,10 +266,14 @@ function seed() {
     for (const r of SEED.lahan_aktivitas.filter((x) => x.untuk === 'Padi')) insertRow('lahan_aktivitas', r, false);
 }
 seed();
-await flush(); // mode online: tabel/kolom baru & data awal ikut dibuat di database online
+// mode online: tabel/kolom baru & data awal ikut dibuat di database online.
+// Dua salinan aplikasi menyala bersamaan → yang kalah memuat ulang isi online lalu cek lagi (tidak berhenti/crash).
+for (let i = 0; ; i++) {
+  try { await flush(); break; } catch (e) { if (!e.conflict || i >= 4) throw e; migrate(); seed(); }
+}
 
 // pulihkan / pindahkan seluruh isi database dari file .db (mis. dari komputer kantor ke online)
-function restoreFrom(file) {
+function restoreFrom(file, keepUser) {
   const src = new DatabaseSync(file, { readOnly: true });
   try {
     const tables = src.prepare("SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('_ver', '_sessions')").all();
@@ -283,6 +293,11 @@ function restoreFrom(file) {
       }
       db.prepare('DELETE FROM _sessions').run();
       migrate(); seed();
+      // admin yang memulihkan tetap bisa login walau akunnya tidak ada di file (mis. admin sementara di versi online)
+      if (keepUser && !db.prepare('SELECT 1 FROM _users WHERE username=?').get(keepUser.username)) {
+        db.prepare('INSERT INTO _users (username, nama, peran, salt, hash, aktif, created_at) VALUES (?,?,?,?,?,1,?)').run(keepUser.username, keepUser.nama, keepUser.peran, keepUser.salt, keepUser.hash, keepUser.created_at || now());
+        counts._users = (counts._users || 0) + 1;
+      }
     });
     return counts;
   } finally { src.close(); }
@@ -424,16 +439,22 @@ async function api(req, res, url) {
 
   // --- Excel input
   if (parts[1] === 'excel') {
+    // Excel per halaman: ?tables=iklim,lahan_blok&kom=Pisang&panel=Iklim → hanya sheet tabel itu (lahan_* hanya baris komoditas itu)
+    const panel = panelOf(url);
+    if (panel && !panel.tables.length) return send(res, 400, { error: 'Tabel tidak dikenal untuk Excel' });
     if (m === 'GET' && parts[2] === 'download') {
-      const buf = Buffer.from(await (await makeWorkbook()).xlsx.writeBuffer());
-      res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${encodeURIComponent(path.basename(EXCEL_FILE))}"` });
+      const buf = Buffer.from(await (await makeWorkbook(panel)).xlsx.writeBuffer());
+      const fname = panel ? `Excel ${panel.label} ${now().slice(0, 10)}.xlsx` : path.basename(EXCEL_FILE);
+      res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${fname.replace(/[^w .-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fname)}` });
       return res.end(buf);
     }
     if (m === 'GET' && parts[2] === 'status') return send(res, 200, excelStatus());
     if (m === 'POST' && parts[2] === 'upload') {
-      if (!isAdmin(user)) return send(res, 403, { error: 'Khusus admin' });
+      // upload satu halaman: cukup punya izin ubah tabel-tabel halaman itu; upload file lengkap: khusus admin
+      const boleh = panel ? panel.tables.every((t) => canEdit(user, t)) : isAdmin(user);
+      if (!boleh) return send(res, 403, { error: panel ? 'Akun Anda tidak punya izin mengubah data halaman ini' : 'Khusus admin' });
       const buf = await readRaw(req);
-      const rep = await syncExcel(buf, { preview: url.searchParams.get('preview') === '1', oleh: user.nama || user.username, sumber: 'upload' });
+      const rep = await syncExcel(buf, { preview: url.searchParams.get('preview') === '1', oleh: user.nama || user.username, sumber: panel ? `upload ${panel.label}` : 'upload', panel });
       if (!rep.preview) scheduleExcelWrite(2000); // tulis ulang file Excel di folder agar sama dengan yang diupload
       return send(res, 200, rep);
     }
@@ -537,7 +558,7 @@ async function api(req, res, url) {
     fs.writeFileSync(file, buf);
     try {
       const sebelum = backup('sebelum-pulihkan');
-      const counts = restoreFrom(file);
+      const counts = restoreFrom(file, db.prepare('SELECT * FROM _users WHERE id=?').get(user.id));
       res.setHeader('Set-Cookie', 'kebun_sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
       log('pulihkan database', null, null, { baris: counts, backup_sebelumnya: path.basename(sebelum || '') || undefined, oleh: user.nama || user.username });
       return send(res, 200, { ok: true, counts });
@@ -563,7 +584,32 @@ const sortRows = (table, rows) => {
 };
 const rowsOf = (t) => sortRows(t, db.prepare(`SELECT * FROM ${q(t)}`).all());
 const getSetting = (k) => db.prepare('SELECT v FROM _settings WHERE k=?').get(k)?.v;
-const makeWorkbook = () => buildWorkbook({ TABLES, SHEETS: EXCEL_SHEETS, rowsOf, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA' });
+// ---- Excel per halaman
+function panelOf(url) {
+  const tl = url.searchParams.get('tables'); if (!tl) return null;
+  const tables = tl.split(',').filter((t) => EXCEL_TABLES.has(t));
+  const kom = ['Pisang', 'Padi'].includes(url.searchParams.get('kom')) ? url.searchParams.get('kom') : null;
+  return { tables, kom, label: String(url.searchParams.get('panel') || tables.map((t) => TABLES[t].title).join(', ')).slice(0, 60) };
+}
+// tabel progres tanam dipakai bersama pisang & padi → di halaman satu komoditas hanya barisnya yang diambil/diganti
+// (aturan sama dengan tampilan di halaman Progres Tanam)
+function scopeOf(table, kom) {
+  if (!kom) return null;
+  if (table === 'lahan_blok') return (r) => (r.peruntukan || 'Pisang') === kom;
+  if (table === 'lahan_aktivitas') return (r) => (r.untuk || 'Pisang') === kom || r.untuk === 'Semua';
+  if (table === 'lahan_harian') {
+    const kb = new Map(db.prepare('SELECT blok, peruntukan FROM lahan_blok').all().map((b) => [util.key(b.blok), b.peruntukan || 'Pisang']));
+    const acts = new Set(db.prepare('SELECT untuk, aktivitas FROM lahan_aktivitas').all().filter((a) => (a.untuk || 'Pisang') === kom || a.untuk === 'Semua').map((a) => a.aktivitas));
+    return (r) => { const k = kb.get(util.key(r.blok)); return k ? k === kom : acts.has(r.aktivitas); };
+  }
+  return null;
+}
+const makeWorkbook = (panel = null) => {
+  const SHEETS = panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS;
+  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = rowsOf(t); return f ? rows.filter(f) : rows; };
+  const refNames = (t) => (TABLES[t]?.display ? db.prepare(`SELECT * FROM ${q(t)}`).all().map((r) => displayOf(t, r)) : []);
+  return buildWorkbook({ TABLES, SHEETS, rowsOf: scoped, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA', panel: panel?.label, refNames });
+};
 const excelLocked = () => fs.existsSync(path.join(path.dirname(EXCEL_FILE), '~$' + path.basename(EXCEL_FILE)));
 function excelStatus() {
   const laporan = xl.lastReport || JSON.parse(getSetting('excel_laporan') || 'null');
@@ -585,13 +631,14 @@ function scheduleExcelWrite(ms = 4000) { if (VERCEL) return; clearTimeout(xl.tim
 if (!VERCEL) setInterval(() => { if (xl.stale && !excelLocked()) writeExcelFile().catch(() => {}); }, 15000);
 
 const sig = (table, cfg, r) => { const c = clean(table, r); return JSON.stringify(sheetFields(TABLES, cfg).map((f) => (c[f.k] == null ? null : c[f.k]))); };
-async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file' } = {}) {
-  const parsed = await parseWorkbook(buf, { TABLES, SHEETS: EXCEL_SHEETS });
-  const rep = { waktu: now(), sumber, preview, oleh, sheets: [], backup: null, peringatan: [] };
+async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file', panel = null } = {}) {
+  const parsed = await parseWorkbook(buf, { TABLES, SHEETS: panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS });
+  const scopes = Object.fromEntries(parsed.map((p) => [p.cfg.table, panel ? scopeOf(p.cfg.table, panel.kom) : null])); // dihitung sebelum ada yang diganti
+  const rep = { waktu: now(), sumber, preview, oleh, panel: panel?.label || null, sheets: [], backup: null, peringatan: [] };
   if (xl.stale) rep.peringatan.push(`Ada perubahan dari aplikasi sejak ${new Date(xl.staleSince).toLocaleString('id-ID')} yang belum masuk ke Excel (file sedang dibuka). Isi Excel ini menimpa perubahan tersebut.`);
   const todo = [];
   for (const p of parsed) {
-    const { cfg } = p; const cur = db.prepare(`SELECT * FROM ${q(cfg.table)}`).all();
+    const { cfg } = p; const all = db.prepare(`SELECT * FROM ${q(cfg.table)}`).all(); const cur = scopes[cfg.table] ? all.filter(scopes[cfg.table]) : all;
     const s = { sheet: cfg.sheet, tabel: TABLES[cfg.table].title, baris: p.rows.length, sebelum: cur.length, tambah: 0, hapus: 0, status: 'ok', errors: p.errors.slice(0, 30), jumlahError: p.errors.length, layoutBeda: !!p.layoutBeda };
     rep.sheets.push(s);
     if (!p.found) { s.status = 'sheet tidak ada — dilewati'; continue; }
@@ -613,7 +660,9 @@ async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file'
     tx(() => {
       for (const { p } of todo) {
         // kolom yang tidak ada di Excel (mis. kolom lama) tetap dipertahankan hanya untuk baris yang identik — sisanya diganti
-        db.prepare(`DELETE FROM ${q(p.cfg.table)}`).run();
+        const sc = scopes[p.cfg.table];
+        if (sc) { const del = db.prepare(`DELETE FROM ${q(p.cfg.table)} WHERE id=?`); for (const r of db.prepare(`SELECT * FROM ${q(p.cfg.table)}`).all().filter(sc)) del.run(r.id); } // hanya baris komoditas ini
+        else db.prepare(`DELETE FROM ${q(p.cfg.table)}`).run();
         for (const r of p.rows) insertRow(p.cfg.table, r, false);
       }
     });

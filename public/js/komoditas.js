@@ -27,7 +27,7 @@ const lahanFilters = (A, kom) => {
 export const KOM = {
   pisang: { nama: 'Pisang', icon: '🍌', key: 'Pisang', tabs: [
     { k: 'bibit', l: 'Stok Bibit', tables: ['pisang_bibit'] },
-    { k: 'tertanam', l: 'Tertanam', tables: ['pisang_blok', 'pisang_kegiatan'] },
+    { k: 'tertanam', l: 'Tertanam', tables: ['pisang_kegiatan'], excel: ['pisang_blok'] }, // tabel Blok Tanam disembunyikan (permintaan user) — diubah lewat Excel halaman ini
     { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], week: true },
     { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
   ] },
@@ -53,7 +53,7 @@ export async function renderKomoditas(main, A, komKey, tabKey, sub) {
     <div class="page-head">
       <div><div class="crumb">${esc(A.settings().nama || 'PT VIGU FARM INDONESIA')}</div><h1>${K.icon} ${esc(K.nama)} · ${esc(tab.l)}</h1>
       ${tab.week ? `<p class="desc"><b>${weekLabel()}</b></p>` : ''}</div>
-      <div id="kWeek"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;justify-content:flex-end"><div class="actions" id="kXl"></div><div id="kWeek"></div></div>
     </div>
     ${K.tabs.length > 1 ? `<div class="tabs">${K.tabs.map((t) => `<a href="#/k/${komKey}/${t.k}" class="${t === tab ? 'on' : ''}">${esc(t.l)}</a>`).join('')}</div>` : ''}
     <div id="kSum"></div>
@@ -61,6 +61,8 @@ export async function renderKomoditas(main, A, komKey, tabKey, sub) {
     ${tab.tables.length > 1 ? `<div class="tabs sub">${tab.tables.map((t) => `<a href="#/k/${komKey}/${tab.k}/${t}" class="${t === table ? 'on' : ''}">${esc(TABLES[t].title)} <span class="muted">(${A.ctx.rows(t).filter((r) => (lahanFilters(A, K.key)[t]?.filter || (() => true))(r)).length})</span></a>`).join('')}</div>` : ''}
     <div id="kTbl"></div>`;
   if (tab.week) $('#kWeek').replaceWith(weekPicker(rerender));
+  // Excel khusus halaman ini: download → isi → upload; tabel progres (bersama pisang & padi) hanya baris komoditas ini
+  A.excelPanel($('#kXl'), { tables: tab.excel || tab.tables, kom: ['Pisang', 'Padi'].includes(K.key) ? K.key : null, label: `${K.nama} · ${tab.l}`, onDone: rerender });
   const sumEl = $('#kSum');
   const S = SUMMARY[`${komKey}_${tab.k}`];
   if (S) await S(sumEl, A, K, rerender);
