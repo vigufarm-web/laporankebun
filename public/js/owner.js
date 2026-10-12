@@ -99,7 +99,6 @@ export function renderProgres(el, A, gis, kom) {
       ${acts.length ? `<table class="mini">
         <tr><th>Tahap</th><th class="num">Minggu ini</th><th class="num">Minggu lalu</th><th class="num">Total selesai</th><th style="width:16%">dari ${fmtNum(luas, 2)} ha</th><th>Blok dikerjakan minggu ini</th></tr>
         ${rows.map((x) => `<tr${x.w ? ' style="background:#fff7e6"' : ''}><td><b>${esc(x.ak)}</b></td><td class="num">${x.w ? '<b>' + fmtNum(x.w, 2) + '</b>' : '–'}</td><td class="num muted">${x.pv ? fmtNum(x.pv, 2) : '–'}</td><td class="num">${fmtNum(x.done, 2)}</td><td>${barH(luas ? x.done / luas : 0)}</td><td>${x.bl.map((bk) => `<span class="tag">${esc(bk)}</span>`).join(' ')}</td></tr>`).join('')}
-        <tr><td><b>Jumlah</b></td><td class="num"><b>${fmtNum(sum(rows, (x) => x.w), 2)}</b></td><td class="num muted">${fmtNum(sum(rows, (x) => x.pv), 2)}</td><td></td><td></td><td></td></tr>
       </table>` : '<div class="small muted">Belum ada urutan aktivitas untuk komoditas ini.</div>'}
       ${!lb.length ? `<p class="small muted" style="margin:8px 0 0">Belum ada rencana blok ${esc(kom.toLowerCase())} di tabel Rencana Blok Lahan.</p>` : ''}
     </div>

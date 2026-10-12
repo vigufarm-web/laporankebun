@@ -67,7 +67,8 @@ function fmtField(f, v) {
   }
 }
 const isNumField = (f) => ['int', 'num', 'money'].includes(f.t) || (f.t === 'calc' && ['int', 'num', 'num1', 'num2', 'money', 'pct'].includes(f.fmt));
-const NOSUM = /^(tahun|urutan|hm_|umur|lat|lng|harga|intensitas|kadar|rata|kg_per|kg_karung|ton_ha|pct|target_hk|hst|progres|jam_bulan|km_awal|km_akhir)/;
+// kolom yang tidak boleh dijumlah di baris Total (rata-rata, nilai kumulatif, saldo berulang, ha lintas tahap yang berbeda)
+const NOSUM = /^(tahun|urutan|hm_|umur|lat|lng|harga|intensitas|kadar|rata|kg_per|kg_karung|ton_ha|pct|target_hk|hst|progres|jam_bulan|km_awal|km_akhir|angin|hujan|suhu|lembap|hasil_ha|saldo_varietas|tampil)/;
 const isSumField = (f) => isNumField(f) && !NOSUM.test(f.k) && !(f.t === 'calc' && ['num1', 'pct'].includes(f.fmt));
 
 const thisYM = () => util.iso(util.today()).slice(0, 7);
