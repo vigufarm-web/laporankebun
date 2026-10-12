@@ -184,9 +184,7 @@ export function panenJualLines(A, kom) {
   const L = [];
   if (!kom || kom === 'Pisang') L.push(
     ['🍌 Pokok dipanen (PKK)', P('pisang_panen_pkk'), (r) => r.pkk_panen, 0, 'pkk'],
-    ['🍌 Box pisang (PH)', P('pisang_box'), (r) => r.jumlah_box, 0, 'box'],
-    ['   ↳ kelas A', P('pisang_box').filter((r) => r.kelas === 'A'), (r) => r.jumlah_box, 0, 'box', P('pisang_box')],
-    ['   ↳ berat', P('pisang_box'), (r) => r.berat_kg, 0, 'kg']);
+    ['🍌 Box pisang (PH)', P('pisang_box'), (r) => r.jumlah_box, 0, 'box']);
   if (!kom || kom === 'Padi') L.push(
     ['🌾 Beras masuk gudang', P('padi_giling'), (r) => r.beras_kg, 0, 'kg']);
   return L;
@@ -231,24 +229,22 @@ export async function renderOwner(main, A) {
       <div id="wp"></div>
     </div>
     <div id="o1"></div>
-    <h2 class="o-h">2. Progres tanam minggu ini</h2><div id="o2a"></div><div id="o2b"></div>
-    <h2 class="o-h">3. Tanggal tanam per blok</h2><div id="o3"></div>
-    <h2 class="o-h">4. Panen</h2><div id="o4"></div>
+    <h2 class="o-h">2. Progres kebun</h2><div id="o2a"></div><div id="o2b"></div>
+    <h2 class="o-h">3. Panen</h2><div id="o4"></div>
     <div id="o5"></div>`;
   const wp = weekPicker(() => renderOwner(main, A));
   wp.insertAdjacentHTML('beforeend', '<button class="btn primary" onclick="window.print()">🖨 Cetak / PDF</button>');
   $('#wp').replaceWith(wp);
   const gis = await loadGis(A);
 
-  // 1. lahan & tanaman
+  // 1. informasi kebun
   const st = serahTerima(gis), peta = petaKomoditas(gis);
   const pisT = tanamRows(A, 'Pisang'), padiT = tanamRows(A, 'Padi').filter((x) => x.st !== 'Sudah Panen');
   const bibit = sum(P('pisang_bibit'), (r) => n(r.qty_datang) - n(r.afkir) + n(r.splitting) - n(r.mortal) - n(r.ditanam));
   $('#o1').innerHTML = `
-    <h2 class="o-h">1. Lahan & tanaman</h2>
+    <h2 class="o-h">1. Informasi kebun</h2>
     <div class="kpis">
       ${st ? tile('Lahan sudah serah terima', `${fmtNum(st.haS, 2)} <small>ha</small>`, `${st.sudah.length} persil`) : ''}
-      ${st && st.belum.length ? tile('Sudah dibeli, belum serah terima', `${fmtNum(st.haB, 2)} <small>ha</small>`, `${st.belum.length} persil`) : ''}
       ${Object.keys(peta).length ? tile('Luas blok kebun (peta)', `${fmtNum(sum(Object.values(peta), (v) => v), 2)} <small>ha</small>`, Object.entries(peta).map(([k, v]) => `${esc(k)} ${fmtNum(v, 2)}`).join(' · ')) : ''}
       ${tile('🍌 Pisang tertanam', `${fmtNum(sum(pisT, (x) => x.luas), 2)} <small>ha</small>`, `${pisT.length} blok · ${fmtNum(sum(pisT, (x) => x.pop))} pokok`)}
       ${tile('🍌 Stok bibit pisang', fmtNum(bibit), 'pokok siap / di nursery')}
@@ -259,10 +255,9 @@ export async function renderOwner(main, A) {
     </div>`;
   renderProgres($('#o2a'), A, gis, 'Pisang');
   if (P('lahan_blok').some((r) => r.peruntukan === 'Padi')) renderProgres($('#o2b'), A, gis, 'Padi');
-  renderTanggalTanam($('#o3'), A, null);
   renderPanenJual($('#o4'), A, null);
 
-  // 5. data terakhir masuk
+  // data terakhir masuk
   const lastIn = (t) => P(t).reduce((m, r) => (r.tanggal > m ? r.tanggal : m), '');
   const src = [['Progres tanam', 'lahan_harian'], ['Panen PKK', 'pisang_panen_pkk'], ['Box PH', 'pisang_box'], ['Beras masuk', 'padi_giling']];
   $('#o5').innerHTML = `<div class="card o-card" style="margin-top:14px"><h3>Data terakhir yang masuk</h3><div style="display:flex;flex-wrap:wrap;gap:8px">
