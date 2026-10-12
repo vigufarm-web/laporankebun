@@ -177,6 +177,7 @@ const SUMMARY = {
     ${rows.length ? `<div class="card o-card"><h3>Stok per batch</h3><table class="mini"><tr><th>Datang</th><th>Keterangan</th><th>Klon</th><th class="num">Datang</th><th class="num">Ditanam</th><th class="num">Mati+afkir</th><th class="num">Stok</th><th class="num">Umur (bln)</th></tr>
       ${rows.sort((a, b) => String(b.r.tanggal_datang).localeCompare(String(a.r.tanggal_datang))).map((x) => `<tr><td>${fmtDate(x.r.tanggal_datang)}</td><td>${A.esc(x.r.keterangan || '')}</td><td>${A.esc(x.r.klon || '')}</td><td class="num">${fmtNum(n(x.r.qty_datang) + n(x.r.splitting))}</td><td class="num">${fmtNum(x.r.ditanam)}</td><td class="num">${fmtNum(n(x.r.afkir) + n(x.r.mortal))}</td><td class="num"><b>${fmtNum(x.saldo)}</b></td><td class="num">${fmtNum(x.umur, 1)}</td></tr>`).join('')}</table></div>` : ''}`;
   },
+  async pisang_progres(el, A) { await progres(el, A, 'Pisang'); },
   async pisang_panen(el, A) {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang');
     estimasiVsRealisasi(el.appendChild(document.createElement('div')), A);
