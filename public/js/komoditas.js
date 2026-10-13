@@ -1,7 +1,7 @@
 // Halaman per komoditas (Pisang / Padi) + Infrastruktur.
 // Setiap tab: ringkasan di atas, tabel data di bawah. Semua orang bisa melihat; tombol tambah/ubah hanya muncul
 // untuk pengguna yang login dan punya izin pada tabel tersebut.
-import { TABLES, util, displayOf, padiFase, lahanProgress, aktivitasUntuk, stokBenih, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM } from './schema.js';
+import { TABLES, POKOK_PER_HA, util, displayOf, padiFase, lahanProgress, aktivitasUntuk, stokBenih, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM } from './schema.js';
 import { loadGis, week, weekLabel, weekPicker, renderProgres, renderTanggalTanam, renderPanenJual, tanamRows } from './owner.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -10,7 +10,7 @@ const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'O
 const sum = (arr, fn) => arr.reduce((t, x) => t + n(fn(x)), 0);
 const keyB = util.key;
 const tile = (lbl, v, note) => `<div class="kpi"><div class="lbl">${lbl}</div><div class="val">${v}</div>${note ? `<div class="note">${note}</div>` : ''}</div>`;
-const POKOK_HA = 2000, SULAM = 0.1, MIN_UMUR_TANAM = 3;
+const POKOK_HA = POKOK_PER_HA, SULAM = 0.1, MIN_UMUR_TANAM = 3; // 2.000 pkk/ha — sama dengan hitungan netto tertanam
 
 // filter & isian awal untuk tabel bersama (progres tanam dipakai pisang & padi)
 const lahanFilters = (A, kom) => {

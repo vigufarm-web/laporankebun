@@ -532,29 +532,44 @@ export function lahanProgress(r, c) {
   return { per, last, total };
 }
 
+export const POKOK_PER_HA = 2000; // jarak tanam kebun: 1 ha netto = 2.000 pokok
+
 // Blok pisang TERTANAM — satu sumber untuk Ringkasan, peta, dan halaman lain.
-// Blok dihitung tertanam bila statusnya sudah tanam di Blok Tanam, ATAU tahap Tanam-nya tercatat di Progres Harian.
-// Luas = kolom "Luas (ha)" di Blok Tanam (sama dengan Excel, permintaan user agar mudah dipantau);
-// bila blok belum ada di Blok Tanam → luas tanam dari progres. bruto = % tanam × luas Rencana Blok (= tabel Progres kebun), sebagai pembanding.
+// Tertanam = status sudah tanam di Blok Tanam, ATAU tahap Tanam tercatat di Progres Harian.
+//  • luas  (NETTO, luas ditanami): kolom Luas (ha) di Blok Tanam (= Excel); blok baru yang statusnya belum diubah →
+//    pokok ÷ 2.000 bila pokok sudah diisi, kalau belum → gross ÷ rasio rata-rata (perkiraan). Dikunci maks. luas peta.
+//  • gross (luas LAHAN tertanam): luas peta di Rencana Blok × % tanam (= tabel Progres kebun);
+//    blok tanpa luas peta → netto × rasio rata-rata gross/netto (dihitung dari data, ±7,8%).
 export function pisangTertanam(c) {
-  const out = new Map();
   const akt = aktivitasUntuk(c, 'Pisang').slice(-1)[0]?.aktivitas; // tahap terakhir = Tanam
   const rencana = new Map(c.rows('lahan_blok').filter((b) => (b.peruntukan || 'Pisang') === 'Pisang').map((b) => [util.key(b.blok), b]));
   const pb = new Map(c.rows('pisang_blok').filter((r) => r.tanggal_tanam && !['Bongkar', 'Belum Tanam'].includes(r.status)).map((r) => [util.key(r.nama_blok), r]));
   const semua = new Map(c.rows('pisang_blok').map((r) => [util.key(r.nama_blok), r])); // termasuk yang statusnya belum diubah
-  // tanggal tanam pertama per blok dari progres harian
-  const tglH = new Map();
+  const tglH = new Map(); // tanggal tanam pertama per blok dari progres harian
   for (const h of c.rows('lahan_harian')) if (akt && h.aktivitas === akt && h.tanggal) { const k = util.key(h.blok); if (!tglH.has(k) || h.tanggal < tglH.get(k)) tglH.set(k, h.tanggal); }
+  // rasio gross/netto dari blok yang punya keduanya (dipakai hanya bila salah satu tidak ada)
+  let sg = 0, sn = 0;
+  for (const [k, r] of pb) { const b = rencana.get(k); if (b && n(b.luas_ha) && n(r.luas_ha)) { sg += n(b.luas_ha); sn += n(r.luas_ha); } }
+  const rasio = sn ? sg / sn : 1.078;
+  const out = new Map();
   for (const k of new Set([...pb.keys(), ...rencana.keys()])) {
     const r = pb.get(k), b = rencana.get(k);
     const pct = b ? lahanProgress(b, c).per.find((p) => p.akt === akt)?.pct || 0 : 0;
     if (!r && !(pct > 0)) continue;
-    const bruto = b ? n(b.luas_ha) * (pct > 0 ? pct : 1) : null;
+    const peta = b ? n(b.luas_ha) : null;
     const row = r || semua.get(k); // baris Blok Tanam (walau status belum diubah)
-    const luas = row && row.luas_ha != null ? n(row.luas_ha) : bruto;
-    // blok yang ditanam menurut progres: pokok diambil dari Blok Tanam bila sudah diisi walau status/tanggal belum diubah
-    const pk = r || (semua.get(k)?.pokok_tanam != null ? semua.get(k) : null);
-    out.set(k, { blok: r?.nama_blok || b.blok, luas, bruto, statusBelum: !r, tgl: r?.tanggal_tanam || tglH.get(k) || null, st: r?.status || 'PC',
+    const pk = row && row.pokok_tanam != null ? row : null;
+    let gross = peta != null ? peta * (pct > 0 ? pct : 1) : null;
+    let netto, nettoDari;
+    if (r && r.luas_ha != null) { netto = n(r.luas_ha); nettoDari = 'excel'; }
+    else if (pk && n(pk.pokok_tanam)) { netto = n(pk.pokok_tanam) / POKOK_PER_HA; nettoDari = 'pokok'; }
+    else if (gross != null) { netto = gross / rasio; nettoDari = 'perkiraan'; }
+    else { netto = n(row?.luas_ha); nettoDari = 'excel'; }
+    const lebih = peta != null && netto > peta + 1e-9; // netto melebihi luas peta → dikunci & ditandai
+    if (lebih) netto = peta;
+    if (gross == null) gross = netto * rasio;
+    out.set(k, { blok: r?.nama_blok || b?.blok || row?.nama_blok, luas: netto, gross, nettoDari, lebih, statusBelum: !r, rasio,
+      tgl: r?.tanggal_tanam || tglH.get(k) || null, st: r?.status || 'PC',
       pokok: pk ? n(pk.pokok_tanam) : null, pop: pk ? n(pk.pokok_tanam) - n(pk.kehilangan) + n(pk.sulam) : null, sumber: r ? 'blok' : 'progres' });
   }
   return out;

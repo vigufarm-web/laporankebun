@@ -131,7 +131,7 @@ export function renderProgres(el, A, gis, kom) {
       const pr0 = pisT.get(k), w = wkBy[k] || [];
       l.bindTooltip(esc(nm || ''), { permanent: true, direction: 'center', className: 'blk-label' });
       l.bindPopup(`<b style="font-size:14px">${esc(nm)}</b> <span class="small muted">${esc(f.properties?.Lahan || '')} · ${fmtNum(luasF(f), 2)} ha</span>
-        ${kom === 'Pisang' && pr0 ? `<div>Tanam <b>${fmtDate(pr0.tgl)}</b> · umur ${fmtNum(util.daysSince(pr0.tgl) / 30.44, 1)} bln · ${esc(pr0.st || '')} · ${fmtNum(pr0.luas, 2)} ha${pr0.sumber === 'progres' ? ' <span class="small muted">(dari progres harian)</span>' : ''}</div>` : ''}
+        ${kom === 'Pisang' && pr0 ? `<div>Tanam <b>${fmtDate(pr0.tgl)}</b> · umur ${fmtNum(util.daysSince(pr0.tgl) / 30.44, 1)} bln · ${esc(pr0.st || '')} · netto ${fmtNum(pr0.luas, 2)} ha · lahan ${fmtNum(pr0.gross, 2)} ha${pr0.sumber === 'progres' ? ' <span class="small muted">(dari progres harian)</span>' : ''}</div>` : ''}
         ${w.length ? `<div style="margin-top:4px"><b>Pekerjaan minggu ini:</b><table>${w.sort((x, y) => x.tanggal.localeCompare(y.tanggal)).map((r) => `<tr><td>${fmtDate(r.tanggal)}</td><td>${esc(r.aktivitas)}</td><td>${fmtNum(r.hasil_ha, 2)} ha</td></tr>`).join('')}</table></div>` : '<div class="small muted">Tidak ada pekerjaan tercatat minggu ini.</div>'}`);
     },
   }).addTo(map);
@@ -153,7 +153,7 @@ export function tanamRows(A, kom) {
     // Blok Tanam + blok yang sudah tercatat "Tanam" di Progres Harian (lihat pisangTertanam di schema.js)
     for (const [k, t] of pisangTertanam(ctx)) {
       const fp = firstPanen[k];
-      out.push({ kom: '🍌 Pisang', blok: t.blok, luas: t.luas, tgl: t.tgl, umur: util.daysSince(t.tgl) / 30.44, st: t.st, pop: t.pop, pokok: t.pokok, bruto: t.bruto, statusBelum: t.statusBelum, sumber: t.sumber,
+      out.push({ kom: '🍌 Pisang', blok: t.blok, luas: t.luas, tgl: t.tgl, umur: util.daysSince(t.tgl) / 30.44, st: t.st, pop: t.pop, pokok: t.pokok, gross: t.gross, nettoDari: t.nettoDari, lebih: t.lebih, statusBelum: t.statusBelum, rasio: t.rasio, sumber: t.sumber,
         panen: fp ? `Sudah panen sejak ${fmtDate(fp)}` : `± ${fmtDate(util.addDays(t.tgl, Math.round(PANEN_PERTAMA_BLN * 30.44)))}` });
     }
   }
@@ -247,8 +247,9 @@ export async function renderOwner(main, A) {
     <div class="kpis">
       ${st ? tile('Lahan sudah serah terima', `${fmtNum(st.haS, 2)} <small>ha</small>`, `${st.sudah.length} persil`) : ''}
       ${Object.keys(peta).length ? tile('Luas blok kebun (peta)', `${fmtNum(sum(Object.values(peta), (v) => v), 2)} <small>ha</small>`, Object.entries(peta).map(([k, v]) => `${esc(k)} ${fmtNum(v, 2)}`).join(' · ')) : ''}
-      ${(() => { const belum = pisT.filter((x) => x.statusBelum), tanpaPokok = pisT.filter((x) => x.pokok == null);
-        return tile('🍌 Pisang tertanam', `${fmtNum(sum(pisT, (x) => x.luas), 2)} <small>ha</small>`, `${pisT.length} blok · luas = kolom Luas (ha) di Blok Tanam<br><b>${fmtNum(sum(pisT, (x) => x.pokok))} pokok tanam</b> · hidup ${fmtNum(sum(pisT, (x) => x.pop))} (setelah kehilangan & sulam)${tanpaPokok.length ? ` · pokok belum diisi: ${tanpaPokok.map((x) => esc(x.blok)).join(', ')}` : ''}${belum.length ? `<br>${belum.map((x) => esc(x.blok)).join(', ')}: sudah Tanam di progres harian, status & tanggal tanam di Blok Tanam belum diubah` : ''}`); })()}
+      ${(() => { const nm = (arr) => arr.map((x) => esc(x.blok)).join(', '), dariPokok = pisT.filter((x) => x.nettoDari === 'pokok'), kira = pisT.filter((x) => x.nettoDari === 'perkiraan'), lebih = pisT.filter((x) => x.lebih), belum = pisT.filter((x) => x.statusBelum), tanpaPokok = pisT.filter((x) => x.pokok == null);
+        const cat = [dariPokok.length && `${nm(dariPokok)}: netto dari pokok ÷ 2.000`, kira.length && `${nm(kira)}: netto perkiraan (luas lahan ÷ ${fmtNum(kira[0].rasio, 3)})`, belum.length && `${nm(belum)}: status & tanggal tanam di Blok Tanam belum diubah`, tanpaPokok.length && `pokok belum diisi: ${nm(tanpaPokok)}`, lebih.length && `${nm(lebih)}: luas di Excel lebih besar dari luas peta → dikunci, mohon dicek`].filter(Boolean);
+        return tile('🍌 Pisang tertanam (netto)', `${fmtNum(sum(pisT, (x) => x.luas), 2)} <small>ha</small>`, `${pisT.length} blok · luas lahan tertanam (gross) <b>${fmtNum(sum(pisT, (x) => x.gross), 2)} ha</b> = tabel progres<br><b>${fmtNum(sum(pisT, (x) => x.pokok))} pokok tanam</b> · hidup ${fmtNum(sum(pisT, (x) => x.pop))} (setelah kehilangan & sulam)${cat.length ? `<br><span style="color:var(--warn)">${cat.join(' · ')}</span>` : ''}`); })()}
       ${tile('🍌 Stok bibit pisang', fmtNum(bibit), 'pokok siap / di nursery')}
       ${P('padi_panen').length ? tile('🌾 Panen padi (total)', `${fmtNum(sum(P('padi_panen'), (r) => r.gkp_kg), 1)} <small>kg gabah</small>`, `${new Set(P('padi_panen').map((r) => keyB(r.petak))).size} blok · ${fmtNum(sum(P('padi_panen'), (r) => r.jumlah_karung))} karung`) : ''}
       ${(() => { const pt = P('padi_petak'), tn = pt.filter((r) => r.status === 'Sudah Tanam'); return tile('🌾 Padi tertanam', `${fmtNum(sum(tn, (r) => r.luas_ha), 2)} <small>ha</small>`, `${tn.length} dari ${pt.length} blok (${fmtNum(sum(pt, (r) => r.luas_ha), 2)} ha)`); })()}
