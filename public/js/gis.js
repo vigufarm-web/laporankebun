@@ -1,6 +1,6 @@
 // Halaman GIS & Peta: layer dari shapefile/GeoJSON, pewarnaan per kolom atau per data divisi,
 // klik blok -> lihat/ubah data divisi & atribut peta, titik lokasi.
-import { TABLES, util, displayOf, padiFase, lahanProgress } from './schema.js';
+import { TABLES, util, displayOf, padiFase, lahanProgress, pisangTertanam } from './schema.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -28,9 +28,9 @@ const DATA_THEMES = {
   serah_terima: { label: 'Serah terima lahan', persil: true, colors: { 'Sudah serah terima': '#16a34a', 'Belum serah terima': '#facc15' },
     value: (name, A, f) => serahTerima(f) },
   pisang_status: { label: 'Status blok pisang (data)', colors: { 'Belum Tanam': '#fde68a', TBM: '#a3e635', PC: '#22c55e', R1: '#16a34a', R2: '#15803d', R3: '#166534', R4: '#14532d', Bongkar: '#ef4444' },
-    value: (name, A) => findRec(A, 'pisang_blok', name)?.status },
+    value: (name, A) => pisangTertanam(A.ctx).get(util.key(name))?.st || findRec(A, 'pisang_blok', name)?.status }, // progres "Tanam" harian ikut dihitung
   pisang_umur: { label: 'Umur tanam pisang (data)', colors: { '< 3 bln': '#fef9c3', '3–6 bln': '#fde047', '6–9 bln': '#a3e635', '9–12 bln': '#22c55e', '12–18 bln': '#15803d', '> 18 bln': '#14532d' },
-    value: (name, A) => { const r = findRec(A, 'pisang_blok', name); if (!r?.tanggal_tanam) return null; const m = util.daysSince(r.tanggal_tanam) / 30.44; return m < 3 ? '< 3 bln' : m < 6 ? '3–6 bln' : m < 9 ? '6–9 bln' : m < 12 ? '9–12 bln' : m < 18 ? '12–18 bln' : '> 18 bln'; } },
+    value: (name, A) => { const t = pisangTertanam(A.ctx).get(util.key(name)); if (!t?.tgl) return null; const m = util.daysSince(t.tgl) / 30.44; return m < 3 ? '< 3 bln' : m < 6 ? '3–6 bln' : m < 9 ? '6–9 bln' : m < 12 ? '9–12 bln' : m < 18 ? '12–18 bln' : '> 18 bln'; } },
   padi_fase: { label: 'Fase padi (data)', colors: { 'Belum Tanam': '#cbd5e1', Persemaian: '#a16207', Vegetatif: '#4ade80', Generatif: '#facc15', Pemasakan: '#f59e0b', 'Siap Panen': '#dc2626', 'Sudah Panen': '#94a3b8' },
     value: (name, A) => { const r = latestTanam(A, name); return r ? padiFase(r, A.ctx) : null; } },
   lahan_progres: { label: 'Progres pembukaan lahan (data)', colors: null,

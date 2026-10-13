@@ -1,6 +1,6 @@
 // Ringkasan PT VIGU FARM INDONESIA (halaman depan, terbuka untuk semua) + bagian-bagian yang
 // dipakai ulang di halaman komoditas (progres tanam mingguan + peta, tanggal tanam, panen & penjualan).
-import { util, displayOf, padiFase, lahanProgress, aktivitasUntuk, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM } from './schema.js';
+import { util, displayOf, padiFase, lahanProgress, aktivitasUntuk, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM, pisangTertanam } from './schema.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const n = util.n;
@@ -114,23 +114,24 @@ export function renderProgres(el, A, gis, kom) {
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 18, maxZoom: 21, attribution: 'Esri' }).addTo(map);
   const wkBy = {}; for (const r of wk) (wkBy[keyB(r.blok)] ??= []).push(r);
   const pisBy = Object.fromEntries(P('pisang_blok').map((r) => [keyB(r.nama_blok), r]));
+  const pisT = pisangTertanam(ctx); // sudah tanam = Blok Tanam atau progres "Tanam" harian
   const lbBy = Object.fromEntries(lbAll.map((r) => [keyB(r.blok), r]));
   const tanamPadi = new Set([...P('padi_tanam').filter((r) => r.tgl_tanam && padiFase(r, ctx) !== 'Sudah Panen').map((r) => keyB(r.petak)), ...P('padi_petak').filter((r) => r.status === 'Sudah Tanam').map((r) => keyB(r.nama_petak))]);
   const seen = new Set(), mine = [];
   const lyr = L.geoJSON(gis.blok.fc, {
     style: (f) => {
       const k = keyB(f.properties?.Nama_Blok), own = (f.properties?.Lahan || '') === kom;
-      const planted = kom === 'Pisang' ? pisBy[k]?.tanggal_tanam && pisBy[k].status !== 'Belum Tanam' : tanamPadi.has(k);
+      const planted = kom === 'Pisang' ? pisT.has(k) : tanamPadi.has(k);
       const c = wkBy[k] ? '#f97316' : !own ? '#e5e7eb' : planted ? '#16a34a' : lbBy[k] || pisBy[k] ? '#fde047' : '#d9f99d';
       return { color: wkBy[k] ? '#9a3412' : '#1f2937', weight: wkBy[k] ? 2.5 : 1, fillColor: c, fillOpacity: own || wkBy[k] ? 0.75 : 0.35 };
     },
     onEachFeature: (f, l) => {
       const nm = f.properties?.Nama_Blok, k = keyB(nm); seen.add(k);
       if ((f.properties?.Lahan || '') === kom) mine.push(l);
-      const pr0 = pisBy[k], w = wkBy[k] || [];
+      const pr0 = pisT.get(k), w = wkBy[k] || [];
       l.bindTooltip(esc(nm || ''), { permanent: true, direction: 'center', className: 'blk-label' });
       l.bindPopup(`<b style="font-size:14px">${esc(nm)}</b> <span class="small muted">${esc(f.properties?.Lahan || '')} · ${fmtNum(luasF(f), 2)} ha</span>
-        ${pr0?.tanggal_tanam ? `<div>Tanam <b>${fmtDate(pr0.tanggal_tanam)}</b> · umur ${fmtNum(util.daysSince(pr0.tanggal_tanam) / 30.44, 1)} bln · ${esc(pr0.status || '')}</div>` : ''}
+        ${kom === 'Pisang' && pr0 ? `<div>Tanam <b>${fmtDate(pr0.tgl)}</b> · umur ${fmtNum(util.daysSince(pr0.tgl) / 30.44, 1)} bln · ${esc(pr0.st || '')} · ${fmtNum(pr0.luas, 2)} ha${pr0.sumber === 'progres' ? ' <span class="small muted">(dari progres harian)</span>' : ''}</div>` : ''}
         ${w.length ? `<div style="margin-top:4px"><b>Pekerjaan minggu ini:</b><table>${w.sort((x, y) => x.tanggal.localeCompare(y.tanggal)).map((r) => `<tr><td>${fmtDate(r.tanggal)}</td><td>${esc(r.aktivitas)}</td><td>${fmtNum(r.hasil_ha, 2)} ha</td></tr>`).join('')}</table></div>` : '<div class="small muted">Tidak ada pekerjaan tercatat minggu ini.</div>'}`);
     },
   }).addTo(map);
@@ -149,11 +150,11 @@ export function tanamRows(A, kom) {
   if (!kom || kom === 'Pisang') {
     const firstPanen = {};
     for (const r of P('pisang_panen_pkk')) { const k = keyB(r.blok); if (!firstPanen[k] || r.tanggal < firstPanen[k]) firstPanen[k] = r.tanggal; }
-    for (const r of P('pisang_blok').filter((r) => r.tanggal_tanam && !['Bongkar', 'Belum Tanam'].includes(r.status))) {
-      const fp = firstPanen[keyB(r.nama_blok)];
-      out.push({ kom: '🍌 Pisang', blok: r.nama_blok, luas: r.luas_ha, tgl: r.tanggal_tanam, umur: util.daysSince(r.tanggal_tanam) / 30.44, st: r.status,
-        pop: n(r.pokok_tanam) - n(r.kehilangan) + n(r.sulam),
-        panen: fp ? `Sudah panen sejak ${fmtDate(fp)}` : `± ${fmtDate(util.addDays(r.tanggal_tanam, Math.round(PANEN_PERTAMA_BLN * 30.44)))}` });
+    // Blok Tanam + blok yang sudah tercatat "Tanam" di Progres Harian (lihat pisangTertanam di schema.js)
+    for (const [k, t] of pisangTertanam(ctx)) {
+      const fp = firstPanen[k];
+      out.push({ kom: '🍌 Pisang', blok: t.blok, luas: t.luas, tgl: t.tgl, umur: util.daysSince(t.tgl) / 30.44, st: t.st, pop: t.pop, netto: t.netto, sumber: t.sumber,
+        panen: fp ? `Sudah panen sejak ${fmtDate(fp)}` : `± ${fmtDate(util.addDays(t.tgl, Math.round(PANEN_PERTAMA_BLN * 30.44)))}` });
     }
   }
   if (!kom || kom === 'Padi') {
@@ -246,7 +247,7 @@ export async function renderOwner(main, A) {
     <div class="kpis">
       ${st ? tile('Lahan sudah serah terima', `${fmtNum(st.haS, 2)} <small>ha</small>`, `${st.sudah.length} persil`) : ''}
       ${Object.keys(peta).length ? tile('Luas blok kebun (peta)', `${fmtNum(sum(Object.values(peta), (v) => v), 2)} <small>ha</small>`, Object.entries(peta).map(([k, v]) => `${esc(k)} ${fmtNum(v, 2)}`).join(' · ')) : ''}
-      ${tile('🍌 Pisang tertanam', `${fmtNum(sum(pisT, (x) => x.luas), 2)} <small>ha</small>`, `${pisT.length} blok · ${fmtNum(sum(pisT, (x) => x.pop))} pokok`)}
+      ${(() => { const baru = pisT.filter((x) => x.sumber === 'progres'), net = pisT.filter((x) => x.netto != null); return tile('🍌 Pisang tertanam', `${fmtNum(sum(pisT, (x) => x.luas), 2)} <small>ha</small>`, `${pisT.length} blok · luas bruto (= tabel progres) · netto ${fmtNum(sum(net, (x) => x.netto), 2)} ha untuk ${net.length} blok · ${fmtNum(sum(pisT, (x) => x.pop))} pokok${baru.length ? ` · ${baru.length} blok baru dari progres harian (${baru.map((x) => esc(x.blok)).join(', ')}): netto & pokok belum diinput` : ''}`); })()}
       ${tile('🍌 Stok bibit pisang', fmtNum(bibit), 'pokok siap / di nursery')}
       ${P('padi_panen').length ? tile('🌾 Panen padi (total)', `${fmtNum(sum(P('padi_panen'), (r) => r.gkp_kg), 1)} <small>kg gabah</small>`, `${new Set(P('padi_panen').map((r) => keyB(r.petak))).size} blok · ${fmtNum(sum(P('padi_panen'), (r) => r.jumlah_karung))} karung`) : ''}
       ${(() => { const pt = P('padi_petak'), tn = pt.filter((r) => r.status === 'Sudah Tanam'); return tile('🌾 Padi tertanam', `${fmtNum(sum(tn, (r) => r.luas_ha), 2)} <small>ha</small>`, `${tn.length} dari ${pt.length} blok (${fmtNum(sum(pt, (r) => r.luas_ha), 2)} ha)`); })()}
