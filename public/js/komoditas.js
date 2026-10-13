@@ -28,7 +28,8 @@ export const KOM = {
   pisang: { nama: 'Pisang', icon: '🍌', key: 'Pisang', tabs: [
     { k: 'bibit', l: 'Stok Bibit', tables: ['pisang_bibit'] },
     // menu Tertanam disembunyikan (permintaan user); data blok tetap ada — dipakai Ringkasan & peta, diubah lewat Input Excel
-    { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], week: true },
+    // Blok Tanam (pokok, tanggal tanam, status) disembunyikan dari tampilan tapi ikut di Excel halaman ini
+    { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], excel: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas', 'pisang_blok'], week: true },
     { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_estimasi', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
   ] },
   padi: { nama: 'Padi', icon: '🌾', key: 'Padi', tabs: [

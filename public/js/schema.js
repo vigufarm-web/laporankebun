@@ -532,26 +532,30 @@ export function lahanProgress(r, c) {
   return { per, last, total };
 }
 
-// Blok pisang TERTANAM — satu sumber untuk Ringkasan, peta, dan halaman lain. Luas = BRUTO (luas blok di Rencana Blok),
-// sama dengan baris "Tanam" di tabel Progres kebun (permintaan user). Blok dihitung tertanam bila:
-// 1) tahap Tanam-nya tercatat di Progres Harian → luas = % tanam × luas bruto (maks. 100%, sama dengan tabel progres), atau
-// 2) di data Blok Tanam statusnya sudah tanam tapi belum ada progres Tanam → luas bruto penuh.
-// netto = luas ditanami dari data Blok Tanam (bila ada), ditampilkan sebagai keterangan.
+// Blok pisang TERTANAM — satu sumber untuk Ringkasan, peta, dan halaman lain.
+// Blok dihitung tertanam bila statusnya sudah tanam di Blok Tanam, ATAU tahap Tanam-nya tercatat di Progres Harian.
+// Luas = kolom "Luas (ha)" di Blok Tanam (sama dengan Excel, permintaan user agar mudah dipantau);
+// bila blok belum ada di Blok Tanam → luas tanam dari progres. bruto = % tanam × luas Rencana Blok (= tabel Progres kebun), sebagai pembanding.
 export function pisangTertanam(c) {
   const out = new Map();
   const akt = aktivitasUntuk(c, 'Pisang').slice(-1)[0]?.aktivitas; // tahap terakhir = Tanam
   const rencana = new Map(c.rows('lahan_blok').filter((b) => (b.peruntukan || 'Pisang') === 'Pisang').map((b) => [util.key(b.blok), b]));
   const pb = new Map(c.rows('pisang_blok').filter((r) => r.tanggal_tanam && !['Bongkar', 'Belum Tanam'].includes(r.status)).map((r) => [util.key(r.nama_blok), r]));
+  const semua = new Map(c.rows('pisang_blok').map((r) => [util.key(r.nama_blok), r])); // termasuk yang statusnya belum diubah
   // tanggal tanam pertama per blok dari progres harian
   const tglH = new Map();
   for (const h of c.rows('lahan_harian')) if (akt && h.aktivitas === akt && h.tanggal) { const k = util.key(h.blok); if (!tglH.has(k) || h.tanggal < tglH.get(k)) tglH.set(k, h.tanggal); }
   for (const k of new Set([...pb.keys(), ...rencana.keys()])) {
     const r = pb.get(k), b = rencana.get(k);
     const pct = b ? lahanProgress(b, c).per.find((p) => p.akt === akt)?.pct || 0 : 0;
-    const luas = b ? n(b.luas_ha) * (pct > 0 ? pct : r ? 1 : 0) : n(r.luas_ha); // tanpa rencana blok → pakai luas di Blok Tanam
     if (!r && !(pct > 0)) continue;
-    out.set(k, { blok: r?.nama_blok || b.blok, luas, netto: r ? n(r.luas_ha) : null, tgl: r?.tanggal_tanam || tglH.get(k) || null, st: r?.status || 'PC',
-      pop: r ? n(r.pokok_tanam) - n(r.kehilangan) + n(r.sulam) : null, sumber: r ? 'blok' : 'progres' });
+    const bruto = b ? n(b.luas_ha) * (pct > 0 ? pct : 1) : null;
+    const row = r || semua.get(k); // baris Blok Tanam (walau status belum diubah)
+    const luas = row && row.luas_ha != null ? n(row.luas_ha) : bruto;
+    // blok yang ditanam menurut progres: pokok diambil dari Blok Tanam bila sudah diisi walau status/tanggal belum diubah
+    const pk = r || (semua.get(k)?.pokok_tanam != null ? semua.get(k) : null);
+    out.set(k, { blok: r?.nama_blok || b.blok, luas, bruto, statusBelum: !r, tgl: r?.tanggal_tanam || tglH.get(k) || null, st: r?.status || 'PC',
+      pokok: pk ? n(pk.pokok_tanam) : null, pop: pk ? n(pk.pokok_tanam) - n(pk.kehilangan) + n(pk.sulam) : null, sumber: r ? 'blok' : 'progres' });
   }
   return out;
 }
