@@ -135,8 +135,9 @@ function renderSidebar(info, route) {
   let h = nav('', '🏢', '<b>Ringkasan</b>', route === '');
   for (const [k, K] of Object.entries(KOM)) {
     const on = route.startsWith('k/' + k);
-    h += `<div class="nav-sec">${nav('k/' + k, K.icon, K.nama, on && K.tabs.length === 1)}`;
-    if (K.tabs.length > 1) h += `<div class="nav-sub">${K.tabs.map((t) => nav(`k/${k}/${t.k}`, '', t.l, route === `k/${k}/${t.k}` || route.startsWith(`k/${k}/${t.k}/`) || (route === 'k/' + k && t === K.tabs[0]))).join('')}</div>`;
+    const tabs = K.tabs.filter((t) => !t.admin || isAdmin(me)); // tab khusus admin tidak tampil di menu pengunjung
+    h += `<div class="nav-sec">${nav('k/' + k, K.icon, K.nama, on && tabs.length === 1)}`;
+    if (tabs.length > 1) h += `<div class="nav-sub">${tabs.map((t) => nav(`k/${k}/${t.k}`, '', t.l, route === `k/${k}/${t.k}` || route.startsWith(`k/${k}/${t.k}/`) || (route === 'k/' + k && t === K.tabs[0]))).join('')}</div>`;
     h += '</div>';
   }
   h += nav('gis', '🗺️', 'Peta & Lahan', route === 'gis');

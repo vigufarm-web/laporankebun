@@ -27,7 +27,8 @@ const lahanFilters = (A, kom) => {
 export const KOM = {
   pisang: { nama: 'Pisang', icon: '🍌', key: 'Pisang', tabs: [
     { k: 'bibit', l: 'Stok Bibit', tables: ['pisang_bibit'] },
-    // menu Tertanam disembunyikan (permintaan user); data blok tetap ada — dipakai Ringkasan & peta, diubah lewat Input Excel
+    // Tertanam: hanya untuk admin (permintaan user) — pokok tanam per blok, tanggal tanam, tabel Blok Tanam
+    { k: 'tertanam', l: 'Tertanam', tables: ['pisang_blok', 'pisang_kegiatan'], excel: ['pisang_blok'], admin: true },
     // Blok Tanam (pokok, tanggal tanam, status) disembunyikan dari tampilan tapi ikut di Excel halaman ini
     { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], excel: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas', 'pisang_blok'], week: true },
     { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_estimasi', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
@@ -46,7 +47,8 @@ let iklimBulan = null; // bulan yang dilihat di halaman iklim (YYYY-MM)
 
 export async function renderKomoditas(main, A, komKey, tabKey, sub) {
   const K = KOM[komKey];
-  const tab = K.tabs.find((t) => t.k === tabKey) || K.tabs[0];
+  const tabs = K.tabs.filter((t) => !t.admin || A.isAdmin()); // tab khusus admin disembunyikan dari pengunjung
+  const tab = tabs.find((t) => t.k === tabKey) || tabs[0];
   const table = tab.tables.includes(sub) ? sub : tab.tables[0];
   const { esc } = A;
   const rerender = () => renderKomoditas(main, A, komKey, tab.k, table);
@@ -56,7 +58,7 @@ export async function renderKomoditas(main, A, komKey, tabKey, sub) {
       ${tab.week ? `<p class="desc"><b>${weekLabel()}</b></p>` : ''}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;justify-content:flex-end"><div class="actions" id="kXl"></div><div id="kWeek"></div></div>
     </div>
-    ${K.tabs.length > 1 ? `<div class="tabs">${K.tabs.map((t) => `<a href="#/k/${komKey}/${t.k}" class="${t === tab ? 'on' : ''}">${esc(t.l)}</a>`).join('')}</div>` : ''}
+    ${tabs.length > 1 ? `<div class="tabs">${tabs.map((t) => `<a href="#/k/${komKey}/${t.k}" class="${t === tab ? 'on' : ''}">${esc(t.l)}${t.admin ? ' 🔒' : ''}</a>`).join('')}</div>` : ''}
     <div id="kSum"></div>
     <h2 class="o-h">📋 Data ${esc(tab.l.toLowerCase())}</h2>
     ${tab.tables.length > 1 ? `<div class="tabs sub">${tab.tables.map((t) => `<a href="#/k/${komKey}/${tab.k}/${t}" class="${t === table ? 'on' : ''}">${esc(TABLES[t].title)} <span class="muted">(${A.ctx.rows(t).filter((r) => (lahanFilters(A, K.key)[t]?.filter || (() => true))(r)).length})</span></a>`).join('')}</div>` : ''}
@@ -180,6 +182,21 @@ const SUMMARY = {
       ${rows.sort((a, b) => String(b.r.tanggal_datang).localeCompare(String(a.r.tanggal_datang))).map((x) => `<tr><td>${fmtDate(x.r.tanggal_datang)}</td><td>${A.esc(x.r.keterangan || '')}</td><td>${A.esc(x.r.klon || '')}</td><td class="num">${fmtNum(n(x.r.qty_datang) + n(x.r.splitting))}</td><td class="num">${fmtNum(x.r.ditanam)}</td><td class="num">${fmtNum(n(x.r.afkir) + n(x.r.mortal))}</td><td class="num"><b>${fmtNum(x.saldo)}</b></td><td class="num">${fmtNum(x.umur, 1)}</td></tr>`).join('')}</table></div>` : ''}`;
   },
   async pisang_progres(el, A) { await progres(el, A, 'Pisang'); },
+  // khusus admin: tertanam per blok (luas netto & pokok sama dengan Ringkasan)
+  async pisang_tertanam(el, A) {
+    const { fmtNum, esc, ctx } = A; const P = ctx.rows;
+    const t = tanamRows(A, 'Pisang');
+    const st = {}; for (const x of t) { st[x.st || '-'] ??= { b: 0, l: 0, p: 0 }; st[x.st || '-'].b++; st[x.st || '-'].l += n(x.luas); st[x.st || '-'].p += n(x.pokok); }
+    const tk = new Set(t.map((x) => keyB(x.blok)));
+    const belum = P('pisang_blok').filter((r) => r.status === 'Belum Tanam' && !tk.has(keyB(r.nama_blok)));
+    el.innerHTML = `<div class="kpis">
+      ${tile('Luas tertanam (netto)', `${fmtNum(sum(t, (x) => x.luas), 2)} <small>ha</small>`, `${t.length} blok · lahan (gross) ${fmtNum(sum(t, (x) => x.gross), 2)} ha`)}
+      ${tile('Pokok tanam', fmtNum(sum(t, (x) => x.pokok)), `hidup ${fmtNum(sum(t, (x) => x.pop))} (setelah kehilangan & sulam)`)}
+      ${Object.entries(st).map(([k, v]) => tile(`Status ${esc(k)}`, `${v.b} <small>blok</small>`, `${fmtNum(v.l, 2)} ha · ${fmtNum(v.p)} pkk tanam`)).join('')}
+      ${belum.length ? tile('Blok belum tanam', `${belum.length} <small>blok</small>`, `${fmtNum(sum(belum, (r) => r.luas_ha), 2)} ha (luas peta)`) : ''}
+    </div><h2 class="o-h">Tanggal tanam per blok</h2><div id="kT"></div>`;
+    renderTanggalTanam($('#kT', el), A, 'Pisang');
+  },
   async pisang_panen(el, A) {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang');
     estimasiVsRealisasi(el.appendChild(document.createElement('div')), A);
