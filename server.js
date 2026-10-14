@@ -516,6 +516,8 @@ async function api(req, res, url) {
     const table = parts[2];
     if (!TABLES[table]) return send(res, 404, { error: 'Tabel tidak dikenal' });
     const id = parts[3] ? Number(parts[3]) : null;
+    // ?jenis=Blok Tanam → satu layer peta saja (halaman Tim Kebun di HP tidak perlu mengunduh semua layer)
+    if (m === 'GET' && table === 'gis_layer' && url.searchParams.get('jenis')) { const j = url.searchParams.get('jenis'); return send(res, 200, db.prepare('SELECT * FROM gis_layer WHERE jenis=? OR nama=? ORDER BY id').all(j, j)); }
     if (m === 'GET') return send(res, 200, db.prepare(`SELECT * FROM ${q(table)} ORDER BY id`).all());
     if (!canEdit(user, table)) return send(res, 403, { error: `Anda tidak punya izin mengubah "${TABLES[table].title}"` });
     if (m === 'POST' && parts[3] === 'hapus') {
