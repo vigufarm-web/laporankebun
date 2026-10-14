@@ -15,6 +15,13 @@ const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 const tglID = (s) => { const d = util.d(s); return d ? `${d.getDate()} ${BULAN[d.getMonth()].slice(0, 3)} ${d.getFullYear()}` : '–'; };
 let bulanPilih = null; // tab bulan yang sedang dibuka
 let mingguPilih = 'ini'; // tab target minggu (ini / depan)
+let petaPilih = { w: 'ini', a: null }; // peta: minggu & kegiatan yang disorot (a = null → semua)
+let gisBlok = null; // janji data layer "Blok Tanam" (diambil ulang saat "Muat ulang")
+let leafletP = null;
+const loadLeaflet = () => (leafletP ??= Promise.all(['/vendor/leaflet.css', '/vendor/leaflet.js'].map((src) => new Promise((ok, fail) => {
+  const e = src.endsWith('.css') ? Object.assign(document.createElement('link'), { rel: 'stylesheet', href: src }) : Object.assign(document.createElement('script'), { src });
+  e.onload = ok; e.onerror = () => fail(new Error('Gagal memuat ' + src)); document.head.appendChild(e);
+}))));
 const HARI_KERJA = 6; // Senin–Sabtu (sama dengan jadwal Estimasi Land Prep)
 // hari kerja (Senin–Sabtu) dari a s/d b (termasuk keduanya)
 function hariKerja(a, b) { let c = 0; const d = new Date(a); d.setHours(0, 0, 0, 0); const e = new Date(b); e.setHours(0, 0, 0, 0); while (d <= e) { if (d.getDay() !== 0) c++; d.setDate(d.getDate() + 1); } return c; }
@@ -75,6 +82,10 @@ function render(ctx) {
   }).filter((x) => x.target > 0.005 || x.selesai > 0.005);
   const depan0 = util.addDays(sIso, 7), depan1 = util.addDays(mIso, 7);
   const MGG = [{ k: 'ini', lbl: `Minggu ini (${lblMinggu(sIso)})`, w: targetMinggu(sIso, mIso, true), kini: true }, { k: 'depan', lbl: `Minggu depan (${lblMinggu(depan0)})`, w: targetMinggu(depan0, depan1, false) }];
+  petaPilih = { w: mingguPilih, a: MGG.find((m) => m.k === mingguPilih)?.w.some((x) => x.a === petaPilih.a) ? petaPilih.a : null };
+  // progres per blok × tahap (semua blok pisang di Rencana Blok) — sama dengan halaman Progres Tanam di aplikasi
+  const matriks = P('lahan_blok').filter((r) => (r.peruntukan || 'Pisang') === 'Pisang').sort((a, b) => String(a.blok).localeCompare(String(b.blok), 'id', { numeric: true })).map((r) => ({ r, p: lahanProgress(r, ctx) }));
+  const heat = (p) => (p >= 0.98 ? 'background:#bbf7d0' : p >= 0.5 ? 'background:#fef08a' : p > 0 ? 'background:#fed7aa' : 'color:#bbb');
   const months = []; for (let m = ymOf(awal); m <= ymOf(akhir); m = ymOf(iso(new Date(+m.slice(0, 4), +m.slice(5), 1)))) months.push(m);
   // bulan yang dibuka: pilihan terakhir (tetap saat "Muat ulang"), selain itu bulan ini
   const pilih = months.includes(bulanPilih) ? bulanPilih : months.includes(ymNow) ? ymNow : months[ymNow < months[0] ? 0 : months.length - 1];
@@ -93,15 +104,26 @@ function render(ctx) {
     <h2>🔨 Target kerja per minggu</h2>
     <div class="tabs" id="tabMgg">${MGG.map((m) => `<a data-w="${m.k}" class="${m.k === mingguPilih ? 'on' : ''}">${esc(m.lbl)}</a>`).join('')}</div>
     ${MGG.map((m) => `<div class="card o-card isiMgg" data-w="${m.k}"${m.k === mingguPilih ? '' : ' hidden'}>${m.w.length ? m.w.map((x) => `
-      <div style="padding:8px 0;border-bottom:1px solid var(--line)">
+      <div class="wkAkt" data-w="${m.k}" data-a="${esc(x.a)}" style="padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer" title="Klik untuk melihat lokasi blok di peta">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">
-          <b>${esc(x.a)}</b>
+          <b>${esc(x.a)} <span class="small" style="color:var(--brand);font-weight:500">📍 lihat di peta</span></b>
           <span>${m.kini ? `selesai <b>${f2(x.selesai)}</b> dari ` : ''}target <b>${f2(x.target)} ha</b>${m.kini ? ` <span class="small muted">(${pctTxt(x.selesai, x.target)})</span>` : ''}</span>
         </div>
         ${m.kini ? `<div class="mini-bar"><i style="width:${pct(x.selesai, x.target)}%"></i></div>` : ''}
         <div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:5px">${x.bl.map((b) => `<span class="st ${b.beres ? 'ok' : b.tunggak > 0.005 ? 'no' : 'wait'}">${b.beres ? '✅ ' : ''}${esc(b.blok)} ${f2(b.ha)} ha${b.tunggak > 0.005 ? ' · tunggakan' : ''}</span>`).join('')}</div>
       </div>`).join('') : '<div class="sub" style="margin:0">Tidak ada pekerjaan terjadwal.</div>'}
       <div class="sub" style="margin:8px 0 0">Target = luas yang harus dikerjakan dalam minggu itu sesuai rencana${m.kini ? ' (merah = tunggakan minggu lalu yang belum selesai)' : ''}. ${['Sabtu & Minggu', 'Minggu'].map((l) => { const xs = acts.filter((a) => (a.libur || liburDefault(a.aktivitas)) === l); return xs.length ? `${xs.map((a) => esc(a.aktivitas)).join(', ')}: kerja ${l === 'Minggu' ? 'Senin–Sabtu' : 'Senin–Jumat'}` : ''; }).filter(Boolean).join(' · ')}.</div></div>`).join('')}
+
+    <h2>🗺️ Peta blok <span class="sub" id="petaJudul"></span></h2>
+    <div class="card o-card">
+      <div class="sub" style="margin:0 0 6px">Klik nama kegiatan di <b>Target kerja per minggu</b> (atau pilihan di bawah) untuk melihat lokasi bloknya. Klik blok di peta untuk rincian.</div>
+      <div id="petaPilih" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px"></div>
+      <div id="peta" style="height:400px;border-radius:8px;overflow:hidden;background:#e5ebe6"><div class="sub" style="padding:12px">Memuat peta…</div></div>
+      <div class="small muted" id="petaNote" style="margin-top:6px"></div>
+      <div class="small" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:10px">
+        <span><i class="lg" style="background:#f97316"></i>target (belum selesai)</span><span><i class="lg" style="background:#dc2626"></i>tunggakan</span><span><i class="lg" style="background:#16a34a"></i>target selesai</span>
+        <span><i class="lg" style="background:#bbf7d0"></i>sudah tanam</span><span><i class="lg" style="background:#fde68a"></i>blok rencana</span><span><i class="lg" style="background:#e5e7eb"></i>lainnya</span></div>
+    </div>
 
     <h2>📆 Target per bulan</h2>
     <div class="tabs" id="tabBln">${months.map((m) => `<a data-m="${m}" class="${m === pilih ? 'on' : ''}">${esc(BULAN[+m.slice(5) - 1])}${m.slice(0, 4) !== ymNow.slice(0, 4) ? ' ' + m.slice(0, 4) : ''}</a>`).join('')}</div>
@@ -134,9 +156,23 @@ function render(ctx) {
           <td>${tr ? (ok ? tglID(tr.selesai) : 'minggu ' + lblMinggu(tr.selesai)) : '–'}</td><td><span class="st ${ok ? 'ok' : lw ? 'no' : 'on'}">${ok ? '✅ Sudah tanam' : lw ? 'Terlambat' : 'Sesuai'}</span></td></tr>`; }).join('')}
     </table></div>
 
+    <h2>📊 Progres per blok × tahap</h2>
+    <div class="card o-card">
+      <div class="sub" style="margin:0 0 6px">% luas blok yang sudah dikerjakan tiap tahap, dari Progres Harian (sama dengan halaman Progres Tanam di aplikasi). Klik nama blok untuk melihat lokasinya di peta.</div>
+      <div style="overflow:auto;max-height:75vh"><table class="mini heat mx"><thead><tr><th>Blok</th><th class="num">Luas</th>${acts.map((a) => `<th class="h">${esc(a.aktivitas)}</th>`).join('')}<th>Total</th></tr></thead><tbody>
+      ${matriks.map((x) => `<tr><td><a class="mxBlok" data-b="${esc(x.r.blok)}"><b>${esc(x.r.blok)}</b></a></td><td class="num">${f2(n(x.r.luas_ha))}</td>${x.p.per.map((p) => `<td class="h" style="${heat(p.pct)}" title="${f2(p.ha)} ha">${p.pct ? Math.round(p.pct * 100) + '%' : '·'}</td>`).join('')}<td style="min-width:70px"><div class="mini-bar"><i style="width:${x.p.total * 100}%"></i></div></td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="small" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:10px"><span><i class="lg" style="background:#bbf7d0"></i>≥ 98%</span><span><i class="lg" style="background:#fef08a"></i>50–97%</span><span><i class="lg" style="background:#fed7aa"></i>1–49%</span><span>· belum ada</span></div>
+    </div>
+
     <h2>Pekerjaan tercatat minggu ini <span class="sub">(${tglID(sIso)} – ${tglID(mIso)})</span></h2>
     <div class="card o-card">${wk.length ? `<table class="mini"><tr><th>Kegiatan</th><th class="num">Hasil (ha)</th><th>Blok</th></tr>
       ${acts.map((a) => a.aktivitas).filter((a) => wk.some((r) => r.aktivitas === a)).map((a) => { const w = wk.filter((r) => r.aktivitas === a); return `<tr><td>${esc(a)}</td><td class="num">${f2(w.reduce((s, r) => s + n(r.hasil_ha), 0))}</td><td>${[...new Set(w.map((r) => r.blok))].map((b) => `<span class="tag">${esc(b)}</span>`).join(' ')}</td></tr>`; }).join('')}</table>` : '<div class="sub" style="margin:0">Belum ada pekerjaan tercatat minggu ini.</div>'}</div>
+    <style>.kb i.lg{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px;border:1px solid #0002}
+      .kb .mx th.h{font-size:11px;white-space:normal;min-width:54px;text-align:center}.kb .mx thead th{position:sticky;top:0;z-index:2}
+      .kb .mx td:first-child,.kb .mx th:first-child{position:sticky;left:0;background:#fff;z-index:1}.kb .mx thead th:first-child{z-index:3}
+      .kb .peta-jauh .blk-label:not(.sorot){display:none}.kb .blk-label.sorot{font-size:12px}
+      .kb .mxBlok,.kb #petaPilih a{cursor:pointer}.kb .wkAkt:hover{background:#f6faf7}</style>
 
     <div class="foot">Cara baca: jadwal mengikuti <b>Rencana Kerja</b> — tiap kegiatan dikerjakan timnya blok demi blok sesuai urutan (Land Clearing → … → Tanam) dengan kecepatan per kegiatan
       (${acts.map((a) => `${esc(a.aktivitas)} ${String(n(a.hari_per_ha) || '–').replace('.', ',')} hari/ha`).join(', ')}). ${['Sabtu & Minggu', 'Minggu'].map((l) => { const xs = acts.filter((a) => (a.libur || liburDefault(a.aktivitas)) === l); return xs.length ? `${xs.map((a) => esc(a.aktivitas)).join(', ')} libur ${l}` : ''; }).filter(Boolean).join('; ')}.
@@ -146,7 +182,81 @@ function render(ctx) {
     mingguPilih = a.dataset.w;
     el.querySelectorAll('#tabMgg a').forEach((x) => x.classList.toggle('on', x === a));
     el.querySelectorAll('.isiMgg').forEach((c) => (c.hidden = c.dataset.w !== mingguPilih));
+    pilihPeta(mingguPilih, petaPilih.a, false); // peta ikut minggu yang dipilih
   }));
+
+  // ---------------- peta blok: sorot blok target kegiatan terpilih pada minggu terpilih (data sama dengan daftar di atas)
+  let peta = null, lapis = null;
+  const PW = () => MGG.find((m) => m.k === petaPilih.w) || MGG[0];
+  const sorotan = (akt) => { // key blok → { blok, ha, beres, tunggak, akt[] }
+    const out = new Map();
+    for (const x of PW().w) if (!akt || x.a === akt) for (const b of x.bl) {
+      const k = key(b.blok), o = out.get(k) || { blok: b.blok, ha: 0, beres: true, tunggak: 0, akt: [] };
+      o.ha += b.ha; o.beres = o.beres && b.beres; o.tunggak += b.tunggak; o.akt.push({ a: x.a, ha: b.ha, beres: b.beres, tunggak: b.tunggak }); out.set(k, o);
+    }
+    return out;
+  };
+  const popupBlok = (f) => {
+    const nm = f.properties?.Nama_Blok || '', k = key(nm), b = lb.get(k), pis = (f.properties?.Lahan || '') === 'Pisang';
+    const rs = R.filter((r) => key(r.blok) === k).sort((x, y) => x.urut - y.urut), now = rs.find((r) => !r.beres), tr = tanamRow.get(k), sw = sorotan(null).get(k);
+    const pr = b ? lahanProgress(b, ctx) : null;
+    return `<b style="font-size:14px">${esc(nm)}</b> <span class="small muted">${esc(f.properties?.Lahan || '')}${b ? ` · ${f2(n(b.luas_ha))} ha` : ''}</span>
+      ${pis ? `<div>${tt.has(k) ? '✅ Sudah tanam' : pr ? `Progres semua tahap <b>${f0(pr.total * 100)}%</b>` : 'Belum ada di Rencana Blok'}${!tt.has(k) && now ? ` · sekarang: <b>${esc(now.aktivitas)}</b>` : ''}</div>` : ''}
+      ${tr && !tt.has(k) ? `<div>Rencana tanam: minggu ${lblMinggu(tr.selesai)}</div>` : ''}
+      ${sw ? `<div style="margin-top:4px"><b>Target ${esc(PW().lbl.toLowerCase())}:</b>${sw.akt.map((x) => `<div>${x.beres ? '✅' : x.tunggak > 0.005 ? '🔴' : '•'} ${esc(x.a)} ${f2(x.ha)} ha</div>`).join('')}</div>` : pis ? '<div class="small muted">Tidak ada target minggu ini.</div>' : ''}`;
+  };
+  const warnai = (fit) => {
+    if (!lapis) return;
+    const S = sorotan(petaPilih.a), hit = [], ada = new Set();
+    lapis.eachLayer((l) => {
+      const k = key(l.feature.properties?.Nama_Blok), s = S.get(k), pis = (l.feature.properties?.Lahan || '') === 'Pisang'; ada.add(k);
+      const fill = s ? (s.beres ? '#16a34a' : s.tunggak > 0.005 ? '#dc2626' : '#f97316') : !pis ? '#e5e7eb' : tt.has(k) ? '#bbf7d0' : blokRen.has(k) ? '#fde68a' : '#f1f5f9';
+      l.setStyle({ color: s ? '#7c2d12' : '#1f2937', weight: s ? 2.5 : 0.8, fillColor: fill, fillOpacity: s ? 0.85 : 0.45 });
+      if (s) { hit.push(l); l.bringToFront(); }
+      l.getTooltip()?.getElement()?.classList.toggle('sorot', !!s); // label blok yang disorot selalu tampil
+    });
+    $('#petaJudul', el).textContent = `· ${petaPilih.a || 'semua kegiatan'} · ${PW().lbl.toLowerCase()}`;
+    const hilang = [...S.values()].filter((s) => !ada.has(key(s.blok))).map((s) => s.blok);
+    $('#petaNote', el).innerHTML = (S.size ? `${S.size} blok disorot${petaPilih.a ? ` · target ${esc(petaPilih.a)} ${f2([...S.values()].reduce((t, s) => t + s.ha, 0))} ha` : ' (ada pekerjaan terjadwal)'}.` : 'Tidak ada blok terjadwal untuk pilihan ini.')
+      + (hilang.length ? ` Belum ada di peta: <b>${hilang.map(esc).join(', ')}</b>.` : '');
+    if (fit) peta.fitBounds(L.featureGroup(hit.length ? hit : [lapis]).getBounds(), { padding: [25, 25], maxZoom: 18 });
+  };
+  const isiPilihPeta = () => {
+    const box = $('#petaPilih', el); if (!box) return;
+    box.innerHTML = [`<a class="st ${!petaPilih.a ? 'on' : 'wait'}" data-a="">Semua kegiatan</a>`, ...PW().w.map((x) => `<a class="st ${petaPilih.a === x.a ? 'on' : 'wait'}" data-a="${esc(x.a)}">${esc(x.a)}</a>`)].join('');
+    box.querySelectorAll('a').forEach((a) => (a.onclick = () => pilihPeta(petaPilih.w, a.dataset.a || null, false)));
+  };
+  function pilihPeta(w, a, gulir) {
+    petaPilih = { w, a: a && MGG.find((m) => m.k === w)?.w.some((x) => x.a === a) ? a : null };
+    isiPilihPeta(); warnai(true);
+    if (gulir) $('#peta', el)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  el.querySelectorAll('.wkAkt').forEach((d) => (d.onclick = () => pilihPeta(d.dataset.w, d.dataset.a, true)));
+  el.querySelectorAll('.mxBlok').forEach((d) => (d.onclick = () => {
+    if (!lapis) return;
+    let ly = null; lapis.eachLayer((l) => { if (key(l.feature.properties?.Nama_Blok) === key(d.dataset.b)) ly = l; });
+    $('#peta', el)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (ly) { peta.fitBounds(ly.getBounds(), { padding: [40, 40], maxZoom: 18 }); ly.openPopup(); } else $('#petaNote', el).innerHTML = `Blok <b>${esc(d.dataset.b)}</b> belum ada di peta.`;
+  }));
+  isiPilihPeta();
+  (async () => {
+    try {
+      gisBlok ??= fetch('/api/t/gis_layer?jenis=' + encodeURIComponent('Blok Tanam')).then((r) => (r.ok ? r.json() : []))
+        .then((ls) => { const g = ls.find((x) => /blok tanam/i.test(`${x.jenis} ${x.nama}`)); return g ? JSON.parse(g.geojson) : null; });
+      const [fc] = await Promise.all([gisBlok, loadLeaflet()]);
+      const box = $('#peta', el); if (!box || !box.isConnected) return;
+      if (!fc) { box.outerHTML = '<div class="sub">Layer peta "Blok Tanam" belum ada.</div>'; return; }
+      box.innerHTML = '';
+      peta = L.map(box, { maxZoom: 21, scrollWheelZoom: false });
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 18, maxZoom: 21, attribution: 'Esri' }).addTo(peta);
+      lapis = L.geoJSON(fc, { onEachFeature: (f, l) => { l.bindTooltip(esc(f.properties?.Nama_Blok || ''), { permanent: true, direction: 'center', className: 'blk-label' }); l.bindPopup(() => popupBlok(f)); } }).addTo(peta);
+      // peta diperkecil → label blok lain disembunyikan supaya tidak menumpuk
+      const label = () => box.classList.toggle('peta-jauh', peta.getZoom() < 17);
+      peta.on('zoomend', label);
+      warnai(true); label();
+      setTimeout(() => { peta.invalidateSize(); warnai(true); label(); }, 80);
+    } catch (e) { const box = $('#peta', el); if (box) box.innerHTML = `<div class="sub" style="padding:12px">Peta tidak bisa dimuat: ${esc(e.message)}</div>`; }
+  })();
   // tab bulan: klik → tampilkan bulan itu saja
   el.querySelectorAll('#tabBln a').forEach((a) => (a.onclick = () => {
     bulanPilih = a.dataset.m;
@@ -274,6 +384,6 @@ function renderTarget(ctx) {
       Luas memakai luas blok di Rencana Blok; blok yang sudah ditanam dihitung selesai semua kegiatannya. Target diubah di Excel sheet "Progres - Target Tanam".</div>`;
 }
 
-$('#rf').onclick = () => { $('#kb').innerHTML = '<div class="card">Memuat data…</div>'; muat().catch(tampilError); };
+$('#rf').onclick = () => { gisBlok = null; $('#kb').innerHTML = '<div class="card">Memuat data…</div>'; muat().catch(tampilError); };
 const tampilError = (e) => { $('#kb').innerHTML = `<div class="card">Data tidak bisa dimuat: ${esc(e.message)}</div>`; };
 muat().catch(tampilError);
