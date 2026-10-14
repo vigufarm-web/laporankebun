@@ -287,12 +287,18 @@ function seed() {
       if (!a.alat && alatDefault(a.aktivitas)) db.prepare('UPDATE lahan_aktivitas SET alat=?, updated_at=? WHERE id=?').run(alatDefault(a.aktivitas), now(), a.id);
     tandai('isi:alat');
   }
+  // rencana awal (user): Stik Tanam & Tanam masing-masing 2 tim — diisi sekali
+  if (!sudah('isi:tim2')) {
+    db.prepare(`UPDATE lahan_aktivitas SET tim=2, updated_at=? WHERE untuk='Pisang' AND aktivitas IN ('Stik Tanam', 'Tanam')`).run(now());
+    tandai('isi:tim2');
+  }
   // Rencana Kerja dibuat otomatis SEKALI (permintaan user): dari progres saat ini, mulai hari ini (WIB).
-  // v2 = aturan alat bersama → rencana otomatis versi pertama (seed:lahan_rencana) diganti sekali; rencana yang disusun admin tidak disentuh.
+  // v3 = alat bersama + Stik Tanam & Tanam 2 tim → rencana otomatis versi sebelumnya diganti sekali;
+  // rencana yang sudah disusun/diubah admin (ada di riwayat) tidak disentuh.
   // Susun ulang berikutnya lewat tombol "Susun rencana kerja" di halaman Progres Tanam (admin).
-  if (!sudah('seed:lahan_rencana_v2')) {
+  if (!sudah('seed:lahan_rencana_v3')) {
     const kosong = db.prepare('SELECT COUNT(*) c FROM lahan_rencana').get().c === 0;
-    const otomatisLama = sudah('seed:lahan_rencana') && !db.prepare("SELECT 1 FROM _log WHERE tabel='lahan_rencana' LIMIT 1").get();
+    const otomatisLama = !db.prepare("SELECT 1 FROM _log WHERE tabel='lahan_rencana' LIMIT 1").get();
     if (kosong || otomatisLama) {
       const c = { rows: (t) => db.prepare(`SELECT * FROM ${q(t)}`).all() };
       const hariIni = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
@@ -300,7 +306,7 @@ function seed() {
       db.exec('DELETE FROM lahan_rencana');
       for (const r of rows) insertRow('lahan_rencana', r, false);
     }
-    tandai('seed:lahan_rencana'); tandai('seed:lahan_rencana_v2');
+    tandai('seed:lahan_rencana'); tandai('seed:lahan_rencana_v2'); tandai('seed:lahan_rencana_v3');
   }
 }
 seed();
