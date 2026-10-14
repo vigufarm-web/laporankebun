@@ -54,7 +54,7 @@ function render(ctx) {
   // status per kegiatan s/d kemarin
   const K = ringkasRencana(ctx, kemarin, R), telat = K.filter((k) => k.selisih < -0.005 && k.total - k.done > 0.005);
   // tanggal tanam rencana per blok
-  const tanamRow = new Map(R.filter((r) => r.aktivitas === namaTanam).map((r) => [key(r.blok), r]));
+  const tanamRow = new Map(R.filter((r) => r.aktivitas === namaTanam).sort((x, y) => x.selesai.localeCompare(y.selesai)).map((r) => [key(r.blok), r])); // tanggal tanam terakhir per blok
   // pekerjaan hari ini: jadwal hari ini + yang lewat jadwal & belum selesai (hanya kegiatan yang hari ini bukan hari liburnya)
   const kerjaHariIni = R.filter((r) => !r.beres && hariKerjaAkt(r.a)(today) && r.mulai <= tIso)
     .map((r) => ({ r, lewat: r.selesai < tIso, hariIni: r.selesai < tIso ? r.kurang : Math.min(r.kurang, porsiRencana(r, r.a, tIso, tIso)) }))

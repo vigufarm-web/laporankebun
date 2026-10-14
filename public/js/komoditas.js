@@ -301,9 +301,9 @@ async function progres(el, A, kom, rerender) {
   const { fmtNum, esc, ctx } = A;
   const gis = await loadGis(A);
   if (!el.isConnected) return; // halaman sudah diganti
-  el.innerHTML = `<div id="kp"></div>${kom === 'Pisang' ? '<h2 class="o-h">📅 Rencana kerja vs realisasi</h2><div id="kr"></div>' : ''}<h2 class="o-h">Progres per blok × tahap</h2><div id="km"></div>`;
+  el.innerHTML = `<div id="kp"></div>${kom === 'Pisang' && A.isAdmin() ? '<div class="no-print"><h2 class="o-h">📅 Rencana kerja vs realisasi <span class="small muted">🔒 hanya admin</span></h2><div id="kr"></div></div>' : ''}<h2 class="o-h">Progres per blok × tahap</h2><div id="km"></div>`;
   renderProgres($('#kp', el), A, gis, kom);
-  if (kom === 'Pisang') rencanaKerja($('#kr', el), A, rerender);
+  if (kom === 'Pisang' && A.isAdmin()) rencanaKerja($('#kr', el), A, rerender);
   const acts = aktivitasUntuk(ctx, kom).map((a) => a.aktivitas);
   const bl = ctx.rows('lahan_blok').filter((r) => (r.peruntukan || 'Pisang') === kom).map((r) => ({ r, p: lahanProgress(r, ctx) }));
   const heat = (p) => (p >= 0.98 ? 'background:#bbf7d0' : p >= 0.5 ? 'background:#fef08a' : p > 0 ? 'background:#fed7aa' : 'color:#bbb');

@@ -674,7 +674,22 @@ export function susunRencana(c, mulai) {
     rows.push({ urutan: i + 1, blok: b.blok, aktivitas: x.a.aktivitas, luas_ha: Math.round(ha * 1e4) / 1e4,
       mulai: util.iso(hari(iS)), selesai: util.iso(hari(Math.max(iS, Math.ceil(e - 1e-9) - 1))), _k: k });
   }
-  return rows.sort((x, y) => x.urutan - y.urutan || x._k - y._k).map(({ _k, ...r }) => r);
+  // pekerjaan yang sudah dikerjakan sejak awal bulan s/d sebelum tanggal mulai ikut jadi rencana bulan itu (sudah terealisasi),
+  // agar progres sebulan penuh terlihat (permintaan user) — per blok × kegiatan dari Progres Harian
+  const awalBulan = `${String(mulai).slice(0, 7)}-01`, urutBlok = new Map(blok.map((b, i) => [util.key(b.blok), i + 1]));
+  const sdh = new Map();
+  for (const h of c.rows('lahan_harian')) {
+    if (!h.tanggal || h.tanggal < awalBulan || h.tanggal >= mulai) continue;
+    const b = lb.get(util.key(h.blok)), k = acts.findIndex((a) => a.aktivitas === h.aktivitas);
+    if (!b || k < 0) continue;
+    const g = util.key(b.blok) + '|' + k, x = sdh.get(g) || { b, k, ha: 0, mulai: h.tanggal, selesai: h.tanggal };
+    x.ha += n(h.hasil_ha); if (h.tanggal < x.mulai) x.mulai = h.tanggal; if (h.tanggal > x.selesai) x.selesai = h.tanggal;
+    sdh.set(g, x);
+  }
+  for (const x of sdh.values()) if (x.ha > 0.005)
+    rows.push({ urutan: urutBlok.get(util.key(x.b.blok)) ?? null, blok: x.b.blok, aktivitas: acts[x.k].aktivitas, luas_ha: Math.round(Math.min(x.ha, n(x.b.luas_ha)) * 1e4) / 1e4,
+      mulai: x.mulai, selesai: x.selesai, keterangan: 'Sudah dikerjakan (sebelum rencana disusun)', _k: x.k });
+  return rows.sort((x, y) => (x.urutan ?? 0) - (y.urutan ?? 0) || String(x.blok).localeCompare(String(y.blok), 'id', { numeric: true }) || x._k - y._k || x.mulai.localeCompare(y.mulai)).map(({ _k, ...r }) => r);
 }
 // luas rencana satu baris yang jatuh pada tanggal dari..sampai (ISO, termasuk) — dibagi rata per hari kerja kegiatan itu
 export function porsiRencana(r, a, dari, sampai) {
@@ -690,13 +705,24 @@ export function porsiRencana(r, a, dari, sampai) {
 export function statusRencana(c) {
   const acts = aktivitasUntuk(c, 'Pisang'), A = new Map(acts.map((a) => [a.aktivitas, a]));
   const tt = pisangTertanam(c), lb = new Map(c.rows('lahan_blok').map((b) => [util.key(b.blok), b])), prog = new Map();
-  return c.rows('lahan_rencana').filter((r) => A.has(r.aktivitas) && r.mulai && r.selesai).map((r) => {
-    const k = util.key(r.blok), b = lb.get(k);
+  const rs = c.rows('lahan_rencana').filter((r) => A.has(r.aktivitas) && r.mulai && r.selesai);
+  // satu blok × kegiatan bisa punya beberapa baris (mis. sudah dikerjakan + sisa): selesai = total rencana − sisa sekarang,
+  // dibagikan ke baris paling awal dulu
+  const grup = new Map();
+  for (const r of rs) { const g = util.key(r.blok) + '|' + r.aktivitas; if (!grup.has(g)) grup.set(g, []); grup.get(g).push(r); }
+  const hasil = new Map();
+  for (const list of grup.values()) {
+    const r0 = list[0], k = util.key(r0.blok), b = lb.get(k);
     if (!prog.has(k)) prog.set(k, b ? lahanProgress(b, c) : null);
-    const pc = tt.has(k) ? 1 : prog.get(k)?.per.find((x) => x.akt === r.aktivitas)?.pct || 0;
-    const luas = n(r.luas_ha), sisa = Math.max(0, (1 - pc) * n(b?.luas_ha)), done = Math.min(luas, Math.max(0, luas - sisa));
-    return { ...r, a: A.get(r.aktivitas), urut: acts.indexOf(A.get(r.aktivitas)), luas, done, kurang: Math.max(0, luas - done), beres: luas - done <= 0.005 };
-  });
+    const pc = tt.has(k) ? 1 : prog.get(k)?.per.find((x) => x.akt === r0.aktivitas)?.pct || 0;
+    const total = list.reduce((s, r) => s + n(r.luas_ha), 0), sisa = Math.max(0, (1 - pc) * n(b?.luas_ha));
+    let ada = Math.min(total, Math.max(0, total - sisa));
+    for (const r of [...list].sort((x, y) => String(x.mulai).localeCompare(String(y.mulai)) || String(x.selesai).localeCompare(String(y.selesai)))) {
+      const luas = n(r.luas_ha), done = Math.min(luas, ada); ada -= done;
+      hasil.set(r, { ...r, a: A.get(r.aktivitas), urut: acts.indexOf(A.get(r.aktivitas)), luas, done, kurang: Math.max(0, luas - done), beres: luas - done <= 0.005 });
+    }
+  }
+  return rs.map((r) => hasil.get(r));
 }
 // ringkasan per kegiatan: target s/d tanggal `sd` (ISO, termasuk) vs selesai; hari terlambat ≈ kekurangan × hari per ha
 export function ringkasRencana(c, sd, R = statusRencana(c)) {
