@@ -1,7 +1,7 @@
 // Halaman per komoditas (Pisang / Padi) + Infrastruktur.
 // Setiap tab: ringkasan di atas, tabel data di bawah. Semua orang bisa melihat; tombol tambah/ubah hanya muncul
 // untuk pengguna yang login dan punya izin pada tabel tersebut.
-import { TABLES, POKOK_PER_HA, util, displayOf, padiFase, lahanProgress, aktivitasUntuk, stokBenih, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM } from './schema.js';
+import { TABLES, POKOK_PER_HA, util, displayOf, padiFase, lahanProgress, aktivitasUntuk, stokBenih, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM, susunRencana, statusRencana, ringkasRencana, liburDefault } from './schema.js';
 import { loadGis, week, weekLabel, weekPicker, renderProgres, renderTanggalTanam, renderPanenJual, tanamRows } from './owner.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -30,7 +30,7 @@ export const KOM = {
     // Tertanam: hanya untuk admin (permintaan user) — pokok tanam per blok, tanggal tanam, tabel Blok Tanam
     { k: 'tertanam', l: 'Tertanam', tables: ['pisang_blok', 'pisang_kegiatan'], excel: ['pisang_blok'], admin: true },
     // Blok Tanam (pokok, tanggal tanam, status) disembunyikan dari tampilan tapi ikut di Excel halaman ini
-    { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_aktivitas'], excel: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_aktivitas', 'pisang_blok'], week: true }, // Target Tanam dipakai halaman Tim Kebun (/kebun)
+    { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_rencana', 'lahan_aktivitas'], excel: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_rencana', 'lahan_aktivitas', 'pisang_blok'], week: true }, // Target Tanam & Rencana Kerja dipakai halaman Tim Kebun (/kebun)
     { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_estimasi', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
   ] },
   padi: { nama: 'Padi', icon: '🌾', key: 'Padi', tabs: [
@@ -182,7 +182,7 @@ const SUMMARY = {
     ${rows.length ? `<div class="card o-card"><h3>Stok per batch</h3><table class="mini"><tr><th>Datang</th><th>Keterangan</th><th>Klon</th><th class="num">Datang</th><th class="num">Ditanam</th><th class="num">Mati+afkir</th><th class="num">Stok</th><th class="num">Umur (bln)</th></tr>
       ${rows.sort((a, b) => String(b.r.tanggal_datang).localeCompare(String(a.r.tanggal_datang))).map((x) => `<tr><td>${fmtDate(x.r.tanggal_datang)}</td><td>${A.esc(x.r.keterangan || '')}</td><td>${A.esc(x.r.klon || '')}</td><td class="num">${fmtNum(n(x.r.qty_datang) + n(x.r.splitting))}</td><td class="num">${fmtNum(x.r.ditanam)}</td><td class="num">${fmtNum(n(x.r.afkir) + n(x.r.mortal))}</td><td class="num"><b>${fmtNum(x.saldo)}</b></td><td class="num">${fmtNum(x.umur, 1)}</td></tr>`).join('')}</table></div>` : ''}`;
   },
-  async pisang_progres(el, A) { await progres(el, A, 'Pisang'); },
+  async pisang_progres(el, A, K, rerender) { await progres(el, A, 'Pisang', rerender); },
   // khusus admin: tertanam per blok (luas netto & pokok sama dengan Ringkasan)
   async pisang_tertanam(el, A) {
     const { fmtNum, esc, ctx } = A; const P = ctx.rows;
@@ -297,17 +297,72 @@ const SUMMARY = {
   },
 };
 
-async function progres(el, A, kom) {
+async function progres(el, A, kom, rerender) {
   const { fmtNum, esc, ctx } = A;
   const gis = await loadGis(A);
   if (!el.isConnected) return; // halaman sudah diganti
-  el.innerHTML = '<div id="kp"></div><h2 class="o-h">Progres per blok × tahap</h2><div id="km"></div>';
+  el.innerHTML = `<div id="kp"></div>${kom === 'Pisang' ? '<h2 class="o-h">📅 Rencana kerja vs realisasi</h2><div id="kr"></div>' : ''}<h2 class="o-h">Progres per blok × tahap</h2><div id="km"></div>`;
   renderProgres($('#kp', el), A, gis, kom);
+  if (kom === 'Pisang') rencanaKerja($('#kr', el), A, rerender);
   const acts = aktivitasUntuk(ctx, kom).map((a) => a.aktivitas);
   const bl = ctx.rows('lahan_blok').filter((r) => (r.peruntukan || 'Pisang') === kom).map((r) => ({ r, p: lahanProgress(r, ctx) }));
   const heat = (p) => (p >= 0.98 ? 'background:#bbf7d0' : p >= 0.5 ? 'background:#fef08a' : p > 0 ? 'background:#fed7aa' : 'color:#bbb');
   $('#km', el).innerHTML = `<div class="card o-card" style="overflow:auto">${bl.length ? `<table class="mini heat"><tr><th>Blok</th><th class="num">Luas</th>${acts.map((a) => `<th class="h" style="text-align:center">${esc(a)}</th>`).join('')}<th>Total</th></tr>
     ${bl.sort((a, b) => String(a.r.blok).localeCompare(String(b.r.blok), 'id', { numeric: true })).map((x) => `<tr><td><b>${esc(x.r.blok)}</b></td><td class="num">${fmtNum(x.r.luas_ha, 2)}</td>${x.p.per.map((p) => `<td class="h" style="${heat(p.pct)}" title="${fmtNum(p.ha, 2)} ha">${p.pct ? Math.round(p.pct * 100) + '%' : '·'}</td>`).join('')}<td style="min-width:90px"><div class="bar"><i style="width:${x.p.total * 100}%"></i></div></td></tr>`).join('')}</table>` : `<div class="empty">Belum ada rencana blok ${esc(kom.toLowerCase())}.</div>`}</div>`;
+}
+
+// ================================================================ rencana kerja vs realisasi (pisang)
+// Rencana = tabel Rencana Kerja (disusun dari progres + kecepatan per kegiatan); realisasi = Progres Harian (Excel/form).
+function rencanaKerja(el, A, rerender) {
+  const { fmtNum, fmtDate, esc, ctx } = A;
+  const R = statusRencana(ctx);
+  const kemarin = util.addDays(util.iso(util.today()), -1);
+  const admin = A.isAdmin();
+  const tombol = admin ? '<button class="btn" id="rkSusun" title="Susun jadwal kerja dari progres saat ini sampai semua blok target tertanam">📅 Susun rencana kerja</button>' : '';
+  if (!R.length) {
+    el.innerHTML = `<div class="card o-card"><p class="sub" style="margin:0 0 8px">Rencana kerja belum disusun.${admin ? ' Klik tombol di bawah — jadwal dihitung dari progres saat ini, kecepatan (hari/ha), jumlah tim & hari libur tiap kegiatan di Urutan Aktivitas.' : ''}</p>${tombol}</div>`;
+  } else {
+    const K = ringkasRencana(ctx, kemarin, R);
+    const awal = R.reduce((m, r) => (r.mulai < m ? r.mulai : m), R[0].mulai);
+    const tanam = R.filter((r) => r.urut === Math.max(...R.map((x) => x.urut)));
+    const akhir = tanam.reduce((m, r) => (r.selesai > m ? r.selesai : m), '');
+    const st = (k) => (k.total - k.done <= 0.005 ? '<span class="tag" style="background:#bbf7d0">✅ selesai</span>'
+      : k.selisih >= -0.005 ? `<span class="tag" style="background:#dcfce7">${k.selisih > 0.005 ? '+' + fmtNum(k.selisih, 2) + ' ha · lebih cepat' : 'sesuai'}</span>`
+      : `<span class="tag" style="background:#fee2e2">−${fmtNum(-k.selisih, 2)} ha · ±${fmtNum(Math.ceil(k.telat))} hari</span>`);
+    el.innerHTML = `<div class="card o-card">
+      <p class="sub">Rencana mulai ${fmtDate(awal)} · semua blok target selesai tanam <b>${fmtDate(akhir)}</b> · ${new Set(R.map((r) => keyB(r.blok))).size} blok. Target dihitung s/d kemarin (${fmtDate(kemarin)}); selesai = dari Progres Harian. Rincian per blok di tabel Rencana Kerja & halaman <a href="/kebun" target="_blank">Tim Kebun ↗</a>.</p>
+      <table class="mini"><tr><th>Kegiatan</th><th class="num">Rencana (ha)</th><th>Jadwal</th><th class="num">Target s/d kemarin</th><th class="num">Selesai</th><th style="width:14%"></th><th>Status</th></tr>
+      ${K.map((k) => `<tr><td><b>${esc(k.akt)}</b><div class="small muted">${fmtNum(n(k.a.hari_per_ha) || 0, 2)} hari/ha · ${n(k.a.tim) || 1} tim · libur ${esc(k.a.libur || liburDefault(k.akt))}</div></td>
+        <td class="num">${fmtNum(k.total, 2)}</td><td class="small">${fmtDate(k.mulai)} – ${fmtDate(k.selesai)}</td><td class="num">${fmtNum(k.target, 2)}</td><td class="num"><b>${fmtNum(k.done, 2)}</b></td>
+        <td><div class="bar"><i style="width:${k.total ? Math.min(100, (k.done / k.total) * 100) : 0}%"></i></div></td><td>${st(k)}</td></tr>`).join('')}
+      </table>${tombol ? `<div style="margin-top:10px">${tombol}</div>` : ''}</div>`;
+  }
+  const b = $('#rkSusun', el);
+  if (b) b.onclick = () => {
+    const m = A.openModal(`<div class="modal-head"><h2>📅 Susun rencana kerja</h2><button class="x">×</button></div>
+      <div class="modal-body"><p class="small">Jadwal disusun dari <b>progres saat ini</b> (Progres Harian) untuk semua blok di Target Tanam yang belum tertanam,
+        dengan kecepatan (hari/ha), jumlah tim & hari libur tiap kegiatan di <a href="#/t/lahan_aktivitas">Urutan Aktivitas</a>.
+        Tiap kegiatan dikerjakan timnya sendiri blok demi blok; kegiatan di satu blok mulai setelah kegiatan sebelumnya selesai.</p>
+        <label>Mulai tanggal <input type="date" id="rkTgl" value="${util.iso(util.today())}"></label>
+        ${R.length ? `<p class="small" style="color:var(--danger)">Rencana lama (${R.length} baris) akan diganti.</p>` : ''}
+        <div id="rkPrev" class="small muted" style="margin-top:8px"></div></div>
+      <div class="modal-foot"><span class="sp"></span><button class="btn" id="rkBatal">Batal</button><button class="btn primary" id="rkOk">Simpan rencana</button></div>`);
+    const prev = () => { const rows = susunRencana(ctx, $('#rkTgl', m).value); const t = rows.filter((r) => r.aktivitas === aktivitasUntuk(ctx, 'Pisang').slice(-1)[0]?.aktivitas);
+      $('#rkPrev', m).innerHTML = rows.length ? `${rows.length} baris · ${new Set(rows.map((r) => keyB(r.blok))).size} blok · tanam terakhir selesai <b>${fmtDate(t.reduce((x, r) => (r.selesai > x ? r.selesai : x), ''))}</b>` : 'Tidak ada sisa pekerjaan — semua blok target sudah tertanam.'; return rows; };
+    prev(); $('#rkTgl', m).onchange = prev;
+    $('#rkBatal', m).onclick = A.closeModal;
+    $('#rkOk', m).onclick = async () => {
+      const rows = prev(); if (!rows.length) return;
+      $('#rkOk', m).disabled = true;
+      try {
+        const lama = ctx.rows('lahan_rencana').map((r) => r.id);
+        if (lama.length) await A.api.post('/api/t/lahan_rencana/hapus', { ids: lama });
+        await A.api.post('/api/t/lahan_rencana', rows);
+        await A.loadTable('lahan_rencana');
+        A.closeModal(); A.toast(`Rencana kerja disimpan (${rows.length} baris)`); rerender?.();
+      } catch (e) { $('#rkOk', m).disabled = false; A.toast(e.message, true); }
+    };
+  };
 }
 
 function monthlyChart(el, A, title, series, stacked) {

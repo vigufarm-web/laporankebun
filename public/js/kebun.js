@@ -1,6 +1,6 @@
 // Halaman Tim Kebun (/kebun): target vs realisasi progres tanam pisang per bulan — hanya lihat, tanpa login.
 // Data sama dengan aplikasi utama (otomatis dari Progres Harian, Rencana Blok, Blok Tanam, Target Tanam).
-import { util, aktivitasUntuk, lahanProgress, pisangTertanam } from './schema.js';
+import { util, aktivitasUntuk, lahanProgress, pisangTertanam, statusRencana, ringkasRencana, porsiRencana, hariKerjaAkt, liburDefault } from './schema.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const n = util.n, key = util.key;
@@ -13,6 +13,7 @@ const ymOf = (d) => String(d || '').slice(0, 7);
 const lblBulan = (ym) => `${BULAN[+ym.slice(5) - 1]} ${ym.slice(0, 4)}`;
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const tglID = (s) => { const d = util.d(s); return d ? `${d.getDate()} ${BULAN[d.getMonth()].slice(0, 3)} ${d.getFullYear()}` : '–'; };
+let bulanPilih = null; // tab bulan yang sedang dibuka
 const HARI_KERJA = 6; // Senin–Sabtu (sama dengan jadwal Estimasi Land Prep)
 // hari kerja (Senin–Sabtu) dari a s/d b (termasuk keduanya)
 function hariKerja(a, b) { let c = 0; const d = new Date(a); d.setHours(0, 0, 0, 0); const e = new Date(b); e.setHours(0, 0, 0, 0); while (d <= e) { if (d.getDay() !== 0) c++; d.setDate(d.getDate() + 1); } return c; }
@@ -21,14 +22,118 @@ const akhirBulan = (ym) => new Date(+ym.slice(0, 4), +ym.slice(5), 0);
 function tambahHariKerja(a, nHari) { const d = new Date(a); d.setHours(0, 0, 0, 0); let sisa = Math.ceil(nHari); while (sisa > 1) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0) sisa--; } return d; }
 
 async function muat() {
-  const T = ['lahan_blok', 'lahan_harian', 'lahan_aktivitas', 'lahan_target', 'pisang_blok'];
+  const T = ['lahan_blok', 'lahan_harian', 'lahan_aktivitas', 'lahan_target', 'lahan_rencana', 'pisang_blok'];
   const [rows, set] = await Promise.all([Promise.all(T.map((t) => fetch('/api/t/' + t).then((r) => (r.ok ? r.json() : [])))), fetch('/api/settings').then((r) => r.json()).catch(() => ({}))]);
   const data = Object.fromEntries(T.map((t, i) => [t, rows[i]]));
   if (set.nama) $('#nm').textContent = set.nama;
   render({ rows: (t) => data[t] || [] });
 }
 
+// Tampilan berdasar RENCANA KERJA (tabel Rencana Kerja): pekerjaan hari ini, target per bulan & minggu vs realisasi Progres Harian.
+// Belum ada rencana → tampilan target per bulan tanam (renderTarget).
 function render(ctx) {
+  const R = statusRencana(ctx);
+  if (!R.length) return renderTarget(ctx);
+  const P = ctx.rows, el = $('#kb');
+  const today = util.today(), tIso = iso(today), kemarin = util.addDays(tIso, -1), ymNow = ymOf(tIso);
+  const acts = aktivitasUntuk(ctx, 'Pisang'), namaTanam = acts[acts.length - 1]?.aktivitas;
+  const tt = pisangTertanam(ctx);
+  const awal = R.reduce((m, r) => (r.mulai < m ? r.mulai : m), R[0].mulai), akhir = R.reduce((m, r) => (r.selesai > m ? r.selesai : m), R[0].selesai);
+  const blokRen = new Set(R.map((r) => key(r.blok)));
+  const har = P('lahan_harian').filter((r) => blokRen.has(key(r.blok)) && r.tanggal >= awal);
+  const real = (akt, dari, sampai) => har.filter((r) => r.aktivitas === akt && r.tanggal >= dari && r.tanggal <= sampai).reduce((s, r) => s + n(r.hasil_ha), 0);
+  const porsi = (akt, dari, sampai) => R.filter((r) => r.aktivitas === akt).reduce((s, r) => s + porsiRencana(r, r.a, dari, sampai), 0);
+  // minggu ini Senin–Minggu
+  const senin = new Date(today); senin.setDate(today.getDate() - ((today.getDay() + 6) % 7)); const minggu = new Date(senin); minggu.setDate(senin.getDate() + 6);
+  const sIso = iso(senin), mIso = iso(minggu);
+  const wk = P('lahan_harian').filter((r) => r.tanggal >= sIso && r.tanggal <= mIso && (blokRen.has(key(r.blok)) || acts.some((a) => a.aktivitas === r.aktivitas)));
+  // target tanam keseluruhan (blok di Target Tanam)
+  const lb = new Map(P('lahan_blok').map((b) => [key(b.blok), b]));
+  const tgB = [...new Map(P('lahan_target').filter((t) => lb.has(key(t.blok))).map((t) => [key(t.blok), lb.get(key(t.blok))])).values()];
+  const totTarget = tgB.reduce((s, b) => s + n(b.luas_ha), 0), totSudah = tgB.filter((b) => tt.has(key(b.blok))).reduce((s, b) => s + n(b.luas_ha), 0);
+  // status per kegiatan s/d kemarin
+  const K = ringkasRencana(ctx, kemarin, R), telat = K.filter((k) => k.selisih < -0.005 && k.total - k.done > 0.005);
+  // tanggal tanam rencana per blok
+  const tanamRow = new Map(R.filter((r) => r.aktivitas === namaTanam).map((r) => [key(r.blok), r]));
+  // pekerjaan hari ini: jadwal hari ini + yang lewat jadwal & belum selesai (hanya kegiatan yang hari ini bukan hari liburnya)
+  const kerjaHariIni = R.filter((r) => !r.beres && hariKerjaAkt(r.a)(today) && r.mulai <= tIso)
+    .map((r) => ({ r, lewat: r.selesai < tIso, hariIni: r.selesai < tIso ? r.kurang : Math.min(r.kurang, porsiRencana(r, r.a, tIso, tIso)) }))
+    .sort((x, y) => (y.lewat - x.lewat) || x.r.selesai.localeCompare(y.r.selesai) || x.r.urut - y.r.urut);
+  const libur = acts.filter((a) => !hariKerjaAkt(a)(today)).map((a) => a.aktivitas);
+  const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const months = []; for (let m = ymOf(awal); m <= ymOf(akhir); m = ymOf(iso(new Date(+m.slice(0, 4), +m.slice(5), 1)))) months.push(m);
+  // bulan yang dibuka: pilihan terakhir (tetap saat "Muat ulang"), selain itu bulan ini
+  const pilih = months.includes(bulanPilih) ? bulanPilih : months.includes(ymNow) ? ymNow : months[ymNow < months[0] ? 0 : months.length - 1];
+  const pctTxt = (a, b) => `${f0(pct(a, b))}%`;
+  const tglP =(s) => { const d = util.d(s); return d ? `${d.getDate()} ${BULAN[d.getMonth()].slice(0, 3)}` : '–'; };
+
+  el.innerHTML = `
+    <div class="sub" style="margin-top:6px">Data per ${tglID(tIso)} · otomatis dari aplikasi (Progres Harian & Rencana Kerja)</div>
+    <h1>🍌 Rencana Kerja Tanam Pisang</h1>
+    <div class="card o-card">
+      <div class="sub">Rencana mulai ${tglID(awal)} · semua blok target selesai tanam <b>${tglID(akhir)}</b></div>
+      <div><span class="big">${f2(totSudah)}</span> <span class="sub" style="font-size:15px">dari ${f2(totTarget)} ha sudah ditanam (${f0(pct(totSudah, totTarget))}%)</span></div>
+      <div class="bar"><i style="width:${pct(totSudah, totTarget)}%"></i></div>
+      <div style="margin-top:6px">${telat.length ? telat.map((k) => `<span class="st no" style="margin:2px 4px 2px 0">${esc(k.akt)} kurang ${f2(-k.selisih)} ha · ±${f0(Math.ceil(k.telat))} hari</span>`).join('') : '<span class="st ok">✅ Semua kegiatan sesuai rencana s/d kemarin</span>'}</div>
+    </div>
+
+    <h2>🔨 Pekerjaan hari ini · ${HARI[today.getDay()]}, ${tglID(tIso)}</h2>
+    <div class="card o-card">${libur.length === acts.length ? '<div class="sub" style="margin:0">Hari ini libur.</div>' : kerjaHariIni.length ? `
+      ${kerjaHariIni.map((p, i) => `<div class="blk" style="grid-template-columns:28px 1fr auto"><div class="big" style="font-size:18px;color:var(--brand)">${i + 1}</div>
+        <div><b>${esc(p.r.blok)}</b> · ${esc(p.r.aktivitas)} <span class="small muted">· target hari ini <b>${f2(p.hariIni)} ha</b></span>
+          <div class="small muted">sisa ${f2(p.r.kurang)} dari ${f2(p.r.luas)} ha · jadwal ${tglP(p.r.mulai)} – ${tglP(p.r.selesai)}</div></div>
+        <span class="st ${p.lewat ? 'no' : 'on'}">${p.lewat ? 'Lewat jadwal' : 'Sesuai jadwal'}</span></div>`).join('')}` : '<div class="sub" style="margin:0">Tidak ada pekerjaan terjadwal hari ini.</div>'}
+      ${libur.length && libur.length < acts.length ? `<div class="sub" style="margin:8px 0 0">Libur hari ini: ${libur.map(esc).join(', ')}.</div>` : ''}</div>
+
+    <h2>📆 Target per bulan</h2>
+    <div class="tabs" id="tabBln">${months.map((m) => `<a data-m="${m}" class="${m === pilih ? 'on' : ''}">${esc(BULAN[+m.slice(5) - 1])}${m.slice(0, 4) !== ymNow.slice(0, 4) ? ' ' + m.slice(0, 4) : ''}</a>`).join('')}</div>
+    ${months.map((m) => {
+      const a0 = m === ymOf(awal) ? awal : `${m}-01`, a1 = iso(akhirBulan(m)), lalu = a1 < tIso, kini = m === ymNow;
+      const sdKemarin = kemarin < a0 ? null : kemarin < a1 ? kemarin : a1;
+      const rows = acts.map((a) => ({ a: a.aktivitas, t: porsi(a.aktivitas, a0, a1), d: real(a.aktivitas, a0, a1 < tIso ? a1 : tIso), tk: sdKemarin ? porsi(a.aktivitas, a0, sdKemarin) : 0,
+        tw: kini ? porsi(a.aktivitas, sIso < a0 ? a0 : sIso, mIso > a1 ? a1 : mIso) : 0, dw: kini ? real(a.aktivitas, sIso, mIso) : 0 })).filter((x) => x.t > 0.005 || x.d > 0.005);
+      const tanamBulan = [...tanamRow.values()].filter((r) => ymOf(r.selesai) === m).sort((x, y) => x.selesai.localeCompare(y.selesai));
+      const luasTanam = tanamBulan.reduce((s, r) => s + n(lb.get(key(r.blok))?.luas_ha), 0), sudahTanam = tanamBulan.filter((r) => tt.has(key(r.blok))).reduce((s, r) => s + n(lb.get(key(r.blok))?.luas_ha), 0);
+      return `<div class="card o-card isiBln" data-m="${m}"${m === pilih ? '' : ' hidden'}>
+        <h3 style="margin:0 0 6px">${esc(lblBulan(m))}${kini ? ' <span class="st on">bulan ini</span>' : ''}</h3>
+        <div>Rencana tanam <b>${f2(luasTanam)} ha</b> · ${tanamBulan.length} blok${tanamBulan.length ? ` · sudah ditanam <b>${f2(sudahTanam)} ha</b> (${pctTxt(sudahTanam, luasTanam)})` : ''}</div>
+        ${tanamBulan.length ? `<div class="bar"><i style="width:${pct(sudahTanam, luasTanam)}%"></i></div>` : ''}
+        <div style="overflow:auto;margin-top:8px"><table class="mini"><tr><th>Kegiatan</th><th class="num">Target bulan</th><th class="num">Selesai</th>${kini ? '<th class="num">Minggu ini<div class="small muted">target / selesai</div></th>' : ''}</tr>
+        ${rows.map((x) => { const kurang = sdKemarin && x.d < x.tk - 0.005;
+          return `<tr><td><b>${esc(x.a)}</b></td><td class="num">${f2(x.t)} ha</td>
+            <td class="num">${lalu || kini ? `${f2(x.d)} ha<div class="mini-bar"><i style="width:${pct(x.d, x.t)}%"></i></div><div class="small" style="color:${kurang ? 'var(--danger)' : 'var(--muted)'}">${pctTxt(x.d, x.t)}${sdKemarin ? (kurang ? ` · kurang ${f2(x.tk - x.d)} ha` : ' · sesuai') : ''}</div>` : '<span class="small muted">belum mulai</span>'}</td>
+            ${kini ? `<td class="num">${x.tw > 0.005 ? f2(x.tw) : '–'} / <b>${x.dw > 0.005 ? f2(x.dw) : '–'}</b>${x.tw > 0.005 ? `<div class="small muted">${pctTxt(x.dw, x.tw)}</div>` : ''}</td>` : ''}</tr>`; }).join('')}
+        </table></div>
+        ${tanamBulan.length ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${tanamBulan.map((r) => { const ok = tt.has(key(r.blok)), lw = !ok && r.selesai < tIso;
+          return `<span class="st ${ok ? 'ok' : lw ? 'no' : 'wait'}">${ok ? '✅ ' : ''}${esc(r.blok)} · tanam ${tglP(r.selesai)}</span>`; }).join('')}</div>` : ''}
+      </div>`; }).join('')}
+
+    <h2>Jadwal per blok</h2>
+    <div class="card o-card" style="overflow:auto"><table class="mini"><tr><th>Blok</th><th class="num">Luas</th><th>Kegiatan sekarang</th><th>Rencana tanam</th><th>Status</th></tr>
+      ${[...new Set(R.map((r) => r.blok))].sort((x, y) => n(R.find((r) => r.blok === x).urutan) - n(R.find((r) => r.blok === y).urutan)).map((b) => {
+        const rs = R.filter((r) => r.blok === b).sort((x, y) => x.urut - y.urut), now = rs.find((r) => !r.beres), tr = tanamRow.get(key(b)), ok = tt.has(key(b));
+        const lw = rs.some((r) => !r.beres && r.selesai < tIso);
+        return `<tr><td><b>${esc(b)}</b></td><td class="num">${f2(n(lb.get(key(b))?.luas_ha))}</td><td>${ok ? '–' : now ? `${esc(now.aktivitas)} <span class="small muted">(${tglP(now.mulai)} – ${tglP(now.selesai)})</span>` : '–'}</td>
+          <td>${tr ? tglID(tr.selesai) : '–'}</td><td><span class="st ${ok ? 'ok' : lw ? 'no' : 'on'}">${ok ? '✅ Sudah tanam' : lw ? 'Terlambat' : 'Sesuai'}</span></td></tr>`; }).join('')}
+    </table></div>
+
+    <h2>Pekerjaan tercatat minggu ini <span class="sub">(${tglID(sIso)} – ${tglID(mIso)})</span></h2>
+    <div class="card o-card">${wk.length ? `<table class="mini"><tr><th>Kegiatan</th><th class="num">Hasil (ha)</th><th>Blok</th></tr>
+      ${acts.map((a) => a.aktivitas).filter((a) => wk.some((r) => r.aktivitas === a)).map((a) => { const w = wk.filter((r) => r.aktivitas === a); return `<tr><td>${esc(a)}</td><td class="num">${f2(w.reduce((s, r) => s + n(r.hasil_ha), 0))}</td><td>${[...new Set(w.map((r) => r.blok))].map((b) => `<span class="tag">${esc(b)}</span>`).join(' ')}</td></tr>`; }).join('')}</table>` : '<div class="sub" style="margin:0">Belum ada pekerjaan tercatat minggu ini.</div>'}</div>
+
+    <div class="foot">Cara baca: jadwal mengikuti <b>Rencana Kerja</b> — tiap kegiatan dikerjakan timnya blok demi blok sesuai urutan (Land Clearing → … → Tanam) dengan kecepatan per kegiatan
+      (${acts.map((a) => `${esc(a.aktivitas)} ${String(n(a.hari_per_ha) || '–').replace('.', ',')} hari/ha`).join(', ')}). ${['Sabtu & Minggu', 'Minggu'].map((l) => { const xs = acts.filter((a) => (a.libur || liburDefault(a.aktivitas)) === l); return xs.length ? `${xs.map((a) => esc(a.aktivitas)).join(', ')} libur ${l}` : ''; }).filter(Boolean).join('; ')}.
+      <b>Target</b> = bagian rencana pada tanggal itu; <b>Selesai</b> = hasil di Progres Harian (laporan Excel yang diupload). "Kurang" dihitung s/d kemarin.</div>`;
+  // tab bulan: klik → tampilkan bulan itu saja
+  el.querySelectorAll('#tabBln a').forEach((a) => (a.onclick = () => {
+    bulanPilih = a.dataset.m;
+    el.querySelectorAll('#tabBln a').forEach((x) => x.classList.toggle('on', x === a));
+    el.querySelectorAll('.isiBln').forEach((c) => (c.hidden = c.dataset.m !== bulanPilih));
+  }));
+}
+
+// tampilan lama (belum ada Rencana Kerja): target per bulan tanam, batas kegiatan dihitung mundur dari akhir bulan
+function renderTarget(ctx) {
   const P = ctx.rows, el = $('#kb');
   const today = util.today(), ymNow = ymOf(iso(today));
   const acts = aktivitasUntuk(ctx, 'Pisang').map((a) => a.aktivitas);

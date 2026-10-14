@@ -383,6 +383,22 @@ export const TABLES = {
       { k: 'untuk', l: 'Untuk Komoditas', t: 'select', opt: ['Pisang', 'Padi', 'Semua'], req: true },
       { k: 'urutan', l: 'Urutan', t: 'int', req: true },
       { k: 'aktivitas', l: 'Aktivitas', t: 'text', req: true },
+      { k: 'hari_per_ha', l: 'Hari Kerja per Ha', t: 'num', hint: 'Kecepatan 1 tim (dipakai menyusun Rencana Kerja). Kosong = dihitung dari Progres Harian (jumlah hari aktif ÷ total ha).' },
+      { k: 'tim', l: 'Jumlah Tim', t: 'int', hint: 'Kosong = 1 tim.' },
+      { k: 'libur', l: 'Hari Libur', t: 'select', opt: ['Minggu', 'Sabtu & Minggu'], hint: 'Kosong: Land Clearing & Bajak = Sabtu & Minggu, kegiatan lain = Minggu.' },
+      { k: 'keterangan', l: 'Keterangan', t: 'text' },
+    ],
+  },
+  lahan_rencana: {
+    title: 'Rencana Kerja', div: 'lahan', date: 'mulai', sort: 'urutan',
+    desc: 'Jadwal kerja per blok & kegiatan sampai semua blok target tertanam — disusun dari progres saat itu, kecepatan & hari libur di Urutan Aktivitas (tombol "Susun rencana kerja" di halaman Progres Tanam). Realisasi dibandingkan otomatis dari Progres Harian.',
+    f: [
+      { k: 'urutan', l: 'Prioritas Blok', t: 'int' },
+      { k: 'blok', l: 'Blok', t: 'ref', ref: 'lahan_blok', req: true },
+      { k: 'aktivitas', l: 'Aktivitas', t: 'ref', ref: 'lahan_aktivitas', req: true },
+      { k: 'luas_ha', l: 'Luas Rencana (ha)', t: 'num', req: true },
+      { k: 'mulai', l: 'Mulai', t: 'date', req: true },
+      { k: 'selesai', l: 'Selesai', t: 'date', req: true },
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
   },
@@ -450,6 +466,7 @@ export const EXCEL_SHEETS = [
   { sheet: 'Progres - Rencana Blok', table: 'lahan_blok' },
   { sheet: 'Progres - Harian', table: 'lahan_harian' },
   { sheet: 'Progres - Target Tanam', table: 'lahan_target' },
+  { sheet: 'Progres - Rencana Kerja', table: 'lahan_rencana' },
   { sheet: 'Iklim - Data 2 Jam', table: 'iklim' },
 ];
 
@@ -463,7 +480,7 @@ export const ROLES = {
   panen_padi: { label: 'Panen Padi', desc: 'Panen padi & penggilingan (beras masuk)', edit: ['padi_panen', 'padi_giling'] },
   kebun_pisang: { label: 'Kebun Pisang', desc: 'Blok, bibit, kegiatan pisang', edit: ['pisang_blok', 'pisang_bibit', 'pisang_kegiatan'] },
   kebun_padi: { label: 'Kebun Padi', desc: 'Stok benih, petak, musim tanam, kegiatan, OPT', edit: ['padi_benih', 'padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt'] },
-  lahan: { label: 'Progres Tanam / Pembukaan Lahan', desc: 'Progres LC/bajak/tanam pisang & padi', edit: ['lahan_blok', 'lahan_harian', 'lahan_target', 'lahan_aktivitas'] },
+  lahan: { label: 'Progres Tanam / Pembukaan Lahan', desc: 'Progres LC/bajak/tanam pisang & padi', edit: ['lahan_blok', 'lahan_harian', 'lahan_target', 'lahan_aktivitas', 'lahan_rencana'] },
   gis: { label: 'GIS', desc: 'Layer peta, catatan peta, titik lokasi', edit: ['gis_layer', 'gis_titik'] },
   iklim: { label: 'Iklim', desc: 'Data stasiun cuaca', edit: ['iklim'] },
 };
@@ -480,9 +497,12 @@ const TARGET_Q4 = { '2026-10-01': ['D08', 'D09b', 'D03', 'D10'], '2026-11-01': [
 export const SEED_SEKALI = {
   lahan_target: Object.entries(TARGET_Q4).flatMap(([bulan, bl]) => bl.map((blok) => ({ blok, bulan, keterangan: bulan === '2026-12-01' ? 'Tambahan ±7 ha (setelah November)' : 'Rencana Tanam Q4 2026 (v13)' }))),
 };
+// kecepatan awal per kegiatan pisang (hari kerja per ha, 1 tim) = timeline Estimasi Land Prep v13 (data harian Mei–Sep 2026).
+// Diisi sekali ke Urutan Aktivitas bila kolomnya masih kosong; selanjutnya diubah di sana (form / Excel).
+export const KECEPATAN_AWAL = { 'Land Clearing': 2.98, 'Bajak 1': 2.44, 'Dolomite': 2.12, 'Bajak 2': 1.8, 'Stik Ridger': 1.17, 'Ridger': 1.53, 'Install Drip': 2, 'Stik Tanam': 4.07, 'Ecer Pupuk': 1.83, 'Tanam': 2.51 };
 export const SEED = {
   lahan_aktivitas: [
-    ...['Land Clearing', 'Bajak 1', 'Dolomite', 'Bajak 2', 'Stik Ridger', 'Ridger', 'Install Drip', 'Stik Tanam', 'Ecer Pupuk', 'Tanam'].map((a, i) => ({ untuk: 'Pisang', urutan: i + 1, aktivitas: a })),
+    ...['Land Clearing', 'Bajak 1', 'Dolomite', 'Bajak 2', 'Stik Ridger', 'Ridger', 'Install Drip', 'Stik Tanam', 'Ecer Pupuk', 'Tanam'].map((a, i) => ({ untuk: 'Pisang', urutan: i + 1, aktivitas: a, hari_per_ha: KECEPATAN_AWAL[a] })),
     ...PADI_AKT.map((a, i) => ({ untuk: 'Padi', urutan: i + 1, aktivitas: a })),
   ],
 };
@@ -589,6 +609,95 @@ export function pisangTertanam(c) {
       pokok: pk ? n(pk.pokok_tanam) : null, pop: pk ? n(pk.pokok_tanam) - n(pk.kehilangan) + n(pk.sulam) : null, sumber: r ? 'blok' : 'progres' });
   }
   return out;
+}
+
+// ------------------------------------------------------------ RENCANA KERJA (jadwal LC s/d Tanam per blok, pisang)
+// Kalender per kegiatan: Land Clearing & Bajak libur Sabtu–Minggu, lainnya libur Minggu (bisa diubah di Urutan Aktivitas).
+export const liburDefault = (akt) => (/land\s*clearing|bajak/i.test(String(akt || '')) ? 'Sabtu & Minggu' : 'Minggu');
+export function hariKerjaAkt(a) {
+  const off = (a?.libur || liburDefault(a?.aktivitas)) === 'Sabtu & Minggu' ? [0, 6] : [0];
+  return (d) => !off.includes(d.getDay());
+}
+// hari kerja per ha untuk 1 tim: isian Urutan Aktivitas; kosong → dari Progres Harian (jumlah hari aktif ÷ total ha)
+export function hariPerHa(c, a) {
+  if (n(a?.hari_per_ha) > 0) return n(a.hari_per_ha);
+  const h = c.rows('lahan_harian').filter((r) => r.aktivitas === a?.aktivitas);
+  const ha = h.reduce((s, r) => s + n(r.hasil_ha), 0), hari = new Set(h.map((r) => r.tanggal)).size;
+  return ha > 0 ? hari / ha : 0;
+}
+const dphTim = (c, a) => (hariPerHa(c, a) || 2) / Math.max(1, n(a?.tim) || 1);
+// Susun rencana mulai tanggal `mulai` (ISO): sisa pekerjaan tiap blok target (Target Tanam, belum tertanam) dari progres saat ini.
+// Tiap kegiatan dikerjakan timnya sendiri, blok demi blok (yang paling siap dulu; seri → bulan target, lalu progres terbesar);
+// kegiatan di satu blok baru mulai setelah kegiatan sebelumnya di blok itu selesai (urutan timeline).
+export function susunRencana(c, mulai) {
+  const acts = aktivitasUntuk(c, 'Pisang');
+  const tt = pisangTertanam(c);
+  const lb = new Map(c.rows('lahan_blok').filter((b) => (b.peruntukan || 'Pisang') === 'Pisang').map((b) => [util.key(b.blok), b]));
+  const blok = [], ada = new Set();
+  for (const t of c.rows('lahan_target')) {
+    const k = util.key(t.blok), b = lb.get(k);
+    if (!b || ada.has(k) || tt.has(k)) continue;
+    ada.add(k);
+    const p = lahanProgress(b, c), luas = n(b.luas_ha);
+    blok.push({ blok: b.blok, ym: String(t.bulan || '').slice(0, 7), total: p.total, sisa: acts.map((a) => Math.max(0, (1 - (p.per.find((x) => x.akt === a.aktivitas)?.pct || 0)) * luas)) });
+  }
+  blok.sort((x, y) => x.ym.localeCompare(y.ym) || y.total - x.total || String(x.blok).localeCompare(String(y.blok), 'id', { numeric: true }));
+  const t0 = util.d(mulai), hari = (i) => { const d = new Date(t0); d.setDate(d.getDate() + i); return d; };
+  const masuk = (t, kerja) => { let i = Math.floor(t + 1e-9); if (kerja(hari(i))) return t; while (!kerja(hari(i))) i++; return i; }; // geser ke hari kerja
+  const maju = (t, w, kerja) => { // tambah w hari kerja mulai waktu t (hari pecahan sejak tanggal mulai)
+    for (let g = 0; w > 1e-9 && g < 5000; g++) { const i = Math.floor(t + 1e-9); if (!kerja(hari(i))) { t = i + 1; continue; } const x = Math.min(w, i + 1 - t); t += x; w -= x; }
+    return t;
+  };
+  const fin = blok.map(() => []), rows = [];
+  acts.forEach((a, k) => {
+    const kerja = hariKerjaAkt(a), dph = dphTim(c, a);
+    let bebas = 0;
+    const antri = blok.map((b, i) => ({ b, i, siap: k ? fin[i][k - 1] : 0 })).sort((x, y) => x.siap - y.siap || x.i - y.i);
+    for (const { b, i, siap } of antri) {
+      const ha = b.sisa[k];
+      if (ha <= 0.005) { fin[i][k] = siap; continue; }
+      const s = masuk(Math.max(bebas, siap), kerja), e = maju(s, ha * dph, kerja);
+      fin[i][k] = e; bebas = e;
+      const iS = Math.floor(s + 1e-9);
+      rows.push({ urutan: i + 1, blok: b.blok, aktivitas: a.aktivitas, luas_ha: Math.round(ha * 1e4) / 1e4,
+        mulai: util.iso(hari(iS)), selesai: util.iso(hari(Math.max(iS, Math.ceil(e - 1e-9) - 1))), _k: k });
+    }
+  });
+  return rows.sort((x, y) => x.urutan - y.urutan || x._k - y._k).map(({ _k, ...r }) => r);
+}
+// luas rencana satu baris yang jatuh pada tanggal dari..sampai (ISO, termasuk) — dibagi rata per hari kerja kegiatan itu
+export function porsiRencana(r, a, dari, sampai) {
+  const m = util.d(r.mulai), s = util.d(r.selesai), lo = util.d(dari), hi = util.d(sampai);
+  if (!m || !s || !lo || !hi) return 0;
+  const kerja = hariKerjaAkt(a);
+  let tot = 0, dlm = 0;
+  for (const d = new Date(m); d <= s; d.setDate(d.getDate() + 1)) if (kerja(d)) { tot++; if (d >= lo && d <= hi) dlm++; }
+  return tot ? (n(r.luas_ha) * dlm) / tot : m >= lo && m <= hi ? n(r.luas_ha) : 0;
+}
+// status tiap baris rencana: selesai = luas rencana − sisa pekerjaan sekarang (dari Progres Harian; blok tertanam = selesai),
+// jadi laporan yang diupload terlambat (tanggal lama) tetap terhitung
+export function statusRencana(c) {
+  const acts = aktivitasUntuk(c, 'Pisang'), A = new Map(acts.map((a) => [a.aktivitas, a]));
+  const tt = pisangTertanam(c), lb = new Map(c.rows('lahan_blok').map((b) => [util.key(b.blok), b])), prog = new Map();
+  return c.rows('lahan_rencana').filter((r) => A.has(r.aktivitas) && r.mulai && r.selesai).map((r) => {
+    const k = util.key(r.blok), b = lb.get(k);
+    if (!prog.has(k)) prog.set(k, b ? lahanProgress(b, c) : null);
+    const pc = tt.has(k) ? 1 : prog.get(k)?.per.find((x) => x.akt === r.aktivitas)?.pct || 0;
+    const luas = n(r.luas_ha), sisa = Math.max(0, (1 - pc) * n(b?.luas_ha)), done = Math.min(luas, Math.max(0, luas - sisa));
+    return { ...r, a: A.get(r.aktivitas), urut: acts.indexOf(A.get(r.aktivitas)), luas, done, kurang: Math.max(0, luas - done), beres: luas - done <= 0.005 };
+  });
+}
+// ringkasan per kegiatan: target s/d tanggal `sd` (ISO, termasuk) vs selesai; hari terlambat ≈ kekurangan × hari per ha
+export function ringkasRencana(c, sd, R = statusRencana(c)) {
+  const awal = R.reduce((m, r) => (!m || r.mulai < m ? r.mulai : m), '');
+  return aktivitasUntuk(c, 'Pisang').map((a) => {
+    const rs = R.filter((r) => r.aktivitas === a.aktivitas);
+    if (!rs.length) return null;
+    const total = rs.reduce((s, r) => s + r.luas, 0), done = rs.reduce((s, r) => s + r.done, 0);
+    const target = sd < awal ? 0 : rs.reduce((s, r) => s + porsiRencana(r, a, awal, sd), 0);
+    return { a, akt: a.aktivitas, total, done, target, selisih: done - target, telat: Math.max(0, target - done) * dphTim(c, a),
+      mulai: rs.reduce((m, r) => (r.mulai < m ? r.mulai : m), rs[0].mulai), selesai: rs.reduce((m, r) => (r.selesai > m ? r.selesai : m), rs[0].selesai) };
+  }).filter(Boolean);
 }
 
 export function displayOf(table, row) {
