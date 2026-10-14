@@ -772,6 +772,46 @@ export function ringkasRencana(c, sd, R = statusRencana(c)) {
   }).filter(Boolean);
 }
 
+// Tanam per bulan berdasarkan LUASAN (permintaan user): rencana = bagian rencana Tanam di bulan itu; aktual = hasil Tanam di
+// Progres Harian pada bulan itu, blok mana pun (blok yang ditanam lebih cepat/lambat dari rencananya tetap dihitung di bulan
+// tanamnya). Status memakai kumulatif luas → tukar blok tidak membuat bulan "kurang" selama total luas sesuai rencana.
+export function tanamPerBulan(c, R = statusRencana(c), hariIni = util.iso(util.today())) {
+  const tanam = aktivitasUntuk(c, 'Pisang').slice(-1)[0]?.aktivitas;
+  const rt = R.filter((r) => r.aktivitas === tanam);
+  if (!tanam || !rt.length) return [];
+  const awal = R.reduce((m, r) => (r.mulai < m ? r.mulai : m), R[0].mulai);
+  const lb = new Map(c.rows('lahan_blok').filter((b) => (b.peruntukan || 'Pisang') === 'Pisang').map((b) => [util.key(b.blok), b]));
+  const har = c.rows('lahan_harian').filter((h) => h.aktivitas === tanam && h.tanggal && h.tanggal >= awal && lb.has(util.key(h.blok)));
+  const tt = pisangTertanam(c);
+  // bulan rencana tanam tiap blok = bulan selesai baris Tanam terakhirnya
+  const blnRen = new Map(), nama = new Map();
+  for (const r of [...rt].sort((a, b) => a.selesai.localeCompare(b.selesai))) { blnRen.set(util.key(r.blok), r.selesai.slice(0, 7)); nama.set(util.key(r.blok), r.blok); }
+  for (const h of har) if (!nama.has(util.key(h.blok))) nama.set(util.key(h.blok), lb.get(util.key(h.blok))?.blok || h.blok);
+  const akhir = [...rt.map((r) => r.selesai), ...har.map((h) => h.tanggal)].sort().pop();
+  const bulan = []; for (let m = awal.slice(0, 7); m <= akhir.slice(0, 7); ) { bulan.push(m); const d = new Date(+m.slice(0, 4), +m.slice(5), 1); m = util.iso(d).slice(0, 7); }
+  const kemarin = util.addDays(hariIni, -1);
+  let kR = 0, kA = 0;
+  return bulan.map((m) => {
+    const a0 = m === awal.slice(0, 7) ? awal : `${m}-01`, a1 = util.iso(new Date(+m.slice(0, 4), +m.slice(5), 0));
+    const ren = rt.reduce((s, r) => s + porsiRencana(r, r.a, a0, a1), 0);
+    const hm = new Map(); for (const h of har) if (h.tanggal >= a0 && h.tanggal <= a1) hm.set(util.key(h.blok), (hm.get(util.key(h.blok)) || 0) + n(h.hasil_ha));
+    const akt = [...hm.values()].reduce((s, x) => s + x, 0);
+    const kRsebelum = kR; kR += ren; kA += akt;
+    const sd = kemarin < a0 ? null : kemarin < a1 ? kemarin : a1; // target dinilai s/d kemarin
+    const kRsd = kRsebelum + (sd ? rt.reduce((s, r) => s + porsiRencana(r, r.a, a0, sd), 0) : 0);
+    const selisih = kA - kRsd;
+    const status = !sd ? 'belum' : selisih >= -0.005 ? 'sesuai' : 'kurang';
+    const luasB = (k) => n(lb.get(k)?.luas_ha);
+    return {
+      bulan: m, rencana: ren, aktual: akt, kumRencana: kR, kumAktual: kA, kumRencanaSd: kRsd, selisih, status, lalu: a1 < hariIni,
+      // blok yang direncanakan tanam bulan ini (✅ bila sudah tertanam)
+      blokRencana: [...blnRen].filter(([, mm]) => mm === m).map(([k]) => ({ blok: nama.get(k), luas: luasB(k), sudah: tt.has(k), haBulanIni: hm.get(k) || 0 })),
+      // blok yang ditanam bulan ini padahal rencananya bulan lain (maju / mundur) atau tidak ada di rencana
+      luar: [...hm].filter(([k]) => blnRen.get(k) !== m).map(([k, ha]) => ({ blok: nama.get(k), ha, rencana: blnRen.get(k) || null, arah: !blnRen.get(k) ? 'di luar rencana' : blnRen.get(k) > m ? 'maju' : 'mundur' })),
+    };
+  });
+}
+
 export function displayOf(table, row) {
   const d = TABLES[table].display;
   return typeof d === 'function' ? d(row) : row[d];

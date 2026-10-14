@@ -1,6 +1,6 @@
 // Halaman Tim Kebun (/kebun): target vs realisasi progres tanam pisang per bulan — hanya lihat, tanpa login.
 // Data sama dengan aplikasi utama (otomatis dari Progres Harian, Rencana Blok, Blok Tanam, Target Tanam).
-import { util, aktivitasUntuk, lahanProgress, pisangTertanam, statusRencana, ringkasRencana, porsiRencana, hariKerjaAkt, liburDefault } from './schema.js';
+import { util, aktivitasUntuk, lahanProgress, pisangTertanam, statusRencana, ringkasRencana, porsiRencana, hariKerjaAkt, liburDefault, tanamPerBulan } from './schema.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const n = util.n, key = util.key;
@@ -48,7 +48,9 @@ function render(ctx) {
   const tt = pisangTertanam(ctx);
   const awal = R.reduce((m, r) => (r.mulai < m ? r.mulai : m), R[0].mulai), akhir = R.reduce((m, r) => (r.selesai > m ? r.selesai : m), R[0].selesai);
   const blokRen = new Set(R.map((r) => key(r.blok)));
-  const har = P('lahan_harian').filter((r) => blokRen.has(key(r.blok)) && r.tanggal >= awal);
+  const blokPis = new Set(P('lahan_blok').filter((b) => (b.peruntukan || 'Pisang') === 'Pisang').map((b) => key(b.blok)));
+  const har = P('lahan_harian').filter((r) => (blokRen.has(key(r.blok)) || blokPis.has(key(r.blok))) && r.tanggal >= awal);
+  const TB = tanamPerBulan(ctx, R, tIso), TBm = new Map(TB.map((x) => [x.bulan, x])); // tanam per bulan berdasarkan luasan
   const real = (akt, dari, sampai) => har.filter((r) => r.aktivitas === akt && r.tanggal >= dari && r.tanggal <= sampai).reduce((s, r) => s + n(r.hasil_ha), 0);
   const porsi = (akt, dari, sampai) => R.filter((r) => r.aktivitas === akt).reduce((s, r) => s + porsiRencana(r, r.a, dari, sampai), 0);
   // minggu ini Senin–Minggu
@@ -98,6 +100,12 @@ function render(ctx) {
       <div class="sub">Rencana mulai ${tglID(awal)} · semua blok target selesai tanam <b>${tglID(akhir)}</b></div>
       <div><span class="big">${f2(totSudah)}</span> <span class="sub" style="font-size:15px">dari ${f2(totTarget)} ha sudah ditanam (${f0(pct(totSudah, totTarget))}%)</span></div>
       <div class="bar"><i style="width:${pct(totSudah, totTarget)}%"></i></div>
+      ${TB.length ? `<div style="overflow:auto;margin-top:10px"><table class="mini"><tr><th>Bulan</th><th class="num">Rencana tanam</th><th class="num">Tanam aktual</th><th class="num">Kumulatif<div class="small muted">aktual / rencana</div></th><th>Status</th></tr>
+        ${TB.map((x) => `<tr><td><b>${esc(BULAN[+x.bulan.slice(5) - 1])}</b></td><td class="num">${f2(x.rencana)} ha</td><td class="num">${x.status === 'belum' && x.aktual < 0.005 ? '–' : `<b>${f2(x.aktual)}</b> ha`}</td>
+          <td class="num">${f2(x.kumAktual)} / ${f2(x.kumRencana)}</td>
+          <td>${x.status === 'belum' ? '<span class="st wait">Belum mulai</span>' : x.status === 'sesuai' ? `<span class="st ok">✅ Sesuai${x.selisih > 0.005 ? ` (+${f2(x.selisih)} ha)` : ''}</span>` : `<span class="st no">Kurang ${f2(-x.selisih)} ha</span>`}${!x.lalu && x.status !== 'belum' ? '<div class="small muted">s/d kemarin</div>' : ''}</td></tr>`).join('')}
+      </table></div>
+      <div class="small muted" style="margin-top:4px">Dihitung dari <b>luasan</b>: tanam di blok mana pun masuk ke bulan tanamnya (blok yang maju/mundur dari rencana tetap terhitung). Status = kumulatif tanam aktual vs kumulatif rencana.</div>` : ''}
       <div style="margin-top:6px">${telat.length ? telat.map((k) => `<span class="st no" style="margin:2px 4px 2px 0">${esc(k.akt)} kurang ${f2(-k.selisih)} ha · ±${f0(Math.ceil(k.telat))} hari</span>`).join('') : '<span class="st ok">✅ Semua kegiatan sesuai rencana s/d kemarin</span>'}</div>
     </div>
 
@@ -132,19 +140,20 @@ function render(ctx) {
       const sdKemarin = kemarin < a0 ? null : kemarin < a1 ? kemarin : a1;
       const rows = acts.map((a) => ({ a: a.aktivitas, t: porsi(a.aktivitas, a0, a1), d: real(a.aktivitas, a0, a1 < tIso ? a1 : tIso), tk: sdKemarin ? porsi(a.aktivitas, a0, sdKemarin) : 0 })).filter((x) => x.t > 0.005 || x.d > 0.005);
       const tanamBulan = [...tanamRow.values()].filter((r) => ymOf(r.selesai) === m).sort((x, y) => x.selesai.localeCompare(y.selesai));
-      const luasTanam = tanamBulan.reduce((s, r) => s + n(lb.get(key(r.blok))?.luas_ha), 0), sudahTanam = tanamBulan.filter((r) => tt.has(key(r.blok))).reduce((s, r) => s + n(lb.get(key(r.blok))?.luas_ha), 0);
+      const tb = TBm.get(m) || { rencana: 0, aktual: 0, luar: [] };
       return `<div class="card o-card isiBln" data-m="${m}"${m === pilih ? '' : ' hidden'}>
         <h3 style="margin:0 0 6px">${esc(lblBulan(m))}${kini ? ' <span class="st on">bulan ini</span>' : ''}</h3>
-        <div>Rencana tanam <b>${f2(luasTanam)} ha</b> · ${tanamBulan.length} blok${tanamBulan.length ? ` · sudah ditanam <b>${f2(sudahTanam)} ha</b> (${pctTxt(sudahTanam, luasTanam)})` : ''}</div>
-        ${tanamBulan.length ? `<div class="bar"><i style="width:${pct(sudahTanam, luasTanam)}%"></i></div>` : ''}
+        <div>Rencana tanam <b>${f2(tb.rencana)} ha</b> · ${tanamBulan.length} blok · tanam aktual <b>${f2(tb.aktual)} ha</b> (${pctTxt(tb.aktual, tb.rencana)})</div>
+        ${tb.rencana > 0.005 ? `<div class="bar"><i style="width:${pct(tb.aktual, tb.rencana)}%"></i></div>` : ''}
         <div style="overflow:auto;margin-top:8px"><table class="mini"><tr><th>Kegiatan</th><th class="num">Target bulan</th><th class="num">Selesai</th></tr>
         ${rows.map((x) => { const kurang = sdKemarin && x.d < x.tk - 0.005;
           return `<tr><td><b>${esc(x.a)}</b></td><td class="num">${f2(x.t)} ha</td>
             <td class="num">${lalu || kini ? `${f2(x.d)} ha<div class="mini-bar"><i style="width:${pct(x.d, x.t)}%"></i></div><div class="small" style="color:${kurang ? 'var(--danger)' : 'var(--muted)'}">${pctTxt(x.d, x.t)}${sdKemarin ? (kurang ? ` · kurang ${f2(x.tk - x.d)} ha` : ' · sesuai') : ''}</div>` : '<span class="small muted">belum mulai</span>'}</td>
 </tr>`; }).join('')}
         </table></div>
-        ${tanamBulan.length ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${tanamBulan.map((r) => { const ok = tt.has(key(r.blok)), lw = !ok && r.selesai < tIso;
-          return `<span class="st ${ok ? 'ok' : lw ? 'no' : 'wait'}">${ok ? '✅ ' : ''}${esc(r.blok)} · tanam mgg ${lblMinggu(r.selesai)}</span>`; }).join('')}</div>` : ''}
+        ${tanamBulan.length ? `<div class="small muted" style="margin-top:10px">Blok rencana tanam bulan ini:</div><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">${tanamBulan.map((r) => { const ok = tt.has(key(r.blok)), lw = !ok && r.selesai < tIso;
+          return `<span class="st ${ok ? 'ok' : lw ? 'no' : 'wait'}">${ok ? '✅ ' : ''}${esc(r.blok)} · tanam mgg ${lblMinggu(r.selesai)}${!ok && lw ? ' · belum' : ''}</span>`; }).join('')}</div>` : ''}
+        ${tb.luar.length ? `<div class="small muted" style="margin-top:8px">Ditanam bulan ini di luar rencana bulan ini (tetap dihitung dalam luasan):</div><div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:6px">${tb.luar.map((x) => `<span class="st on">🔁 ${esc(x.blok)} ${f2(x.ha)} ha · ${x.rencana ? `rencana ${esc(BULAN[+x.rencana.slice(5) - 1])} (${x.arah})` : 'di luar rencana'}</span>`).join('')}</div>` : ''}
       </div>`; }).join('')}
 
     <h2>Jadwal per blok</h2>
