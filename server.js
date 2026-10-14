@@ -17,7 +17,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const DB_FILE = path.join(DATA_DIR, 'kebun.db');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
+const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
 const { turso, onlineConfig } = await import('./lib/turso.js');
 
@@ -279,15 +279,28 @@ function seed() {
     }
     db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('isi:kecepatan', now());
   }
-  // Rencana Kerja dibuat otomatis SEKALI (permintaan user) bila masih kosong: dari progres saat ini, mulai hari ini (WIB).
+  const tandai = (k) => db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, now());
+  const sudah = (k) => !!db.prepare('SELECT 1 FROM _settings WHERE k=?').get(k);
+  // alat bersama (user): Bajak 1 & Bajak 2 = 1 traktor, Land Clearing = 1 alat — diisi sekali bila kosong
+  if (!sudah('isi:alat')) {
+    for (const a of db.prepare(`SELECT id, aktivitas, alat FROM lahan_aktivitas WHERE untuk='Pisang'`).all())
+      if (!a.alat && alatDefault(a.aktivitas)) db.prepare('UPDATE lahan_aktivitas SET alat=?, updated_at=? WHERE id=?').run(alatDefault(a.aktivitas), now(), a.id);
+    tandai('isi:alat');
+  }
+  // Rencana Kerja dibuat otomatis SEKALI (permintaan user): dari progres saat ini, mulai hari ini (WIB).
+  // v2 = aturan alat bersama → rencana otomatis versi pertama (seed:lahan_rencana) diganti sekali; rencana yang disusun admin tidak disentuh.
   // Susun ulang berikutnya lewat tombol "Susun rencana kerja" di halaman Progres Tanam (admin).
-  if (!db.prepare('SELECT 1 FROM _settings WHERE k=?').get('seed:lahan_rencana')) {
-    if (db.prepare('SELECT COUNT(*) c FROM lahan_rencana').get().c === 0) {
+  if (!sudah('seed:lahan_rencana_v2')) {
+    const kosong = db.prepare('SELECT COUNT(*) c FROM lahan_rencana').get().c === 0;
+    const otomatisLama = sudah('seed:lahan_rencana') && !db.prepare("SELECT 1 FROM _log WHERE tabel='lahan_rencana' LIMIT 1").get();
+    if (kosong || otomatisLama) {
       const c = { rows: (t) => db.prepare(`SELECT * FROM ${q(t)}`).all() };
       const hariIni = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
-      for (const r of susunRencana(c, hariIni)) insertRow('lahan_rencana', r, false);
+      const rows = susunRencana(c, hariIni);
+      db.exec('DELETE FROM lahan_rencana');
+      for (const r of rows) insertRow('lahan_rencana', r, false);
     }
-    db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('seed:lahan_rencana', now());
+    tandai('seed:lahan_rencana'); tandai('seed:lahan_rencana_v2');
   }
 }
 seed();
