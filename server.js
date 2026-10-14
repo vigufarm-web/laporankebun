@@ -17,7 +17,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const DB_FILE = path.join(DATA_DIR, 'kebun.db');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
+const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, ruteDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
 const { turso, onlineConfig } = await import('./lib/turso.js');
 
@@ -286,6 +286,17 @@ function seed() {
     for (const a of db.prepare(`SELECT id, aktivitas, alat FROM lahan_aktivitas WHERE untuk='Pisang'`).all())
       if (!a.alat && alatDefault(a.aktivitas)) db.prepare('UPDATE lahan_aktivitas SET alat=?, updated_at=? WHERE id=?').run(alatDefault(a.aktivitas), now(), a.id);
     tandai('isi:alat');
+  }
+  // urutan blok (user): Land Clearing pindah ke blok terdekat di peta (rotasi alat) — diisi sekali bila kosong
+  if (!sudah('isi:rute')) {
+    for (const a of db.prepare(`SELECT id, aktivitas, rute FROM lahan_aktivitas WHERE untuk='Pisang'`).all())
+      if (!a.rute && ruteDefault(a.aktivitas)) db.prepare('UPDATE lahan_aktivitas SET rute=?, updated_at=? WHERE id=?').run(ruteDefault(a.aktivitas), now(), a.id);
+    tandai('isi:rute');
+  }
+  // prioritas blok (user): A01a paling akhir — terpisah ±1 km di utara, kerjakan kelompok blok utama dulu
+  if (!sudah('isi:prioritas_a01a')) {
+    db.prepare(`UPDATE lahan_target SET prioritas=9, updated_at=? WHERE blok='A01a' AND prioritas IS NULL`).run(now());
+    tandai('isi:prioritas_a01a');
   }
   // rencana awal (user): Stik Tanam & Tanam masing-masing 2 tim — diisi sekali
   if (!sudah('isi:tim2')) {
