@@ -116,7 +116,7 @@ function render(ctx) {
 
     <h2>🗺️ Peta blok <span class="sub" id="petaJudul"></span></h2>
     <div class="card o-card">
-      <div class="sub" style="margin:0 0 6px">Klik nama kegiatan di <b>Target kerja per minggu</b> (atau pilihan di bawah) untuk melihat lokasi bloknya. Klik blok di peta untuk rincian.</div>
+      <div class="sub" style="margin:0 0 6px">Klik nama kegiatan di <b>Target kerja per minggu</b> (atau pilihan di bawah) untuk melihat lokasi bloknya — hanya blok itu yang diberi label (nama + target ha); blok lain dipudarkan. Klik blok mana pun di peta untuk rincian.</div>
       <div id="petaPilih" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px"></div>
       <div id="peta" style="height:400px;border-radius:8px;overflow:hidden;background:#e5ebe6"><div class="sub" style="padding:12px">Memuat peta…</div></div>
       <div class="small muted" id="petaNote" style="margin-top:6px"></div>
@@ -171,7 +171,7 @@ function render(ctx) {
     <style>.kb i.lg{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:4px;vertical-align:-1px;border:1px solid #0002}
       .kb .mx th.h{font-size:11px;white-space:normal;min-width:54px;text-align:center}.kb .mx thead th{position:sticky;top:0;z-index:2}
       .kb .mx td:first-child,.kb .mx th:first-child{position:sticky;left:0;background:#fff;z-index:1}.kb .mx thead th:first-child{z-index:3}
-      .kb .peta-jauh .blk-label:not(.sorot){display:none}.kb .blk-label.sorot{font-size:12px}
+      .kb #peta .blk-label:not(.sorot){display:none}.kb #peta .blk-label.sorot{font-size:12px;line-height:1.15;text-align:center}.kb #peta .blk-label.sorot small{font-weight:500;font-size:10.5px}
       .kb .mxBlok,.kb #petaPilih a{cursor:pointer}.kb .wkAkt:hover{background:#f6faf7}</style>
 
     <div class="foot">Cara baca: jadwal mengikuti <b>Rencana Kerja</b> — tiap kegiatan dikerjakan timnya blok demi blok sesuai urutan (Land Clearing → … → Tanam) dengan kecepatan per kegiatan
@@ -211,9 +211,11 @@ function render(ctx) {
     lapis.eachLayer((l) => {
       const k = key(l.feature.properties?.Nama_Blok), s = S.get(k), pis = (l.feature.properties?.Lahan || '') === 'Pisang'; ada.add(k);
       const fill = s ? (s.beres ? '#16a34a' : s.tunggak > 0.005 ? '#dc2626' : '#f97316') : !pis ? '#e5e7eb' : tt.has(k) ? '#bbf7d0' : blokRen.has(k) ? '#fde68a' : '#f1f5f9';
-      l.setStyle({ color: s ? '#7c2d12' : '#1f2937', weight: s ? 2.5 : 0.8, fillColor: fill, fillOpacity: s ? 0.85 : 0.45 });
+      l.setStyle({ color: s ? '#7c2d12' : '#ffffff', weight: s ? 2.5 : 0.6, opacity: s ? 1 : 0.5, fillColor: fill, fillOpacity: s ? 0.85 : 0.18 }); // blok lain dipudarkan
       if (s) { hit.push(l); l.bringToFront(); }
-      l.getTooltip()?.getElement()?.classList.toggle('sorot', !!s); // label blok yang disorot selalu tampil
+      // hanya blok yang disorot yang berlabel: nama + target ha (pilihan satu kegiatan) — blok lain tanpa label (klik untuk nama)
+      l.setTooltipContent(s ? `${esc(l.feature.properties?.Nama_Blok || '')}${petaPilih.a ? `<br><small>${f2(s.ha)} ha${s.beres ? ' ✅' : ''}</small>` : ''}` : esc(l.feature.properties?.Nama_Blok || ''));
+      l.getTooltip()?.getElement()?.classList.toggle('sorot', !!s);
     });
     $('#petaJudul', el).textContent = `· ${petaPilih.a || 'semua kegiatan'} · ${PW().lbl.toLowerCase()}`;
     const hilang = [...S.values()].filter((s) => !ada.has(key(s.blok))).map((s) => s.blok);
@@ -250,11 +252,8 @@ function render(ctx) {
       peta = L.map(box, { maxZoom: 21, scrollWheelZoom: false });
       L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 18, maxZoom: 21, attribution: 'Esri' }).addTo(peta);
       lapis = L.geoJSON(fc, { onEachFeature: (f, l) => { l.bindTooltip(esc(f.properties?.Nama_Blok || ''), { permanent: true, direction: 'center', className: 'blk-label' }); l.bindPopup(() => popupBlok(f)); } }).addTo(peta);
-      // peta diperkecil → label blok lain disembunyikan supaya tidak menumpuk
-      const label = () => box.classList.toggle('peta-jauh', peta.getZoom() < 17);
-      peta.on('zoomend', label);
-      warnai(true); label();
-      setTimeout(() => { peta.invalidateSize(); warnai(true); label(); }, 80);
+      warnai(true);
+      setTimeout(() => { peta.invalidateSize(); warnai(true); }, 80);
     } catch (e) { const box = $('#peta', el); if (box) box.innerHTML = `<div class="sub" style="padding:12px">Peta tidak bisa dimuat: ${esc(e.message)}</div>`; }
   })();
   // tab bulan: klik → tampilkan bulan itu saja
