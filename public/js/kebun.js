@@ -71,62 +71,79 @@ function render(ctx) {
   const stat = (a, ym) => rantai(ym)[a];
   const tanam = acts[acts.length - 1];
   const totTarget = tg.reduce((s, x) => s + x.luas, 0), totSudah = tg.filter((x) => x.sudah).reduce((s, x) => s + x.luas, 0);
-  let pilih = months.find((m) => m >= ymNow) || months[months.length - 1];
-  // minggu ini (Senin–Minggu)
+  // minggu ini (Senin–Minggu); hari kerja tersisa minggu ini (Senin–Sabtu, termasuk hari ini)
   const senin = new Date(today); senin.setDate(today.getDate() - ((today.getDay() + 6) % 7)); const minggu = new Date(senin); minggu.setDate(senin.getDate() + 6);
+  const sabtu = new Date(senin); sabtu.setDate(senin.getDate() + 5);
   const wk = har.filter((r) => r.tanggal >= iso(senin) && r.tanggal <= iso(minggu));
+  const sisaHariMinggu = Math.max(1, hariKerja(today, sabtu));
+  const mundurHariKerja = (d0, nh) => { const d = new Date(d0); let s = Math.ceil(nh); while (s > 0) { d.setDate(d.getDate() - 1); if (d.getDay() !== 0) s--; } return d; };
+  // rencana per bulan (blok bulan itu saja): batas selesai tiap kegiatan dihitung MUNDUR dari akhir bulan mengikuti urutan
+  // kegiatan (timeline) — kegiatan awal harus selesai lebih dulu agar kegiatan berikutnya sempat dikerjakan.
+  const rencanaBulan = (ym) => {
+    const bl = tg.filter((x) => x.ym === ym), sisa = bl.filter((x) => !x.sudah);
+    const rata = sisa.length ? sisa.reduce((s, x) => s + x.luas, 0) / sisa.length : 0;
+    const batas = {}; let d = akhirBulan(ym);
+    for (let i = acts.length - 1; i >= 0; i--) { const a = acts[i]; batas[a] = new Date(d); d = mundurHariKerja(d, speed[a] ? rata / speed[a] : 0); }
+    const keg = {};
+    for (const a of acts) {
+      const target = bl.reduce((s, x) => s + x.luas, 0), done = bl.reduce((s, x) => s + x.pc[a] * x.luas, 0), kurang = Math.max(0, target - done);
+      const hari = batas[a] < today ? 0 : hariKerja(today, batas[a]);
+      const perHari = kurang <= 0.005 ? 0 : hari ? kurang / hari : kurang;
+      const mingguIni = wk.filter((r) => r.aktivitas === a && bl.some((x) => key(x.blok) === key(r.blok))).reduce((s, r) => s + n(r.hasil_ha), 0);
+      keg[a] = { target, done, kurang, batas: batas[a], mingguIni, tMinggu: kurang <= 0.005 ? 0 : Math.min(kurang, perHari * sisaHariMinggu) + mingguIni, lewat: kurang > 0.005 && batas[a] < today };
+    }
+    const luas = bl.reduce((s, x) => s + x.luas, 0);
+    return { bl, keg, luas, tanam: bl.filter((x) => x.sudah).reduce((s, x) => s + x.luas, 0), progres: luas ? bl.reduce((s, x) => s + x.total * x.luas, 0) / luas : 0 };
+  };
+  const R = Object.fromEntries(months.map((m) => [m, rencanaBulan(m)]));
+  // prioritas hari ini: kegiatan berikutnya tiap blok yang belum tanam, urut batas selesai (timeline) → bulan → progres
+  const kerjaMinggu = (b) => wk.some((r) => key(r.blok) === key(b));
+  const prioritas = tg.filter((x) => !x.sudah && x.next).map((x) => ({ x, a: x.next, sisa: (1 - x.pc[x.next]) * x.luas, batas: R[x.ym].keg[x.next].batas }))
+    .sort((p, q) => p.batas - q.batas || p.x.ym.localeCompare(q.x.ym) || q.x.total - p.x.total);
+  const MAKS = 8;
+  const pctTxt = (a, b) => `${f0(pct(a, b))}%`;
+  const blnPendek = (ym) => BULAN[+ym.slice(5) - 1].slice(0, 3);
 
-  const draw = () => {
-    el.innerHTML = `
+  el.innerHTML = `
     <div class="sub" style="margin-top:6px">Data per ${tglID(iso(today))} · otomatis dari aplikasi (progres harian)</div>
-    <h1>🍌 Progres Tanam Pisang — Target vs Realisasi</h1>
-
+    <h1>🍌 Progres Tanam Pisang</h1>
     <div class="card o-card">
       <div class="sub">Target tanam ${esc(lblBulan(months[0]))} – ${esc(lblBulan(months[months.length - 1]))} · ${tg.length} blok</div>
       <div><span class="big">${f2(totSudah)}</span> <span class="sub" style="font-size:15px">dari ${f2(totTarget)} ha sudah ditanam (${f0(pct(totSudah, totTarget))}%)</span></div>
       <div class="bar"><i style="width:${pct(totSudah, totTarget)}%"></i></div>
-      <div class="sub">Sisa ${f2(totTarget - totSudah)} ha · ${tg.filter((x) => !x.sudah).length} blok belum tanam</div>
+      <div class="sub" style="margin:0">${months.map((m) => `${blnPendek(m)} ${f2(R[m].tanam)}/${f2(R[m].luas)} ha`).join(' · ')}</div>
     </div>
 
-    <h2>Target tanam per bulan</h2>
-    <div class="bln">${months.map((m) => {
-      const bl = tg.filter((x) => x.ym === m), t = bl.reduce((s, x) => s + x.luas, 0), d = bl.filter((x) => x.sudah).reduce((s, x) => s + x.luas, 0);
-      const s = stat(tanam, m);
-      return `<div class="card o-card"><div style="display:flex;justify-content:space-between;gap:6px;align-items:center"><b>${esc(lblBulan(m))}</b><span class="st ${s.st[0]}">${s.st[1]}</span></div>
-        <div style="margin-top:6px"><span class="big" style="font-size:22px">${f2(d)}</span> / ${f2(t)} ha</div>
-        <div class="bar"><i style="width:${pct(d, t)}%"></i></div>
-        <div class="sub" style="margin:0">${bl.map((x) => (x.sudah ? `✅${esc(x.blok)}` : esc(x.blok))).join(', ')}${m >= ymNow ? ` · ${s.avail} hari kerja lagi` : ''}</div></div>`;
-    }).join('')}</div>
+    <h2>🔨 Prioritas kerja hari ini</h2>
+    <div class="card o-card">${prioritas.length ? `<div class="sub">Urut sesuai timeline: kegiatan yang batasnya paling dekat dikerjakan lebih dulu.</div>
+      ${prioritas.slice(0, MAKS).map((p, i) => `<div class="blk" style="grid-template-columns:28px 1fr auto"><div class="big" style="font-size:18px;color:var(--brand)">${i + 1}</div>
+        <div><b>${esc(p.x.blok)}</b> · ${esc(p.a)} <span class="small muted">· sisa ${f2(p.sisa)} ha</span><div class="small muted">batas ${tglID(iso(p.batas))} · target tanam ${esc(BULAN[+p.x.ym.slice(5) - 1])}${kerjaMinggu(p.x.blok) ? ' · 🔨 dikerjakan minggu ini' : ''}</div></div>
+        <span class="st ${p.batas < today ? 'no' : p.x.ym === ymNow ? 'on' : 'wait'}">${p.batas < today ? 'Lewat batas' : p.x.ym === ymNow ? 'Bulan ini' : blnPendek(p.x.ym)}</span></div>`).join('')}
+      ${prioritas.length > MAKS ? `<div class="sub" style="margin:8px 0 0">… dan ${prioritas.length - MAKS} pekerjaan berikutnya (lihat per bulan di bawah).</div>` : ''}` : '<div class="sub" style="margin:0">Semua blok target sudah ditanam. 🎉</div>'}</div>
 
-    <h2>Kegiatan s/d akhir bulan</h2>
-    <div class="tabs">${months.map((m) => `<a data-m="${m}" class="${m === pilih ? 'on' : ''}">${esc(BULAN[+m.slice(5) - 1])}</a>`).join('')}</div>
-    <div class="card o-card" style="overflow:auto">
-      <div class="sub">Semua kegiatan untuk blok bertarget s/d <b>${esc(lblBulan(pilih))}</b> harus selesai paling lambat ${tglID(iso(akhirBulan(pilih)))}${pilih >= ymNow ? ` (${hariKerja(today, akhirBulan(pilih))} hari kerja lagi, Senin–Sabtu)` : ''}.</div>
-      <table class="mini"><tr><th>Kegiatan</th><th class="num">Target (ha)</th><th class="num">Selesai</th><th class="num">Kurang</th><th>Status</th></tr>
-      ${acts.map((a) => { const s = stat(a, pilih); return `<tr><td><b>${esc(a)}</b><div class="small muted">${speed[a] ? f2(speed[a]) + ' ha/hari' : 'belum ada data kecepatan'}</div></td>
-        <td class="num">${f2(s.target)}</td><td class="num">${f2(s.done)}<div class="mini-bar"><i style="width:${pct(s.done, s.target)}%"></i></div></td><td class="num">${s.kurang > 0.005 ? f2(s.kurang) : '–'}</td>
-        <td><span class="st ${s.st[0]}">${s.st[1]}</span>${s.kurang > 0.005 && pilih >= ymNow ? `<div class="small muted">perkiraan selesai ${s.selesai ? tglID(iso(s.selesai)) : '?'}</div>` : ''}</td></tr>`; }).join('')}
-      </table>
-      <div class="small muted" style="margin-top:6px">Perkiraan selesai mengikuti urutan kegiatan (kegiatan berikutnya baru tuntas setelah kegiatan sebelumnya) dengan kecepatan rata-rata selama ini, Senin–Sabtu. 🟢 Terkejar = perkiraan selesai sebelum akhir bulan. 🔴 Tertinggal = lewat akhir bulan (perlu tambah tenaga/alat).</div>
-    </div>
+    ${months.map((m) => { const r = R[m], st = stat(tanam, m).st, aktif = acts.filter((a) => r.keg[a].target > 0);
+      return `<h2>${esc(lblBulan(m))}</h2>
+      <div class="card o-card">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><div>Target tanam <b>${f2(r.luas)} ha</b> · ${r.bl.length} blok</div><span class="st ${st[0]}">${st[1]}</span></div>
+        <div style="margin-top:8px"><span class="big" style="font-size:24px">${f2(r.tanam)} ha</span> <span class="sub">sudah ditanam (${pctTxt(r.tanam, r.luas)}) · progres semua kegiatan ${f0(r.progres * 100)}%</span></div>
+        <div class="bar"><i style="width:${pct(r.tanam, r.luas)}%"></i></div>
+        <div class="sub">${m >= ymNow ? `${hariKerja(today, akhirBulan(m))} hari kerja lagi s/d ${tglID(iso(akhirBulan(m)))}` : 'bulan sudah lewat'}</div>
+        <div style="overflow:auto"><table class="mini"><tr><th>Kegiatan</th><th class="num">Selesai</th><th class="num">Target minggu ini</th><th class="num">Minggu ini</th></tr>
+        ${aktif.map((a) => { const k = r.keg[a];
+          return `<tr><td><b>${esc(a)}</b>${k.kurang > 0.005 ? `<div class="small muted">batas ${tglID(iso(k.batas))}</div>` : ''}</td>
+            <td class="num">${f2(k.done)} / ${f2(k.target)} ha<div class="mini-bar"><i style="width:${pct(k.done, k.target)}%"></i></div><div class="small muted">${pctTxt(k.done, k.target)}</div></td>
+            <td class="num">${k.kurang <= 0.005 ? '<span class="st ok">✅ Selesai</span>' : `${f2(k.tMinggu)} ha${k.lewat ? '<div class="small" style="color:var(--danger)">lewat batas</div>' : ''}`}</td>
+            <td class="num">${k.mingguIni ? `<b>${f2(k.mingguIni)}</b> ha${k.tMinggu > 0.005 ? `<div class="small muted">${pctTxt(k.mingguIni, k.tMinggu)}</div>` : ''}` : '–'}</td></tr>`; }).join('')}
+        </table></div>
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${r.bl.map((x) => `<span class="st ${x.sudah ? 'ok' : kerjaMinggu(x.blok) ? 'on' : 'wait'}">${x.sudah ? '✅ ' + esc(x.blok) : `${esc(x.blok)} → ${esc(x.next || '-')} · ${f0(x.total * 100)}%`}</span>`).join('')}</div>
+      </div>`; }).join('')}
 
-    <h2>Per blok</h2>
-    ${months.map((m) => `<div class="card o-card"><b>${esc(lblBulan(m))}</b>
-      ${tg.filter((x) => x.ym === m).map((x) => { const kerja = wk.some((r) => key(r.blok) === key(x.blok));
-        const st = x.sudah ? ['ok', '✅ Sudah tanam'] : m < ymNow ? ['no', '🔴 Lewat target'] : kerja ? ['on', '🔨 Dikerjakan minggu ini'] : x.total > 0 ? ['wait', 'Berjalan'] : ['wait', 'Belum mulai'];
-        return `<div class="blk"><div><b>${esc(x.blok)}</b><div class="small muted">${f2(x.luas)} ha</div></div>
-          <div>${x.sudah ? 'Semua kegiatan selesai' : `Berikutnya: <b>${esc(x.next || '-')}</b>`}<div class="mini-bar"><i style="width:${x.total * 100}%"></i></div><div class="small muted">${f0(x.total * 100)}% kegiatan selesai</div></div>
-          <span class="st ${st[0]}">${st[1]}</span></div>`; }).join('')}</div>`).join('')}
-
-    <h2>Pekerjaan minggu ini <span class="sub">(${tglID(iso(senin))} – ${tglID(iso(minggu))})</span></h2>
+    <h2>Pekerjaan tercatat minggu ini <span class="sub">(${tglID(iso(senin))} – ${tglID(iso(minggu))})</span></h2>
     <div class="card o-card">${wk.length ? `<table class="mini"><tr><th>Kegiatan</th><th class="num">Hasil (ha)</th><th>Blok</th></tr>
       ${acts.filter((a) => wk.some((r) => r.aktivitas === a)).map((a) => { const w = wk.filter((r) => r.aktivitas === a); return `<tr><td>${esc(a)}</td><td class="num">${f2(w.reduce((s, r) => s + n(r.hasil_ha), 0))}</td><td>${[...new Set(w.map((r) => r.blok))].map((b) => `<span class="tag">${esc(b)}</span>`).join(' ')}</td></tr>`; }).join('')}</table>` : '<div class="sub" style="margin:0">Belum ada pekerjaan tercatat minggu ini.</div>'}</div>
 
-    <div class="foot">Luas memakai luas blok di Rencana Blok (sama dengan dasar target). Blok yang sudah ditanam dihitung selesai semua kegiatannya.
-      Kecepatan = rata-rata hasil per hari kerja dari seluruh progres harian. Target diubah di Excel sheet "Progres - Target Tanam".</div>`;
-    el.querySelectorAll('.tabs a').forEach((a) => (a.onclick = () => { pilih = a.dataset.m; draw(); }));
-  };
-  draw();
+    <div class="foot">Cara baca: <b>Target minggu ini</b> = luas yang perlu dikerjakan minggu ini (Senin–Sabtu) agar tiap kegiatan selesai sebelum batasnya. Batas dihitung mundur dari akhir bulan mengikuti urutan kegiatan dan kecepatan kerja rata-rata selama ini.
+      Luas memakai luas blok di Rencana Blok; blok yang sudah ditanam dihitung selesai semua kegiatannya. Target diubah di Excel sheet "Progres - Target Tanam".</div>`;
 }
 
 $('#rf').onclick = () => { $('#kb').innerHTML = '<div class="card">Memuat data…</div>'; muat().catch(tampilError); };

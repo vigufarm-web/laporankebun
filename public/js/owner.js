@@ -249,6 +249,7 @@ export async function renderOwner(main, A) {
   wp.insertAdjacentHTML('beforeend', '<button class="btn primary" onclick="window.print()">🖨 Cetak / PDF</button>');
   $('#wp').replaceWith(wp);
   const gis = await loadGis(A);
+  if (!$('#o1')) return; // halaman sudah diganti sebelum peta selesai dimuat
 
   // 1. informasi kebun
   const st = serahTerima(gis), peta = petaKomoditas(gis);

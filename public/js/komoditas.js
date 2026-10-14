@@ -69,6 +69,7 @@ export async function renderKomoditas(main, A, komKey, tabKey, sub) {
   const sumEl = $('#kSum');
   const S = SUMMARY[`${komKey}_${tab.k}`];
   if (S) await S(sumEl, A, K, rerender);
+  if (!$('#kTbl')) return; // halaman sudah diganti sebelum ringkasan selesai dimuat
   const opt = K.key === 'Pisang' || K.key === 'Padi' ? lahanFilters(A, K.key)[table] || {} : {};
   A.renderTable($('#kTbl'), table, { embed: true, ...opt, onChange: rerender });
 }
@@ -299,6 +300,7 @@ const SUMMARY = {
 async function progres(el, A, kom) {
   const { fmtNum, esc, ctx } = A;
   const gis = await loadGis(A);
+  if (!el.isConnected) return; // halaman sudah diganti
   el.innerHTML = '<div id="kp"></div><h2 class="o-h">Progres per blok × tahap</h2><div id="km"></div>';
   renderProgres($('#kp', el), A, gis, kom);
   const acts = aktivitasUntuk(ctx, kom).map((a) => a.aktivitas);
