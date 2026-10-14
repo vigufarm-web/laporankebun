@@ -123,6 +123,7 @@ function render(ctx) {
 
     <div class="foot">Cara baca: jadwal mengikuti <b>Rencana Kerja</b> — tiap kegiatan dikerjakan timnya blok demi blok sesuai urutan (Land Clearing → … → Tanam) dengan kecepatan per kegiatan
       (${acts.map((a) => `${esc(a.aktivitas)} ${String(n(a.hari_per_ha) || '–').replace('.', ',')} hari/ha`).join(', ')}). ${['Sabtu & Minggu', 'Minggu'].map((l) => { const xs = acts.filter((a) => (a.libur || liburDefault(a.aktivitas)) === l); return xs.length ? `${xs.map((a) => esc(a.aktivitas)).join(', ')} libur ${l}` : ''; }).filter(Boolean).join('; ')}.
+      ${[...new Set(acts.filter((a) => a.alat).map((a) => a.alat))].map((al) => { const xs = acts.filter((a) => a.alat === al); return `${xs.map((a) => esc(a.aktivitas)).join(' & ')} memakai 1 ${esc(al)}${xs.length > 1 ? ' bergantian' : ''} — selesai satu blok dulu baru pindah.`; }).join(' ')}
       <b>Target</b> = bagian rencana pada tanggal itu; <b>Selesai</b> = hasil di Progres Harian (laporan Excel yang diupload). "Kurang" dihitung s/d kemarin.</div>`;
   // tab bulan: klik → tampilkan bulan itu saja
   el.querySelectorAll('#tabBln a').forEach((a) => (a.onclick = () => {

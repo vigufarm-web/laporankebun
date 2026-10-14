@@ -332,7 +332,7 @@ function rencanaKerja(el, A, rerender) {
     el.innerHTML = `<div class="card o-card">
       <p class="sub">Rencana mulai ${fmtDate(awal)} · semua blok target selesai tanam <b>${fmtDate(akhir)}</b> · ${new Set(R.map((r) => keyB(r.blok))).size} blok. Target dihitung s/d kemarin (${fmtDate(kemarin)}); selesai = dari Progres Harian. Rincian per blok di tabel Rencana Kerja & halaman <a href="/kebun" target="_blank">Tim Kebun ↗</a>.</p>
       <table class="mini"><tr><th>Kegiatan</th><th class="num">Rencana (ha)</th><th>Jadwal</th><th class="num">Target s/d kemarin</th><th class="num">Selesai</th><th style="width:14%"></th><th>Status</th></tr>
-      ${K.map((k) => `<tr><td><b>${esc(k.akt)}</b><div class="small muted">${fmtNum(n(k.a.hari_per_ha) || 0, 2)} hari/ha · ${n(k.a.tim) || 1} tim · libur ${esc(k.a.libur || liburDefault(k.akt))}</div></td>
+      ${K.map((k) => `<tr><td><b>${esc(k.akt)}</b><div class="small muted">${fmtNum(n(k.a.hari_per_ha) || 0, 2)} hari/ha · ${n(k.a.tim) || 1} tim · libur ${esc(k.a.libur || liburDefault(k.akt))}${k.a.alat ? ` · alat: ${esc(k.a.alat)}` : ''}</div></td>
         <td class="num">${fmtNum(k.total, 2)}</td><td class="small">${fmtDate(k.mulai)} – ${fmtDate(k.selesai)}</td><td class="num">${fmtNum(k.target, 2)}</td><td class="num"><b>${fmtNum(k.done, 2)}</b></td>
         <td><div class="bar"><i style="width:${k.total ? Math.min(100, (k.done / k.total) * 100) : 0}%"></i></div></td><td>${st(k)}</td></tr>`).join('')}
       </table>${tombol ? `<div style="margin-top:10px">${tombol}</div>` : ''}</div>`;

@@ -386,6 +386,7 @@ export const TABLES = {
       { k: 'hari_per_ha', l: 'Hari Kerja per Ha', t: 'num', hint: 'Kecepatan 1 tim (dipakai menyusun Rencana Kerja). Kosong = dihitung dari Progres Harian (jumlah hari aktif ÷ total ha).' },
       { k: 'tim', l: 'Jumlah Tim', t: 'int', hint: 'Kosong = 1 tim.' },
       { k: 'libur', l: 'Hari Libur', t: 'select', opt: ['Minggu', 'Sabtu & Minggu'], hint: 'Kosong: Land Clearing & Bajak = Sabtu & Minggu, kegiatan lain = Minggu.' },
+      { k: 'alat', l: 'Alat Dipakai', t: 'text', hint: 'Kegiatan dengan nama alat sama memakai 1 alat bergantian & tidak bisa bersamaan (mis. Bajak 1 & Bajak 2 = "Traktor Bajak"). Kosong = tim sendiri.' },
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
   },
@@ -613,6 +614,8 @@ export function pisangTertanam(c) {
 
 // ------------------------------------------------------------ RENCANA KERJA (jadwal LC s/d Tanam per blok, pisang)
 // Kalender per kegiatan: Land Clearing & Bajak libur Sabtu–Minggu, lainnya libur Minggu (bisa diubah di Urutan Aktivitas).
+// alat awal (user): Bajak 1 & Bajak 2 = 1 traktor bersama; Land Clearing = 1 alat
+export const alatDefault = (akt) => (/bajak/i.test(String(akt || '')) ? 'Traktor Bajak' : /land\s*clearing/i.test(String(akt || '')) ? 'Alat LC' : '');
 export const liburDefault = (akt) => (/land\s*clearing|bajak/i.test(String(akt || '')) ? 'Sabtu & Minggu' : 'Minggu');
 export function hariKerjaAkt(a) {
   const off = (a?.libur || liburDefault(a?.aktivitas)) === 'Sabtu & Minggu' ? [0, 6] : [0];
@@ -627,7 +630,7 @@ export function hariPerHa(c, a) {
 }
 const dphTim = (c, a) => (hariPerHa(c, a) || 2) / Math.max(1, n(a?.tim) || 1);
 // Susun rencana mulai tanggal `mulai` (ISO): sisa pekerjaan tiap blok target (Target Tanam, belum tertanam) dari progres saat ini.
-// Tiap kegiatan dikerjakan timnya sendiri, blok demi blok (yang paling siap dulu; seri → bulan target, lalu progres terbesar);
+// Tiap kegiatan dikerjakan timnya/alatnya sendiri, blok demi blok (prioritas blok: bulan target, lalu progres terbesar);
 // kegiatan di satu blok baru mulai setelah kegiatan sebelumnya di blok itu selesai (urutan timeline).
 export function susunRencana(c, mulai) {
   const acts = aktivitasUntuk(c, 'Pisang');
@@ -648,21 +651,29 @@ export function susunRencana(c, mulai) {
     for (let g = 0; w > 1e-9 && g < 5000; g++) { const i = Math.floor(t + 1e-9); if (!kerja(hari(i))) { t = i + 1; continue; } const x = Math.min(w, i + 1 - t); t += x; w -= x; }
     return t;
   };
-  const fin = blok.map(() => []), rows = [];
-  acts.forEach((a, k) => {
-    const kerja = hariKerjaAkt(a), dph = dphTim(c, a);
-    let bebas = 0;
-    const antri = blok.map((b, i) => ({ b, i, siap: k ? fin[i][k - 1] : 0 })).sort((x, y) => x.siap - y.siap || x.i - y.i);
-    for (const { b, i, siap } of antri) {
-      const ha = b.sisa[k];
-      if (ha <= 0.005) { fin[i][k] = siap; continue; }
-      const s = masuk(Math.max(bebas, siap), kerja), e = maju(s, ha * dph, kerja);
-      fin[i][k] = e; bebas = e;
-      const iS = Math.floor(s + 1e-9);
-      rows.push({ urutan: i + 1, blok: b.blok, aktivitas: a.aktivitas, luas_ha: Math.round(ha * 1e4) / 1e4,
-        mulai: util.iso(hari(iS)), selesai: util.iso(hari(Math.max(iS, Math.ceil(e - 1e-9) - 1))), _k: k });
-    }
-  });
+  // Kegiatan dengan "Alat" sama memakai 1 alat bergantian (mis. Bajak 1 & Bajak 2 = 1 traktor): alat menyelesaikan
+  // pekerjaannya di satu blok dulu baru pindah. Setiap langkah: dari pekerjaan berikutnya tiap blok, ambil yang paling cepat
+  // bisa mulai (alat bebas & kegiatan sebelumnya di blok itu selesai); seri → prioritas blok, lalu urutan kegiatan.
+  const alatOf = (a) => (String(a.alat || '').trim() ? 'alat:' + util.key(a.alat) : 'akt:' + a.aktivitas);
+  const info = acts.map((a) => ({ a, kerja: hariKerjaAkt(a), dph: dphTim(c, a), alat: alatOf(a) }));
+  const bebas = {}, siap = blok.map(() => 0), lanjut = blok.map((b) => b.sisa.findIndex((h) => h > 0.005)), rows = [];
+  for (let g = 0; g < 10000; g++) {
+    let pilih = null;
+    blok.forEach((b, i) => {
+      const k = lanjut[i]; if (k < 0) return;
+      const s = masuk(Math.max(bebas[info[k].alat] || 0, siap[i]), info[k].kerja);
+      if (!pilih || s < pilih.s - 1e-9 || (Math.abs(s - pilih.s) <= 1e-9 && (i < pilih.i || (i === pilih.i && k < pilih.k)))) pilih = { i, k, s };
+    });
+    if (!pilih) break;
+    const { i, k, s } = pilih, b = blok[i], x = info[k], ha = b.sisa[k];
+    const e = maju(s, ha * x.dph, x.kerja);
+    bebas[x.alat] = e; siap[i] = e;
+    let nk = k + 1; while (nk < acts.length && b.sisa[nk] <= 0.005) nk++;
+    lanjut[i] = nk < acts.length ? nk : -1;
+    const iS = Math.floor(s + 1e-9);
+    rows.push({ urutan: i + 1, blok: b.blok, aktivitas: x.a.aktivitas, luas_ha: Math.round(ha * 1e4) / 1e4,
+      mulai: util.iso(hari(iS)), selesai: util.iso(hari(Math.max(iS, Math.ceil(e - 1e-9) - 1))), _k: k });
+  }
   return rows.sort((x, y) => x.urutan - y.urutan || x._k - y._k).map(({ _k, ...r }) => r);
 }
 // luas rencana satu baris yang jatuh pada tanggal dari..sampai (ISO, termasuk) — dibagi rata per hari kerja kegiatan itu
