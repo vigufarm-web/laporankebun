@@ -376,6 +376,14 @@ export function openForm(table, row, { onSaved, prefill } = {}) {
 
   const save = async (more) => {
     const r = read();
+    // nama induk diketik bebas (datalist): beda huruf besar/kecil/spasi → dibetulkan; aktivitas tak dikenal → ditolak; lainnya → konfirmasi
+    const kunci = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const f of T.f.filter((x) => x.t === 'ref' && r[x.k] != null && r[x.k] !== '')) {
+      const hit = refOptions(f).find((o) => kunci(o) === kunci(r[f.k]));
+      if (hit) { if (hit !== r[f.k]) { r[f.k] = hit; $(`#f_${f.k}`, md).value = hit; } continue; }
+      if (f.ref === 'lahan_aktivitas') { $(`.fld[data-k="${f.k}"]`, md).classList.add('err'); return toast(`${f.l} "${r[f.k]}" tidak ada di daftar ${TABLES[f.ref].title} — pilih dari daftar`, true); }
+      if (!confirm(`${f.l} "${r[f.k]}" tidak ada di daftar ${TABLES[f.ref].title}.\nTetap simpan?`)) return;
+    }
     let bad = false;
     for (const f of T.f) {
       const el = $(`.fld[data-k="${f.k}"]`, md);
@@ -435,6 +443,8 @@ function excelReportTable(rep) {
   return `${(rep.peringatan || []).map((p) => `<div class="card" style="background:#fff7e6;border-color:#f3d6a6;margin-bottom:8px">⚠ ${esc(p)}</div>`).join('')}
     <table class="mini"><tr><th>Sheet</th><th>Status</th><th class="num">Baris di Excel</th><th class="num">Baris baru / berubah</th><th class="num">Baris dihapus / berubah</th></tr>
     ${rep.sheets.map((s) => `<tr><td><b>${esc(s.sheet)}</b></td><td style="color:${color(s.status)}">${esc(s.status)}</td><td class="num">${fmtNum(s.baris)}</td><td class="num">${s.tambah ? '+' + fmtNum(s.tambah) : ''}</td><td class="num">${s.hapus ? '−' + fmtNum(s.hapus) : ''}</td></tr>
+      ${s.koreksi?.length ? `<tr><td></td><td colspan="4" class="small" style="color:var(--ok)">✔ Dibetulkan otomatis (beda huruf besar/kecil atau spasi): ${s.koreksi.map(esc).join('; ')}</td></tr>` : ''}
+      ${s.peringatan?.length ? `<tr><td></td><td colspan="4" class="small" style="color:var(--warn)">⚠ ${s.peringatan.map(esc).join('<br>⚠ ')}</td></tr>` : ''}
       ${s.jumlahError ? `<tr><td></td><td colspan="4" class="small" style="color:var(--danger)">${s.errors.map((e) => `Baris ${e.row}: ${esc(e.msg)}`).join('<br>')}${s.jumlahError > s.errors.length ? `<br>… dan ${s.jumlahError - s.errors.length} kesalahan lain` : ''}</td></tr>` : ''}`).join('')}
     </table>${rep.backup ? `<p class="small muted" style="margin:6px 0 0">Backup sebelum sinkron: ${esc(rep.backup)}</p>` : ''}`;
 }

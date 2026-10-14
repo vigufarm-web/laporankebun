@@ -17,7 +17,7 @@ const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const DB_FILE = path.join(DATA_DIR, 'kebun.db');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-const { TABLES, SEED, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
+const { TABLES, SEED, SEED_SEKALI, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
 const { turso, onlineConfig } = await import('./lib/turso.js');
 
@@ -264,6 +264,13 @@ function seed() {
   if (db.prepare(`SELECT 1 FROM lahan_aktivitas WHERE untuk IS NULL OR untuk=''`).get()) db.exec(`UPDATE lahan_aktivitas SET untuk='Pisang' WHERE untuk IS NULL OR untuk=''`);
   if (!db.prepare(`SELECT 1 FROM lahan_aktivitas WHERE untuk='Padi'`).get())
     for (const r of SEED.lahan_aktivitas.filter((x) => x.untuk === 'Padi')) insertRow('lahan_aktivitas', r, false);
+  // data awal sekali saja (mis. target tanam Q4): bila tabel kosong & belum pernah diisi
+  for (const [name, rows] of Object.entries(SEED_SEKALI || {})) {
+    const flag = 'seed:' + name;
+    if (db.prepare('SELECT 1 FROM _settings WHERE k=?').get(flag)) continue;
+    if (db.prepare(`SELECT COUNT(*) c FROM ${q(name)}`).get().c === 0) for (const r of rows) insertRow(name, r, false);
+    db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(flag, now());
+  }
 }
 seed();
 // mode online: tabel/kolom baru & data awal ikut dibuat di database online.
@@ -631,15 +638,45 @@ function scheduleExcelWrite(ms = 4000) { if (VERCEL) return; clearTimeout(xl.tim
 if (!VERCEL) setInterval(() => { if (xl.stale && !excelLocked()) writeExcelFile().catch(() => {}); }, 15000);
 
 const sig = (table, cfg, r) => { const c = clean(table, r); return JSON.stringify(sheetFields(TABLES, cfg).map((f) => (c[f.k] == null ? null : c[f.k]))); };
+// Nama induk di Excel (aktivitas, blok, dll.) dicocokkan dengan daftarnya tanpa peduli huruf besar/kecil, spasi & tanda baca:
+//  • beda tulisan saja (mis. "land clearing", "LandClearing") → dibetulkan otomatis ke nama di daftar;
+//  • aktivitas yang tidak ada di daftar → KESALAHAN (sheet ditahan) karena barisnya tidak akan terhitung di progres;
+//  • nama lain yang tidak ada di daftar (mis. blok baru) → peringatan saja, data tetap masuk.
+const kunciNama = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function cekNamaInduk(parsed) {
+  const cache = {};
+  const daftar = (t) => (cache[t] ??= (() => {
+    const m = new Map(), dariSheet = parsed.find((p) => p.cfg.table === t && p.found && !p.errors.length);
+    for (const r of [...db.prepare(`SELECT * FROM ${q(t)}`).all(), ...(dariSheet ? dariSheet.rows : [])]) { const v = displayOf(t, r); if (v != null && v !== '') m.set(kunciNama(v), String(v)); }
+    return m;
+  })());
+  for (const p of parsed) {
+    if (!p.found) continue;
+    const kor = new Map(), asing = new Map();
+    for (const f of sheetFields(TABLES, p.cfg).filter((f) => f.t === 'ref')) {
+      const m = daftar(f.ref);
+      for (const r of p.rows) {
+        const v = r[f.k]; if (v == null || v === '') continue;
+        const hit = m.get(kunciNama(v));
+        if (hit != null) { if (hit !== String(v)) { const kk = `${f.l} "${v}" → "${hit}"`; kor.set(kk, [...(kor.get(kk) || []), r.__baris]); r[f.k] = hit; } }
+        else if (f.ref === 'lahan_aktivitas') p.errors.push({ row: r.__baris, msg: `${f.l} "${v}" tidak ada di daftar ${TABLES[f.ref].title} (cek ejaan) — kalau dibiarkan tidak akan terhitung di progres` });
+        else { const kk = `${f.l} "${v}" tidak ada di ${TABLES[f.ref].title}`; asing.set(kk, [...(asing.get(kk) || []), r.__baris]); }
+      }
+    }
+    const fmt = (m) => [...m].map(([k, b]) => `${k} (${b.length} baris: ${b.slice(0, 6).join(', ')}${b.length > 6 ? ', …' : ''})`).slice(0, 20);
+    p.koreksi = fmt(kor); p.peringatan = fmt(asing);
+  }
+}
 async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file', panel = null } = {}) {
   const parsed = await parseWorkbook(buf, { TABLES, SHEETS: panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS });
   const scopes = Object.fromEntries(parsed.map((p) => [p.cfg.table, panel ? scopeOf(p.cfg.table, panel.kom) : null])); // dihitung sebelum ada yang diganti
+  cekNamaInduk(parsed);
   const rep = { waktu: now(), sumber, preview, oleh, panel: panel?.label || null, sheets: [], backup: null, peringatan: [] };
   if (xl.stale) rep.peringatan.push(`Ada perubahan dari aplikasi sejak ${new Date(xl.staleSince).toLocaleString('id-ID')} yang belum masuk ke Excel (file sedang dibuka). Isi Excel ini menimpa perubahan tersebut.`);
   const todo = [];
   for (const p of parsed) {
     const { cfg } = p; const all = db.prepare(`SELECT * FROM ${q(cfg.table)}`).all(); const cur = scopes[cfg.table] ? all.filter(scopes[cfg.table]) : all;
-    const s = { sheet: cfg.sheet, tabel: TABLES[cfg.table].title, baris: p.rows.length, sebelum: cur.length, tambah: 0, hapus: 0, status: 'ok', errors: p.errors.slice(0, 30), jumlahError: p.errors.length, layoutBeda: !!p.layoutBeda };
+    const s = { sheet: cfg.sheet, tabel: TABLES[cfg.table].title, baris: p.rows.length, sebelum: cur.length, tambah: 0, hapus: 0, status: 'ok', koreksi: p.koreksi || [], peringatan: p.peringatan || [], errors: p.errors.slice(0, 30), jumlahError: p.errors.length, layoutBeda: !!p.layoutBeda };
     rep.sheets.push(s);
     if (!p.found) { s.status = 'sheet tidak ada — dilewati'; continue; }
     if (p.errors.length) { s.status = 'ada kesalahan — tidak diproses'; continue; }
@@ -734,11 +771,13 @@ async function apiRequest(req, res, url) {
 // Vercel menjalankan server.js sebagai satu fungsi (export default di bawah); isi public/ dilayani CDN Vercel.
 // Halaman utama dibaca dengan alamat tetap supaya ikut terbawa dalam paket fungsi.
 const INDEX_HTML = VERCEL ? fs.readFileSync(new URL('./public/index.html', import.meta.url)) : null;
+const KEBUN_HTML = VERCEL ? fs.readFileSync(new URL('./public/kebun.html', import.meta.url)) : null; // halaman Tim Kebun (/kebun)
 
 export default async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
   try {
     if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
+    if (url.pathname === '/kebun' || url.pathname === '/kebun/') return VERCEL ? send(res, 200, KEBUN_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' }) : serveFile(res, path.join(ROOT, 'public', 'kebun.html'));
     if (BELUM_ONLINE && url.pathname.startsWith('/api/')) return send(res, 503, { error: 'Database online belum disambungkan. Di Vercel: buka proyek → Storage → Create Database → Turso → Connect ke proyek ini, lalu Deployments → Redeploy.' });
     if (url.pathname.startsWith('/api/')) {
       await apiRequest(req, res, url);

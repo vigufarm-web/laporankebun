@@ -48,7 +48,7 @@ export const DIVISIONS = [
   { key: 'padi', name: 'Padi', icon: '🌾', color: '#65a30d',
     tables: ['padi_benih', 'padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt', 'padi_panen', 'padi_giling'] },
   { key: 'lahan', name: 'Infra & Pembukaan Lahan', icon: '🚜', color: '#b45309',
-    tables: ['lahan_blok', 'lahan_harian', 'lahan_aktivitas'] },
+    tables: ['lahan_blok', 'lahan_harian', 'lahan_target', 'lahan_aktivitas'] },
   { key: 'iklim', name: 'Iklim', icon: '🌦️', color: '#0284c7',
     tables: ['iklim'] },
   { key: 'gis', name: 'GIS & Peta', icon: '🗺️', color: '#7c3aed',
@@ -367,6 +367,15 @@ export const TABLES = {
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
   },
+  lahan_target: {
+    title: 'Target Tanam', div: 'lahan', date: 'bulan', sort: 'bulan',
+    desc: 'Target bulan selesai tanam per blok (dipakai halaman Tim Kebun /kebun). Semua kegiatan blok itu (LC s/d Tanam) ditargetkan selesai paling lambat akhir bulan tsb.',
+    f: [
+      { k: 'blok', l: 'Blok', t: 'ref', ref: 'lahan_blok', req: true },
+      { k: 'bulan', l: 'Target Bulan Tanam', t: 'date', req: true, hint: 'Isi tanggal berapa saja di bulan target (mis. 1/11/2026) — yang dipakai bulannya.' },
+      { k: 'keterangan', l: 'Keterangan', t: 'text' },
+    ],
+  },
   lahan_aktivitas: {
     title: 'Urutan Aktivitas', div: 'lahan', display: 'aktivitas', sort: 'urutan',
     desc: 'Urutan tahapan persiapan lahan. Bisa ditambah/diubah sesuai kebutuhan (mis. untuk sawah).',
@@ -440,6 +449,7 @@ export const EXCEL_SHEETS = [
   { sheet: 'Progres - Urutan Tahap', table: 'lahan_aktivitas' },
   { sheet: 'Progres - Rencana Blok', table: 'lahan_blok' },
   { sheet: 'Progres - Harian', table: 'lahan_harian' },
+  { sheet: 'Progres - Target Tanam', table: 'lahan_target' },
   { sheet: 'Iklim - Data 2 Jam', table: 'iklim' },
 ];
 
@@ -453,7 +463,7 @@ export const ROLES = {
   panen_padi: { label: 'Panen Padi', desc: 'Panen padi & penggilingan (beras masuk)', edit: ['padi_panen', 'padi_giling'] },
   kebun_pisang: { label: 'Kebun Pisang', desc: 'Blok, bibit, kegiatan pisang', edit: ['pisang_blok', 'pisang_bibit', 'pisang_kegiatan'] },
   kebun_padi: { label: 'Kebun Padi', desc: 'Stok benih, petak, musim tanam, kegiatan, OPT', edit: ['padi_benih', 'padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt'] },
-  lahan: { label: 'Progres Tanam / Pembukaan Lahan', desc: 'Progres LC/bajak/tanam pisang & padi', edit: ['lahan_blok', 'lahan_harian', 'lahan_aktivitas'] },
+  lahan: { label: 'Progres Tanam / Pembukaan Lahan', desc: 'Progres LC/bajak/tanam pisang & padi', edit: ['lahan_blok', 'lahan_harian', 'lahan_target', 'lahan_aktivitas'] },
   gis: { label: 'GIS', desc: 'Layer peta, catatan peta, titik lokasi', edit: ['gis_layer', 'gis_titik'] },
   iklim: { label: 'Iklim', desc: 'Data stasiun cuaca', edit: ['iklim'] },
 };
@@ -464,6 +474,12 @@ export function canEdit(user, table) {
 export const isAdmin = (user) => !!user && (user.peran || []).includes('admin');
 
 // Data awal (hanya diisi kalau tabel masih kosong)
+// data awal yang hanya diisi SEKALI (kalau nanti sengaja dikosongkan, tidak diisi ulang)
+const TARGET_Q4 = { '2026-10-01': ['D08', 'D09b', 'D03', 'D10'], '2026-11-01': ['D04', 'D14a', 'D05b', 'D11', 'D12a', 'E01a', 'E01b'],
+  '2026-12-01': ['C05', 'E02a', 'E02b', 'C05b', 'A01a', 'D14b', 'E01c', 'E01d', 'E03a', 'E03c', 'E03d', 'E08'] };
+export const SEED_SEKALI = {
+  lahan_target: Object.entries(TARGET_Q4).flatMap(([bulan, bl]) => bl.map((blok) => ({ blok, bulan, keterangan: bulan === '2026-12-01' ? 'Tambahan ±7 ha (setelah November)' : 'Rencana Tanam Q4 2026 (v13)' }))),
+};
 export const SEED = {
   lahan_aktivitas: [
     ...['Land Clearing', 'Bajak 1', 'Dolomite', 'Bajak 2', 'Stik Ridger', 'Ridger', 'Install Drip', 'Stik Tanam', 'Ecer Pupuk', 'Tanam'].map((a, i) => ({ untuk: 'Pisang', urutan: i + 1, aktivitas: a })),

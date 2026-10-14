@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Progres Tanam · Tim Kebun</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { background: var(--bg); }
+    .kb { max-width: 980px; margin: 0 auto; padding: 14px 14px 40px; }
+    .kb h1 { font-size: 20px; margin: 4px 0 2px; }
+    .kb h2 { font-size: 16px; margin: 22px 0 8px; color: var(--brand); }
+    .kb .sub { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+    .kb .big { font-size: 30px; font-weight: 700; }
+    .kb .bar { height: 12px; background: #e5ebe6; border-radius: 6px; overflow: hidden; margin: 8px 0 4px; }
+    .kb .bar > i { display: block; height: 100%; background: var(--brand); }
+    .kb .bln { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    .kb .st { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .kb .ok { background: #dcfce7; color: #166534; } .kb .on { background: #e0f2fe; color: #075985; } .kb .no { background: #fee2e2; color: #991b1b; } .kb .wait { background: #f1f5f9; color: #475569; }
+    .kb table.mini td, .kb table.mini th { padding: 7px 8px; }
+    .kb .tabs a { cursor: pointer; }
+    .kb .blk { display: grid; grid-template-columns: 70px 1fr auto; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .kb .blk b { font-size: 14px; }
+    .kb .mini-bar { height: 7px; background: #e5ebe6; border-radius: 4px; overflow: hidden; margin-top: 3px; }
+    .kb .mini-bar > i { display: block; height: 100%; background: #65a30d; }
+    .kb .foot { color: var(--muted); font-size: 12px; margin-top: 24px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <header class="topbar"><span class="brand"><span class="logo">🌱</span><span id="nm">PT VIGU FARM INDONESIA</span></span><div class="top-right"><button class="btn sm" id="rf">↻ Muat ulang</button></div></header>
+  <main class="kb" id="kb"><div class="card">Memuat data…</div></main>
+  <script type="module" src="/js/kebun.js"></script>
+</body>
+</html>

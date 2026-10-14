@@ -30,7 +30,7 @@ export const KOM = {
     // Tertanam: hanya untuk admin (permintaan user) — pokok tanam per blok, tanggal tanam, tabel Blok Tanam
     { k: 'tertanam', l: 'Tertanam', tables: ['pisang_blok', 'pisang_kegiatan'], excel: ['pisang_blok'], admin: true },
     // Blok Tanam (pokok, tanggal tanam, status) disembunyikan dari tampilan tapi ikut di Excel halaman ini
-    { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], excel: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas', 'pisang_blok'], week: true },
+    { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_aktivitas'], excel: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_aktivitas', 'pisang_blok'], week: true }, // Target Tanam dipakai halaman Tim Kebun (/kebun)
     { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_estimasi', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
   ] },
   padi: { nama: 'Padi', icon: '🌾', key: 'Padi', tabs: [
