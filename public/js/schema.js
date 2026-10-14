@@ -373,6 +373,7 @@ export const TABLES = {
     f: [
       { k: 'blok', l: 'Blok', t: 'ref', ref: 'lahan_blok', req: true },
       { k: 'bulan', l: 'Target Bulan Tanam', t: 'date', req: true, hint: 'Isi tanggal berapa saja di bulan target (mis. 1/11/2026) — yang dipakai bulannya.' },
+      { k: 'prioritas', l: 'Prioritas', t: 'int', hint: 'Kosong = biasa. Angka lebih besar = dikerjakan belakangan (mis. 9 = paling akhir): alat/tim baru mengerjakan blok ini setelah blok lain selesai di kegiatan itu.' },
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
   },
@@ -386,6 +387,7 @@ export const TABLES = {
       { k: 'hari_per_ha', l: 'Hari Kerja per Ha', t: 'num', hint: 'Kecepatan 1 tim (dipakai menyusun Rencana Kerja). Kosong = dihitung dari Progres Harian (jumlah hari aktif ÷ total ha).' },
       { k: 'tim', l: 'Jumlah Tim', t: 'int', hint: 'Kosong = 1 tim.' },
       { k: 'libur', l: 'Hari Libur', t: 'select', opt: ['Minggu', 'Sabtu & Minggu'], hint: 'Kosong: Land Clearing & Bajak = Sabtu & Minggu, kegiatan lain = Minggu.' },
+      { k: 'rute', l: 'Urutan Blok', t: 'select', opt: ['Prioritas tanam', 'Blok terdekat'], hint: 'Prioritas tanam (kosong) = blok yang paling dekat jadwal tanamnya dulu. Blok terdekat = alat/tim pindah ke blok terdekat di peta (rotasi alat lebih mudah).' },
       { k: 'alat', l: 'Alat Dipakai', t: 'text', hint: 'Kegiatan dengan nama alat sama memakai 1 alat bergantian & tidak bisa bersamaan (mis. Bajak 1 & Bajak 2 = "Traktor Bajak"). Kosong = tim sendiri.' },
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
@@ -614,6 +616,8 @@ export function pisangTertanam(c) {
 
 // ------------------------------------------------------------ RENCANA KERJA (jadwal LC s/d Tanam per blok, pisang)
 // Kalender per kegiatan: Land Clearing & Bajak libur Sabtu–Minggu, lainnya libur Minggu (bisa diubah di Urutan Aktivitas).
+// urutan blok awal (user): Land Clearing pindah ke blok terdekat di peta; kegiatan lain ikut prioritas tanam
+export const ruteDefault = (akt) => (/land\s*clearing/i.test(String(akt || '')) ? 'Blok terdekat' : '');
 // alat awal (user): Bajak 1 & Bajak 2 = 1 traktor bersama; Land Clearing = 1 alat
 export const alatDefault = (akt) => (/bajak/i.test(String(akt || '')) ? 'Traktor Bajak' : /land\s*clearing/i.test(String(akt || '')) ? 'Alat LC' : '');
 export const liburDefault = (akt) => (/land\s*clearing|bajak/i.test(String(akt || '')) ? 'Sabtu & Minggu' : 'Minggu');
@@ -627,6 +631,21 @@ export function hariPerHa(c, a) {
   const h = c.rows('lahan_harian').filter((r) => r.aktivitas === a?.aktivitas);
   const ha = h.reduce((s, r) => s + n(r.hasil_ha), 0), hari = new Set(h.map((r) => r.tanggal)).size;
   return ha > 0 ? hari / ha : 0;
+}
+// titik tengah tiap blok (meter, dari layer peta "Blok Tanam" di tabel gis_layer) — untuk rotasi alat ke blok terdekat
+export function posisiBlok(c) {
+  const out = new Map();
+  try {
+    const g = (c.rows('gis_layer') || []).find((x) => /blok tanam/i.test(`${x.jenis} ${x.nama}`));
+    const fc = g && (typeof g.geojson === 'string' ? JSON.parse(g.geojson) : g.geojson);
+    for (const f of fc?.features || []) {
+      const pts = []; const jalan = (q) => (typeof q?.[0] === 'number' ? pts.push(q) : (q || []).forEach(jalan)); jalan(f.geometry?.coordinates);
+      if (!pts.length || !f.properties?.Nama_Blok) continue;
+      const lon = pts.reduce((t, p) => t + p[0], 0) / pts.length, lat = pts.reduce((t, p) => t + p[1], 0) / pts.length;
+      out.set(util.key(f.properties.Nama_Blok), [lon * 111320 * Math.cos((lat * Math.PI) / 180), lat * 110540]);
+    }
+  } catch {}
+  return out;
 }
 const dphTim = (c, a) => (hariPerHa(c, a) || 2) / Math.max(1, n(a?.tim) || 1);
 // Susun rencana mulai tanggal `mulai` (ISO): sisa pekerjaan tiap blok target (Target Tanam, belum tertanam) dari progres saat ini.
@@ -642,9 +661,9 @@ export function susunRencana(c, mulai) {
     if (!b || ada.has(k) || tt.has(k)) continue;
     ada.add(k);
     const p = lahanProgress(b, c), luas = n(b.luas_ha);
-    blok.push({ blok: b.blok, ym: String(t.bulan || '').slice(0, 7), total: p.total, sisa: acts.map((a) => Math.max(0, (1 - (p.per.find((x) => x.akt === a.aktivitas)?.pct || 0)) * luas)) });
+    blok.push({ blok: b.blok, ym: String(t.bulan || '').slice(0, 7), kelas: n(t.prioritas), total: p.total, sisa: acts.map((a) => Math.max(0, (1 - (p.per.find((x) => x.akt === a.aktivitas)?.pct || 0)) * luas)) });
   }
-  blok.sort((x, y) => x.ym.localeCompare(y.ym) || y.total - x.total || String(x.blok).localeCompare(String(y.blok), 'id', { numeric: true }));
+  blok.sort((x, y) => x.kelas - y.kelas || x.ym.localeCompare(y.ym) || y.total - x.total || String(x.blok).localeCompare(String(y.blok), 'id', { numeric: true }));
   const t0 = util.d(mulai), hari = (i) => { const d = new Date(t0); d.setDate(d.getDate() + i); return d; };
   const masuk = (t, kerja) => { let i = Math.floor(t + 1e-9); if (kerja(hari(i))) return t; while (!kerja(hari(i))) i++; return i; }; // geser ke hari kerja
   const maju = (t, w, kerja) => { // tambah w hari kerja mulai waktu t (hari pecahan sejak tanggal mulai)
@@ -657,17 +676,33 @@ export function susunRencana(c, mulai) {
   const alatOf = (a) => (String(a.alat || '').trim() ? 'alat:' + util.key(a.alat) : 'akt:' + a.aktivitas);
   const info = acts.map((a) => ({ a, kerja: hariKerjaAkt(a), dph: dphTim(c, a), alat: alatOf(a) }));
   const bebas = {}, siap = blok.map(() => 0), lanjut = blok.map((b) => b.sisa.findIndex((h) => h > 0.005)), rows = [];
+  // rotasi alat (user): kegiatan dengan Urutan Blok "Blok terdekat" (default Land Clearing) pindah ke blok TERDEKAT di peta di antara
+  // blok yang sama-sama siap (Prioritas blok sama; bulan target diabaikan). Posisi awal = blok terakhir yang dikerjakan di Progres Harian.
+  // Kegiatan lain (mis. traktor) tetap mendahulukan blok yang paling dekat jadwal tanamnya.
+  const pos = posisiBlok(c), posAlat = {}, jarak = (p, q) => (p && q ? Math.hypot(p[0] - q[0], p[1] - q[1]) : Infinity);
+  for (const h of [...c.rows('lahan_harian')].filter((x) => x.tanggal && x.tanggal < mulai).sort((x, y) => String(x.tanggal).localeCompare(String(y.tanggal)))) {
+    const a = acts.find((z) => z.aktivitas === h.aktivitas); if (a && pos.has(util.key(h.blok))) posAlat[alatOf(a)] = pos.get(util.key(h.blok));
+  }
   for (let g = 0; g < 10000; g++) {
-    let pilih = null;
+    let pilih = null; const calon = [];
     blok.forEach((b, i) => {
       const k = lanjut[i]; if (k < 0) return;
+      // prioritas: alat/tim kegiatan ini menunggu sampai blok berprioritas lebih kecil tidak punya sisa pekerjaan dengan alat itu
+      if (b.kelas && blok.some((c, j) => c.kelas < b.kelas && lanjut[j] >= 0 && c.sisa.some((h, kk) => kk >= lanjut[j] && h > 0.005 && info[kk].alat === info[k].alat))) return;
       const s = masuk(Math.max(bebas[info[k].alat] || 0, siap[i]), info[k].kerja);
+      calon.push({ i, k, s });
       if (!pilih || s < pilih.s - 1e-9 || (Math.abs(s - pilih.s) <= 1e-9 && (i < pilih.i || (i === pilih.i && k < pilih.k)))) pilih = { i, k, s };
     });
     if (!pilih) break;
+    if ((info[pilih.k].a.rute || ruteDefault(info[pilih.k].a.aktivitas)) === 'Blok terdekat' && posAlat[info[pilih.k].alat]) { // pilih blok terdekat dari posisi alat
+      const p0 = blok[pilih.i], dari = posAlat[info[pilih.k].alat];
+      const sama = calon.filter((q) => info[q.k].alat === info[pilih.k].alat && Math.abs(q.s - pilih.s) <= 1e-9 && blok[q.i].kelas === p0.kelas);
+      for (const q of sama) { const dq = jarak(dari, pos.get(util.key(blok[q.i].blok))), dp = jarak(dari, pos.get(util.key(blok[pilih.i].blok))); if (dq < dp - 1e-6 || (Math.abs(dq - dp) <= 1e-6 && q.i < pilih.i)) pilih = q; }
+    }
     const { i, k, s } = pilih, b = blok[i], x = info[k], ha = b.sisa[k];
     const e = maju(s, ha * x.dph, x.kerja);
     bebas[x.alat] = e; siap[i] = e;
+    if (pos.has(util.key(b.blok))) posAlat[x.alat] = pos.get(util.key(b.blok));
     let nk = k + 1; while (nk < acts.length && b.sisa[nk] <= 0.005) nk++;
     lanjut[i] = nk < acts.length ? nk : -1;
     const iS = Math.floor(s + 1e-9);

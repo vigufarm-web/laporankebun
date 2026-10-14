@@ -1,7 +1,7 @@
 // Halaman per komoditas (Pisang / Padi) + Infrastruktur.
 // Setiap tab: ringkasan di atas, tabel data di bawah. Semua orang bisa melihat; tombol tambah/ubah hanya muncul
 // untuk pengguna yang login dan punya izin pada tabel tersebut.
-import { TABLES, POKOK_PER_HA, util, displayOf, padiFase, lahanProgress, aktivitasUntuk, stokBenih, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM, susunRencana, statusRencana, ringkasRencana, liburDefault } from './schema.js';
+import { TABLES, POKOK_PER_HA, util, displayOf, padiFase, lahanProgress, aktivitasUntuk, stokBenih, nominalJual, isJual, iklimHarian, HARI_HUJAN_MM, susunRencana, statusRencana, ringkasRencana, liburDefault, ruteDefault } from './schema.js';
 import { loadGis, week, weekLabel, weekPicker, renderProgres, renderTanggalTanam, renderPanenJual, tanamRows } from './owner.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -332,7 +332,7 @@ function rencanaKerja(el, A, rerender) {
     el.innerHTML = `<div class="card o-card">
       <p class="sub">Rencana mulai ${fmtDate(awal)} · semua blok target selesai tanam <b>${fmtDate(akhir)}</b> · ${new Set(R.map((r) => keyB(r.blok))).size} blok. Target dihitung s/d kemarin (${fmtDate(kemarin)}); selesai = dari Progres Harian. Rincian per blok di tabel Rencana Kerja & halaman <a href="/kebun" target="_blank">Tim Kebun ↗</a>.</p>
       <table class="mini"><tr><th>Kegiatan</th><th class="num">Rencana (ha)</th><th>Jadwal</th><th class="num">Target s/d kemarin</th><th class="num">Selesai</th><th style="width:14%"></th><th>Status</th></tr>
-      ${K.map((k) => `<tr><td><b>${esc(k.akt)}</b><div class="small muted">${fmtNum(n(k.a.hari_per_ha) || 0, 2)} hari/ha · ${n(k.a.tim) || 1} tim · libur ${esc(k.a.libur || liburDefault(k.akt))}${k.a.alat ? ` · alat: ${esc(k.a.alat)}` : ''}</div></td>
+      ${K.map((k) => `<tr><td><b>${esc(k.akt)}</b><div class="small muted">${fmtNum(n(k.a.hari_per_ha) || 0, 2)} hari/ha · ${n(k.a.tim) || 1} tim · libur ${esc(k.a.libur || liburDefault(k.akt))}${k.a.alat ? ` · alat: ${esc(k.a.alat)}` : ''}${(k.a.rute || ruteDefault(k.akt)) === 'Blok terdekat' ? ' · blok terdekat' : ''}</div></td>
         <td class="num">${fmtNum(k.total, 2)}</td><td class="small">${fmtDate(k.mulai)} – ${fmtDate(k.selesai)}</td><td class="num">${fmtNum(k.target, 2)}</td><td class="num"><b>${fmtNum(k.done, 2)}</b></td>
         <td><div class="bar"><i style="width:${k.total ? Math.min(100, (k.done / k.total) * 100) : 0}%"></i></div></td><td>${st(k)}</td></tr>`).join('')}
       </table>${tombol ? `<div style="margin-top:10px">${tombol}</div>` : ''}</div>`;
@@ -347,9 +347,12 @@ function rencanaKerja(el, A, rerender) {
         ${R.length ? `<p class="small" style="color:var(--danger)">Rencana lama (${R.length} baris) akan diganti.</p>` : ''}
         <div id="rkPrev" class="small muted" style="margin-top:8px"></div></div>
       <div class="modal-foot"><span class="sp"></span><button class="btn" id="rkBatal">Batal</button><button class="btn primary" id="rkOk">Simpan rencana</button></div>`);
-    const prev = () => { const rows = susunRencana(ctx, $('#rkTgl', m).value); const t = rows.filter((r) => r.aktivitas === aktivitasUntuk(ctx, 'Pisang').slice(-1)[0]?.aktivitas);
+    let gl = []; // layer peta (posisi blok untuk rotasi alat ke blok terdekat)
+    const cP = { rows: (t) => (t === 'gis_layer' ? gl : ctx.rows(t)) };
+    const prev = () => { const rows = susunRencana(cP, $('#rkTgl', m).value); const t = rows.filter((r) => r.aktivitas === aktivitasUntuk(ctx, 'Pisang').slice(-1)[0]?.aktivitas);
       $('#rkPrev', m).innerHTML = rows.length ? `${rows.length} baris · ${new Set(rows.map((r) => keyB(r.blok))).size} blok · tanam terakhir selesai <b>${fmtDate(t.reduce((x, r) => (r.selesai > x ? r.selesai : x), ''))}</b>` : 'Tidak ada sisa pekerjaan — semua blok target sudah tertanam.'; return rows; };
     prev(); $('#rkTgl', m).onchange = prev;
+    A.gisLayers().then((x) => { gl = x || []; if (m.isConnected) prev(); }).catch(() => {});
     $('#rkBatal', m).onclick = A.closeModal;
     $('#rkOk', m).onclick = async () => {
       const rows = prev(); if (!rows.length) return;
