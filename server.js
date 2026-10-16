@@ -211,7 +211,7 @@ const userCount = () => db.prepare('SELECT COUNT(*) c FROM _users').get().c;
 const cleanPeran = (p) => JSON.stringify((Array.isArray(p) ? p : []).filter((r) => ROLES[r]));
 const failed = new Map(); // percobaan login gagal per username (cegah tebak password)
 function insertRow(table, row, doLog = true) {
-  const r = clean(table, row);
+  const r = clean(table, TABLES[table].lengkapi ? TABLES[table].lengkapi(row) : row); // mis. Penjualan: isi otomatis Bentuk/Kelas/Kondisi ⇄ Jenis Barang
   const cols = Object.keys(r);
   const sql = `INSERT INTO ${q(table)} (created_at, updated_at${cols.map((c) => ', ' + q(c)).join('')}) VALUES (?, ?${cols.map(() => ', ?').join('')})`;
   const t = now();
@@ -550,9 +550,10 @@ async function api(req, res, url) {
       return send(res, 200, { id: insertRow(table, body) });
     }
     if (m === 'PUT' && id) {
-      const r = clean(table, await readBody(req));
+      const body = await readBody(req), old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
+      let r = clean(table, body);
+      if (TABLES[table].lengkapi && old) { const L = clean(table, TABLES[table].lengkapi({ ...old, ...r }, old)); for (const [k, v] of Object.entries(L)) if (k in r || (v ?? null) !== (old[k] ?? null)) r[k] = v; } // hanya kolom yang diubah / terisi otomatis
       const cols = Object.keys(r);
-      const old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
       let related = 0;
       tx(() => {
         if (cols.length) db.prepare(`UPDATE ${q(table)} SET updated_at=?${cols.map((c) => `, ${q(c)}=?`).join('')} WHERE id=?`).run(now(), ...cols.map((c) => r[c]), id);
@@ -715,6 +716,7 @@ function cekNamaInduk(parsed) {
     }
     const fmt = (m) => [...m].map(([k, b]) => `${k} (${b.length} baris: ${b.slice(0, 6).join(', ')}${b.length > 6 ? ', …' : ''})`).slice(0, 20);
     p.koreksi = fmt(kor); p.peringatan = fmt(asing);
+    if (p.otomatis) p.koreksi.unshift(`${p.otomatis} baris: kolom kosong diisi otomatis dari Jenis Barang / Bentuk-Kelas-Kondisi`);
   }
 }
 async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file', panel = null } = {}) {

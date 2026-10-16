@@ -40,6 +40,56 @@ export const PADI_AKT = ['Olah Tanah 1 (Bajak)', 'Olah Tanah 2 (Rotary/Garu)', '
 const TIPE_JUAL =['Penjualan', 'Sampel', 'Retur', 'Mutasi Internal', 'Ongkir'];
 export const nominalJual = (r) => (r.nominal != null && r.nominal !== '' ? n(r.nominal) : n(r.harga) * (n(r.jumlah_box) || n(r.berat_kg)));
 export const isJual = (r) => !['Mutasi Internal', 'Ongkir'].includes(r.tipe);
+// ---- Penjualan pisang: cukup isi SALAH SATU — Jenis Barang (gaya Excel kantor) ATAU Bentuk/Kelas/Kondisi; sisanya diisi otomatis.
+// Tahan huruf besar/kecil, spasi/tanda baca, salah ketik ringan (mis. "pisang cavendsih fh a matng" → FH / A / Matang).
+// Hanya mengisi kolom yang KOSONG; isian manual tidak pernah ditimpa (hanya dirapikan ejaannya, mis. "fh" → "FH").
+const jarak = (a, b) => { // jarak salah ketik (Damerau-Levenshtein sederhana)
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]); for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[a.length][b.length];
+};
+const mirip = (w, kata) => w === kata || (kata.length >= 4 && w.length >= 3 && jarak(w, kata) <= (kata.length >= 7 ? 2 : 1));
+const KATA_JUAL = [['Ongkir', ['ONGKIR', 'ONGKOS']], ['Retur', ['RETUR', 'RETURN']], ['Sampel', ['SAMPEL', 'SAMPLE']]];
+const KATA_KONDISI = [['Matang', ['MATANG']], ['Mentah', ['MENTAH']]], KATA_REJECT = ['REJECT', 'REJEK'], KATA_MIX = ['MIX', 'MIKS', 'MIXED'];
+const OPSI_JUAL = { tipe: TIPE_JUAL, bentuk: ['FH', 'CL', 'SL'], kelas: ['A', 'B', 'C', 'MIX', 'Reject'], kondisi: ['Matang', 'Mentah', 'Reject'] };
+const SINONIM = { tipe: { SAMPLE: 'Sampel', MUTASI: 'Mutasi Internal', JUAL: 'Penjualan', RETURN: 'Retur', ONGKOS: 'Ongkir' }, kelas: { MIKS: 'MIX', MIXED: 'MIX', REJEK: 'Reject' }, kondisi: { REJEK: 'Reject' } };
+const rapikanPilihan = (k, v) => { // "penjualn" → "Penjualan", "fh" → "FH", "matng" → "Matang"; tidak dikenal → dibiarkan
+  if (v == null || v === '') return v;
+  const w = String(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return OPSI_JUAL[k].find((o) => o.toUpperCase().replace(/[^A-Z0-9]/g, '') === w) || SINONIM[k]?.[w] || OPSI_JUAL[k].find((o) => mirip(w, o.toUpperCase().replace(/[^A-Z0-9]/g, ''))) || v;
+};
+export function bacaJenisBarang(teks) { // → { tipe, bentuk, kelas, kondisi } yang terbaca dari tulisan Jenis Barang
+  const tok = String(teks || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
+    .flatMap((w) => { const m = w.match(/^(FH|CL|SL)(A|B|C|MIX)$/), t = w.match(/^(A|B|C)(FH|CL|SL)$/); return m ? [m[1], m[2]] : t ? [t[2], t[1]] : [w]; }); // "FHA" / "AFH" → FH A (urutan kata bebas)
+  const ada = (daftar) => tok.some((w) => daftar.some((k) => mirip(w, k)));
+  const o = {};
+  o.tipe = KATA_JUAL.find(([, d]) => ada(d))?.[0];
+  const satu = (xs) => { const u = [...new Set(xs.filter(Boolean))]; return u.length === 1 ? u[0] : undefined; }; // campuran (mis. "FH A & CL A", "A+B") → tidak ditebak
+  o.bentuk = satu(tok.filter((w) => ['FH', 'CL', 'SL'].includes(w)));
+  const reject = ada(KATA_REJECT);
+  o.kelas = reject ? 'Reject' : satu(tok.map((w) => (['A', 'B', 'C'].includes(w) ? w : KATA_MIX.some((k) => mirip(w, k)) ? 'MIX' : null)));
+  o.kondisi = reject ? 'Reject' : KATA_KONDISI.find(([, d]) => ada(d))?.[0];
+  return o;
+}
+export function lengkapiJual(row, lama) { // lama = isi sebelum diedit (form / PUT) → kolom yang dulu terisi otomatis ikut menyesuaikan
+  const r = { ...row }, kosong = (v) => v == null || v === '';
+  if (lama) {
+    const K = ['tipe', 'bentuk', 'kelas', 'kondisi'], sm = (a, b) => (a ?? null) === (b ?? null);
+    if (!sm(r.jenis_barang, lama.jenis_barang)) { const dulu = lengkapiJual({ jenis_barang: lama.jenis_barang, pembeli: lama.pembeli }); for (const k of K) if (sm(r[k], lama[k]) && sm(lama[k], dulu[k])) r[k] = null; } // Jenis Barang diganti → isian otomatis lama dihitung ulang
+    else if (K.some((k) => !sm(r[k], lama[k])) && sm(lama.jenis_barang, lengkapiJual({ ...lama, jenis_barang: null }).jenis_barang)) r.jenis_barang = null; // Bentuk/Kelas/Kondisi diganti & Jenis dulu otomatis → dibuat ulang
+  }
+  for (const k of Object.keys(OPSI_JUAL)) r[k] = rapikanPilihan(k, r[k]);
+  if (!kosong(r.jenis_barang)) { const b = bacaJenisBarang(r.jenis_barang); for (const k of ['tipe', 'bentuk', 'kelas', 'kondisi']) if (kosong(r[k]) && b[k]) r[k] = b[k]; }
+  if (kosong(r.tipe)) r.tipe = /RIPENING/.test(String(r.pembeli || '').toUpperCase()) ? 'Mutasi Internal' : 'Penjualan';
+  if (kosong(r.jenis_barang) && (r.bentuk || r.kelas || r.kondisi || r.tipe === 'Ongkir')) {
+    const isi = r.tipe === 'Ongkir' ? 'ONGKIR PISANG CAVENDISH' : ['PISANG CAVENDISH', r.bentuk, r.kelas === 'Reject' ? 'REJECT' : r.kelas, r.kelas === 'Reject' || r.kondisi === 'Reject' ? '' : r.kondisi].filter(Boolean).join(' ').toUpperCase();
+    r.jenis_barang = r.tipe === 'Retur' ? 'RETUR ' + isi : r.tipe === 'Sampel' ? isi + ' (SAMPLE)' : isi;
+  }
+  return r;
+}
 const OPT_PADI = ['Wereng Batang Coklat', 'Penggerek Batang', 'Tikus', 'Blast', 'Hawar Daun Bakteri (Kresek)', 'Tungro', 'Keong Mas', 'Walang Sangit', 'Ulat Grayak', 'Lainnya'];
 
 export const DIVISIONS = [
@@ -161,15 +211,15 @@ export const TABLES = {
     ],
   },
   pisang_penjualan: {
-    title: 'Penjualan', div: 'pisang', date: 'tanggal', sort: '-tanggal',
-    desc: 'Penjualan per baris surat jalan. Tipe "Mutasi Internal" (kirim ke gudang ripening sendiri) dan "Ongkir" tidak dihitung sebagai penjualan pisang.',
+    title: 'Penjualan', div: 'pisang', date: 'tanggal', sort: '-tanggal', lengkapi: lengkapiJual,
+    desc: 'Penjualan per baris surat jalan. Cukup isi Jenis Barang (mis. "PISANG CAVENDISH FH A MATANG") ATAU pilih Bentuk/Kelas/Kondisi — sisanya terisi otomatis. Tipe "Mutasi Internal" (kirim ke gudang ripening sendiri) dan "Ongkir" tidak dihitung sebagai penjualan pisang.',
     f: [
       { k: 'tanggal', l: 'Tanggal SJ', t: 'date', req: true },
       { k: 'no_sj', l: 'No. Surat Jalan', t: 'text' },
       { k: 'gudang', l: 'Asal Gudang', t: 'text', sug: ['TGL', 'SMG'] },
       { k: 'pembeli', l: 'Pembeli', t: 'text' },
-      { k: 'tipe', l: 'Tipe', t: 'select', opt: TIPE_JUAL, req: true },
-      { k: 'jenis_barang', l: 'Jenis Barang', t: 'text' },
+      { k: 'tipe', l: 'Tipe', t: 'select', opt: TIPE_JUAL, req: true, hint: 'Boleh dikosongkan: terbaca dari Jenis Barang (ONGKIR/RETUR/SAMPEL), selain itu Penjualan' },
+      { k: 'jenis_barang', l: 'Jenis Barang', t: 'text', sembunyi: true, hint: 'Isi ini SAJA (mis. pisang cavendish fh a matang) → Bentuk/Kelas/Kondisi terisi otomatis; atau pilih Bentuk/Kelas/Kondisi → kolom ini terisi otomatis' },
       { k: 'bentuk', l: 'Bentuk', t: 'select', opt: ['FH', 'CL', 'SL'] },
       { k: 'kelas', l: 'Kelas', t: 'select', opt: ['A', 'B', 'C', 'MIX', 'Reject'] },
       { k: 'kondisi', l: 'Kondisi', t: 'select', opt: ['Matang', 'Mentah', 'Reject'] },

@@ -222,6 +222,7 @@ function renderTable(main, table, opts = {}) {
   const d = DIVISIONS.find((x) => x.key === T.div);
   const S = (state.tbl[table] ??= { q: '', from: '', to: '', ref: '', sort: T.sort || '-id', limit: 300, sel: new Set() });
   const refF = T.f.find((f) => f.t === 'ref');
+  const TC = T.f.filter((f) => !f.sembunyi); // kolom yang tampil di tabel
   const base = () => ctx.rows(table).filter((r) => !opts.filter || opts.filter(r));
   const refVals = refF ? [...new Set(base().map((r) => r[refF.k]).filter(Boolean))].sort() : [];
   const done = () => (opts.onChange ? opts.onChange() : draw());
@@ -261,10 +262,10 @@ function renderTable(main, table, opts = {}) {
     });
     const shown = rows.slice(0, S.limit);
     const tbl = $('#tbl');
-    tbl.innerHTML = `<thead><tr><th class="chk"><input type="checkbox" id="chkAll"></th>${T.f.map((f) => `<th data-k="${f.k}" class="${isNumField(f) ? 'num' : ''} ${f.t === 'calc' ? 'calc' : ''}" title="${f.t === 'calc' ? 'Dihitung otomatis' : ''}">${esc(f.l)}${sk === f.k ? (desc ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
-      <tbody>${shown.map((x) => `<tr data-id="${x.r.id}" class="${S.sel.has(x.r.id) ? 'sel' : ''}"><td class="chk"><input type="checkbox" ${S.sel.has(x.r.id) ? 'checked' : ''}></td>${T.f.map((f) => `<td class="${isNumField(f) ? 'num' : ''} ${f.t === 'calc' ? 'calc' : ''}">${esc(fmtField(f, x.v[f.k]))}</td>`).join('')}</tr>`).join('')}</tbody>
-      ${rows.length && T.f.some(isSumField) ? `<tfoot><tr><td class="chk"></td>${T.f.map((f, i) => `<td class="${isNumField(f) ? 'num' : ''}">${isSumField(f) ? esc(fmtField(f.t === 'calc' ? f : { ...f, t: f.t === 'num' ? 'num2' : f.t }, rows.reduce((a, x) => a + n(x.v[f.k]), 0))) : i === 0 ? 'Total' : ''}</td>`).join('')}</tr></tfoot>` : ''}`;
-    if (!rows.length) tbl.innerHTML += `<tbody><tr><td colspan="${T.f.length + 1}">${emptyBox(base().length ? 'Tidak ada data yang cocok dengan filter.' : 'Belum ada data.')}</td></tr></tbody>`;
+    tbl.innerHTML = `<thead><tr><th class="chk"><input type="checkbox" id="chkAll"></th>${TC.map((f) => `<th data-k="${f.k}" class="${isNumField(f) ? 'num' : ''} ${f.t === 'calc' ? 'calc' : ''}" title="${f.t === 'calc' ? 'Dihitung otomatis' : ''}">${esc(f.l)}${sk === f.k ? (desc ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
+      <tbody>${shown.map((x) => `<tr data-id="${x.r.id}" class="${S.sel.has(x.r.id) ? 'sel' : ''}"><td class="chk"><input type="checkbox" ${S.sel.has(x.r.id) ? 'checked' : ''}></td>${TC.map((f) => `<td class="${isNumField(f) ? 'num' : ''} ${f.t === 'calc' ? 'calc' : ''}">${esc(fmtField(f, x.v[f.k]))}</td>`).join('')}</tr>`).join('')}</tbody>
+      ${rows.length && TC.some(isSumField) ? `<tfoot><tr><td class="chk"></td>${TC.map((f, i) => `<td class="${isNumField(f) ? 'num' : ''}">${isSumField(f) ? esc(fmtField(f.t === 'calc' ? f : { ...f, t: f.t === 'num' ? 'num2' : f.t }, rows.reduce((a, x) => a + n(x.v[f.k]), 0))) : i === 0 ? 'Total' : ''}</td>`).join('')}</tr></tfoot>` : ''}`;
+    if (!rows.length) tbl.innerHTML += `<tbody><tr><td colspan="${TC.length + 1}">${emptyBox(base().length ? 'Tidak ada data yang cocok dengan filter.' : 'Belum ada data.')}</td></tr></tbody>`;
     $('#info').textContent = `${fmtNum(rows.length)} baris${rows.length > shown.length ? ` (tampil ${shown.length})` : ''}`;
     $('#more').innerHTML = rows.length > shown.length ? `<button class="btn sm" id="bMore">Tampilkan semua ${fmtNum(rows.length)} baris</button>` : '';
     $('#bMore')?.addEventListener('click', () => { S.limit = 1e9; draw(); });
@@ -375,7 +376,8 @@ export function openForm(table, row, { onSaved, prefill } = {}) {
   setTimeout(() => $('input, select', md)?.focus(), 30);
 
   const save = async (more) => {
-    const r = read();
+    let r = read();
+    if (T.lengkapi) { r = T.lengkapi(r, isNew ? null : row); for (const f of T.f) if (f.t !== 'calc' && r[f.k] != null) { const el = $(`#f_${f.k}`, md); if (el && el.value !== String(r[f.k])) { if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === r[f.k])) el.add(new Option(r[f.k])); el.value = r[f.k]; } } } // mis. Penjualan: Bentuk/Kelas/Kondisi ⇄ Jenis Barang
     // nama induk diketik bebas (datalist): beda huruf besar/kecil/spasi → dibetulkan; aktivitas tak dikenal → ditolak; lainnya → konfirmasi
     const kunci = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
     for (const f of T.f.filter((x) => x.t === 'ref' && r[x.k] != null && r[x.k] !== '')) {
