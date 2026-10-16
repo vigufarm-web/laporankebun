@@ -10,6 +10,7 @@ const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'O
 const sum = (arr, fn) => arr.reduce((t, x) => t + n(fn(x)), 0);
 const keyB = util.key;
 const tile = (lbl, v, note) => `<div class="kpi"><div class="lbl">${lbl}</div><div class="val">${v}</div>${note ? `<div class="note">${note}</div>` : ''}</div>`;
+const rpVal = (fmtNum, v) => `<span class="rp"><small>Rp</small> ${fmtNum(v)}</span>`; // angka rupiah besar tanpa patah baris
 const nomBeras = (r) => (r.nominal != null && r.nominal !== '' ? n(r.nominal) : n(r.berat_kg) * n(r.harga_kg));
 // Kotak penjualan: bulan ini · bulan lalu (pembanding, bulan penuh) · s.d. bulan ini (Jan–bulan ini). Rp = tipe penjualan (isJual); jumlah (qty) = tipe "Penjualan" saja.
 function kpiJualBulan(A, rows, nom, qty) {
@@ -22,9 +23,10 @@ function kpiJualBulan(A, rows, nom, qty) {
   const akhir = rp.map((r) => String(r.tanggal)).filter((t) => t <= `${ini}-31`).sort().at(-1);
   const nI = sum(bln(rp, ini), nom), nSd = sum(sd(rp), nom);
   const nBln = new Set(sd(rp).map((r) => String(r.tanggal).slice(0, 7))).size; // bulan yang ada penjualannya
-  return tile(`Penjualan bulan ini (${nmBln(y, m)})`, 'Rp ' + fmtNum(nI), `${bln(rp, ini).length ? `${qty(bln(jl, ini))} · ${sj(bln(jl, ini))} surat jalan` : 'belum ada penjualan'}${akhir ? ` · data terakhir ${fmtDate(akhir)}` : ''}`)
-    + tile(`Bulan lalu (${nmBln(m ? y : y - 1, m ? m - 1 : 11)})`, 'Rp ' + fmtNum(sum(bln(rp, lalu), nom)), `${qty(bln(jl, lalu))} · ${sj(bln(jl, lalu))} surat jalan`)
-    + tile(`S.d. bulan ini (Jan–${nmBln(y, m)})`, 'Rp ' + fmtNum(nSd), `${qty(sd(jl))}${nBln ? ` · rata-rata Rp ${fmtNum(nSd / nBln)}/bulan (${nBln} bulan ada penjualan)` : ''}`);
+  const juta = (v) => `Rp ${fmtNum(v / 1e6, 1)} juta`;
+  return tile(`Penjualan bulan ini (${nmBln(y, m)})`, rpVal(fmtNum, nI), `${bln(rp, ini).length ? `${qty(bln(jl, ini))} · ${sj(bln(jl, ini))} surat jalan` : 'Belum ada penjualan'}${akhir ? `<br>Data terakhir ${fmtDate(akhir)}` : ''}`)
+    + tile(`Bulan lalu (${nmBln(m ? y : y - 1, m ? m - 1 : 11)})`, rpVal(fmtNum, sum(bln(rp, lalu), nom)), `${qty(bln(jl, lalu))}<br>${sj(bln(jl, lalu))} surat jalan`)
+    + tile(`S.d. bulan ini (Jan–${nmBln(y, m)})`, rpVal(fmtNum, nSd), `${qty(sd(jl))}${nBln ? `<br>Rata-rata ${juta(nSd / nBln)}/bulan · ${nBln} bulan` : ''}`);
 }
 const POKOK_HA = POKOK_PER_HA, SULAM = 0.1, MIN_UMUR_TANAM = 3; // 2.000 pkk/ha — sama dengan hitungan netto tertanam
 
@@ -228,9 +230,9 @@ const SUMMARY = {
     const piutang = jual.map((r) => ({ r, s: nominalJual(r) - n(r.dibayar) })).filter((x) => x.s > 0.5);
     const per = {}; for (const x of piutang) per[x.r.pembeli || '–'] = (per[x.r.pembeli || '–'] || 0) + x.s;
     const top = document.createElement('div');
-    top.innerHTML = `<div class="kpis">
+    top.innerHTML = `<div class="kpis jual">
       ${kpiJualBulan(A, P('pisang_penjualan'), nominalJual, (rs) => `${fmtNum(sum(rs, (r) => r.jumlah_box))} box${sum(rs, (r) => r.berat_kg) ? ` + ${fmtNum(sum(rs, (r) => r.berat_kg), 1)} kg` : ''}`)}
-      ${tile('Piutang (belum dibayar)', `<span style="color:${piutang.length ? 'var(--danger)' : 'var(--ok)'}">Rp ${fmtNum(sum(piutang, (x) => x.s))}</span>`, `${piutang.length} baris · ${Object.keys(per).length} pembeli`)}
+      ${tile('Piutang (belum dibayar)', `<span style="color:${piutang.length ? 'var(--danger)' : 'var(--ok)'}">${rpVal(fmtNum, sum(piutang, (x) => x.s))}</span>`, `${piutang.length} baris<br>${Object.keys(per).length} pembeli`)}
     </div>
     ${piutang.length ? `<div class="card o-card" style="margin-bottom:14px"><h3>Piutang per pembeli</h3><table class="mini"><tr><th>Pembeli</th><th class="num">Belum dibayar</th></tr>
       ${Object.entries(per).sort((a, b) => b[1] - a[1]).map(([p, v]) => `<tr><td>${esc(p)}</td><td class="num">Rp ${fmtNum(v)}</td></tr>`).join('')}</table></div>` : ''}`;
@@ -309,7 +311,7 @@ const SUMMARY = {
       ${tile('Beras keluar', `${fmtNum(kel, 1)} <small>kg</small>`, `${keluar.length} surat jalan (jual + sampel)`)}
       ${tile('Nilai penjualan', 'Rp ' + fmtNum(sum(P('padi_penjualan').filter(isJual), nomBeras)), 'total semua periode')}
     </div>
-    <div class="kpis">${kpiJualBulan(A, P('padi_penjualan'), nomBeras, (rs) => `${fmtNum(sum(rs, (r) => r.berat_kg), 1)} kg beras`)}</div>`;
+    <div class="kpis jual">${kpiJualBulan(A, P('padi_penjualan'), nomBeras, (rs) => `${fmtNum(sum(rs, (r) => r.berat_kg), 1)} kg beras`)}</div>`;
     el.appendChild(top);
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Padi', /Penjualan|terjual/);
     monthlyChart(el, A, 'Penjualan beras/padi per bulan (Rp juta)', [{ label: 'Penjualan', color: '#65a30d', rows: A.ctx.rows('padi_penjualan').filter(isJual), fn: (r) => nomBeras(r) / 1e6, rp: true }]);
