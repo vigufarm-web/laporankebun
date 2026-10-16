@@ -481,6 +481,7 @@ export const EXCEL_SHEETS = [
 export const ROLES = {
   admin: { label: 'Admin', desc: 'Semua data, pengguna, peta, backup', edit: '*' },
   management: { label: 'Management / Owner', desc: 'Hanya melihat & export laporan', edit: [] },
+  penjualan: { label: 'Penjualan', desc: 'Penjualan pisang & beras saja (surat jalan, harga, pembayaran)', edit: ['pisang_penjualan', 'padi_penjualan'] },
   panen_pisang: { label: 'Panen Pisang', desc: 'Panen PKK, box PH, estimasi panen, hand class', edit: ['pisang_panen_pkk', 'pisang_box', 'pisang_estimasi', 'pisang_handclass'] },
   panen_padi: { label: 'Panen Padi', desc: 'Panen padi & penggilingan (beras masuk)', edit: ['padi_panen', 'padi_giling'] },
   kebun_pisang: { label: 'Kebun Pisang', desc: 'Blok, bibit, kegiatan pisang', edit: ['pisang_blok', 'pisang_bibit', 'pisang_kegiatan'] },
