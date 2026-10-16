@@ -10,6 +10,22 @@ const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'O
 const sum = (arr, fn) => arr.reduce((t, x) => t + n(fn(x)), 0);
 const keyB = util.key;
 const tile = (lbl, v, note) => `<div class="kpi"><div class="lbl">${lbl}</div><div class="val">${v}</div>${note ? `<div class="note">${note}</div>` : ''}</div>`;
+const nomBeras = (r) => (r.nominal != null && r.nominal !== '' ? n(r.nominal) : n(r.berat_kg) * n(r.harga_kg));
+// Kotak penjualan: bulan ini · bulan lalu (pembanding, bulan penuh) · s.d. bulan ini (Jan–bulan ini). Rp = tipe penjualan (isJual); jumlah (qty) = tipe "Penjualan" saja.
+function kpiJualBulan(A, rows, nom, qty) {
+  const { fmtNum, fmtDate } = A, d = new Date(), y = d.getFullYear(), m = d.getMonth();
+  const ym = (yy, mm) => `${yy}-${String(mm + 1).padStart(2, '0')}`, ini = ym(y, m), lalu = m ? ym(y, m - 1) : ym(y - 1, 11);
+  const nmBln = (yy, mm) => new Date(yy, mm, 1).toLocaleString('id-ID', { month: 'short' }) + ' ' + yy;
+  const rp = rows.filter(isJual), jl = rows.filter((r) => r.tipe === 'Penjualan');
+  const bln = (xs, k) => xs.filter((r) => String(r.tanggal).slice(0, 7) === k), sd = (xs) => xs.filter((r) => String(r.tanggal) >= `${y}-01` && String(r.tanggal).slice(0, 7) <= ini);
+  const sj = (xs) => new Set(xs.map((r) => r.no_sj).filter(Boolean)).size;
+  const akhir = rp.map((r) => String(r.tanggal)).filter((t) => t <= `${ini}-31`).sort().at(-1);
+  const nI = sum(bln(rp, ini), nom), nSd = sum(sd(rp), nom);
+  const nBln = new Set(sd(rp).map((r) => String(r.tanggal).slice(0, 7))).size; // bulan yang ada penjualannya
+  return tile(`Penjualan bulan ini (${nmBln(y, m)})`, 'Rp ' + fmtNum(nI), `${bln(rp, ini).length ? `${qty(bln(jl, ini))} · ${sj(bln(jl, ini))} surat jalan` : 'belum ada penjualan'}${akhir ? ` · data terakhir ${fmtDate(akhir)}` : ''}`)
+    + tile(`Bulan lalu (${nmBln(m ? y : y - 1, m ? m - 1 : 11)})`, 'Rp ' + fmtNum(sum(bln(rp, lalu), nom)), `${qty(bln(jl, lalu))} · ${sj(bln(jl, lalu))} surat jalan`)
+    + tile(`S.d. bulan ini (Jan–${nmBln(y, m)})`, 'Rp ' + fmtNum(nSd), `${qty(sd(jl))}${nBln ? ` · rata-rata Rp ${fmtNum(nSd / nBln)}/bulan (${nBln} bulan ada penjualan)` : ''}`);
+}
 const POKOK_HA = POKOK_PER_HA, SULAM = 0.1, MIN_UMUR_TANAM = 3; // 2.000 pkk/ha — sama dengan hitungan netto tertanam
 
 // filter & isian awal untuk tabel bersama (progres tanam dipakai pisang & padi)
@@ -204,25 +220,23 @@ const SUMMARY = {
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang');
     estimasiVsRealisasi(el.appendChild(document.createElement('div')), A);
     const P = A.ctx.rows;
-    monthlyChart(el, A, 'Total box panen per bulan', [{ label: 'Total box', color: '#2f6b3f', rows: P('pisang_box'), fn: (r) => r.jumlah_box }]); // total saja, tanpa per kelas (permintaan user)
+    monthlyChart(el, A, 'Total box panen per bulan', [{ label: 'Total box', color: '#2f6b3f', rows: P('pisang_box'), fn: (r) => r.jumlah_box, unit: 'box' }]); // total saja, tanpa per kelas (permintaan user)
   },
   async pisang_jual(el, A) {
     const { fmtNum, esc } = A; const P = A.ctx.rows;
-    const jual = P('pisang_penjualan').filter((r) => r.tipe === 'Penjualan'), thn = String(new Date().getFullYear());
-    const tj = jual.filter((r) => String(r.tanggal).startsWith(thn));
+    const jual = P('pisang_penjualan').filter((r) => r.tipe === 'Penjualan');
     const piutang = jual.map((r) => ({ r, s: nominalJual(r) - n(r.dibayar) })).filter((x) => x.s > 0.5);
     const per = {}; for (const x of piutang) per[x.r.pembeli || '–'] = (per[x.r.pembeli || '–'] || 0) + x.s;
     const top = document.createElement('div');
     top.innerHTML = `<div class="kpis">
-      ${tile(`Penjualan ${thn}`, 'Rp ' + fmtNum(sum(P('pisang_penjualan').filter((r) => isJual(r) && String(r.tanggal).startsWith(thn)), nominalJual)), `${fmtNum(new Set(tj.map((r) => r.no_sj)).size)} surat jalan`)}
-      ${tile(`Box terjual ${thn}`, `${fmtNum(sum(tj, (r) => r.jumlah_box))} <small>box</small>`, `+ ${fmtNum(sum(tj, (r) => r.berat_kg), 1)} kg dijual per kg`)}
+      ${kpiJualBulan(A, P('pisang_penjualan'), nominalJual, (rs) => `${fmtNum(sum(rs, (r) => r.jumlah_box))} box${sum(rs, (r) => r.berat_kg) ? ` + ${fmtNum(sum(rs, (r) => r.berat_kg), 1)} kg` : ''}`)}
       ${tile('Piutang (belum dibayar)', `<span style="color:${piutang.length ? 'var(--danger)' : 'var(--ok)'}">Rp ${fmtNum(sum(piutang, (x) => x.s))}</span>`, `${piutang.length} baris · ${Object.keys(per).length} pembeli`)}
     </div>
     ${piutang.length ? `<div class="card o-card" style="margin-bottom:14px"><h3>Piutang per pembeli</h3><table class="mini"><tr><th>Pembeli</th><th class="num">Belum dibayar</th></tr>
       ${Object.entries(per).sort((a, b) => b[1] - a[1]).map(([p, v]) => `<tr><td>${esc(p)}</td><td class="num">Rp ${fmtNum(v)}</td></tr>`).join('')}</table></div>` : ''}`;
     el.appendChild(top);
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang', /Penjualan|terjual/);
-    monthlyChart(el, A, 'Penjualan pisang per bulan (Rp juta)', [{ label: 'Penjualan', color: '#d4a017', rows: P('pisang_penjualan').filter(isJual), fn: (r) => nominalJual(r) / 1e6 }]);
+    monthlyChart(el, A, 'Penjualan pisang per bulan (Rp juta)', [{ label: 'Penjualan', color: '#d4a017', rows: P('pisang_penjualan').filter(isJual), fn: (r) => nominalJual(r) / 1e6, rp: true }]);
   },
   // ---------------- PADI
   async padi_bibit(el, A) {
@@ -293,11 +307,12 @@ const SUMMARY = {
       ${tile('Stok beras', `${fmtNum(masuk - kel, 1)} <small>kg</small>`, 'beras masuk − keluar (semua gudang)')}
       ${tile('Beras masuk', `${fmtNum(masuk, 1)} <small>kg</small>`, 'hasil giling')}
       ${tile('Beras keluar', `${fmtNum(kel, 1)} <small>kg</small>`, `${keluar.length} surat jalan (jual + sampel)`)}
-      ${tile('Nilai penjualan', 'Rp ' + fmtNum(sum(P('padi_penjualan').filter(isJual), (r) => (r.nominal != null ? r.nominal : n(r.berat_kg) * n(r.harga_kg)))), 'total semua periode')}
-    </div>`;
+      ${tile('Nilai penjualan', 'Rp ' + fmtNum(sum(P('padi_penjualan').filter(isJual), nomBeras)), 'total semua periode')}
+    </div>
+    <div class="kpis">${kpiJualBulan(A, P('padi_penjualan'), nomBeras, (rs) => `${fmtNum(sum(rs, (r) => r.berat_kg), 1)} kg beras`)}</div>`;
     el.appendChild(top);
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Padi', /Penjualan|terjual/);
-    monthlyChart(el, A, 'Penjualan beras/padi per bulan (Rp juta)', [{ label: 'Penjualan', color: '#65a30d', rows: A.ctx.rows('padi_penjualan').filter(isJual), fn: (r) => (r.nominal != null ? n(r.nominal) : n(r.berat_kg) * n(r.harga_kg)) / 1e6 }]);
+    monthlyChart(el, A, 'Penjualan beras/padi per bulan (Rp juta)', [{ label: 'Penjualan', color: '#65a30d', rows: A.ctx.rows('padi_penjualan').filter(isJual), fn: (r) => nomBeras(r) / 1e6, rp: true }]);
   },
   // ---------------- INFRASTRUKTUR
   async infra_proyek(el, A) {
@@ -398,6 +413,11 @@ function monthlyChart(el, A, title, series, stacked) {
   card.className = 'card o-card'; card.style.marginTop = '14px';
   card.innerHTML = `<h3>${A.esc(title)}</h3><div class="chart-box"><canvas></canvas></div>`;
   el.appendChild(card);
+  // angka format Indonesia; seri rupiah (rp: true, data dalam juta) → tooltip "Rp 259.059.221 (259,1 juta)" agar tidak rancu ribu/juta
+  const fmt = (v, d = 2) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: d });
+  const tip = (ctx) => { const s = series[ctx.datasetIndex], v = ctx.parsed.y;
+    return s.rp ? `${s.label}: Rp ${Math.round(v * 1e6).toLocaleString('id-ID')} (${fmt(v, 1)} juta)` : `${s.label}: ${fmt(v)}${s.unit ? ' ' + s.unit : ''}`; };
   A.chart(card.querySelector('canvas'), { type: 'bar', data: { labels: months.map((m) => `${BULAN[+m.slice(5) - 1]} ${m.slice(2, 4)}`), datasets: series.map((s) => ({ label: s.label, backgroundColor: s.color, data: months.map((m) => sum(s.rows.filter((r) => String(r.tanggal).slice(0, 7) === m), s.fn)) })) },
-    options: stacked ? { scales: { x: { stacked: true }, y: { stacked: true } } } : {} });
+    options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } }, tooltip: { callbacks: { label: tip } } },
+      scales: { x: { stacked: !!stacked }, y: { stacked: !!stacked, ticks: { callback: (v) => fmt(v) } } } } });
 }
