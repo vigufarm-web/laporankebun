@@ -32,12 +32,14 @@ export const KOM = {
     // Blok Tanam (pokok, tanggal tanam, status) disembunyikan dari tampilan tapi ikut di Excel halaman ini
     { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_rencana', 'lahan_aktivitas'], excel: ['lahan_harian', 'lahan_blok', 'lahan_target', 'lahan_rencana', 'lahan_aktivitas', 'pisang_blok'], week: true }, // Target Tanam & Rencana Kerja dipakai halaman Tim Kebun (/kebun)
     { k: 'panen', l: 'Panen', tables: ['pisang_box', 'pisang_estimasi', 'pisang_panen_pkk', 'pisang_handclass'], week: true },
+    { k: 'jual', l: 'Penjualan', tables: ['pisang_penjualan'], week: true },
   ] },
   padi: { nama: 'Padi', icon: '🌾', key: 'Padi', tabs: [
     { k: 'bibit', l: 'Stok Benih', tables: ['padi_benih'] },
     { k: 'tertanam', l: 'Tertanam', tables: ['padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt'] },
     { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], week: true },
     { k: 'panen', l: 'Panen', tables: ['padi_panen', 'padi_giling'] },
+    { k: 'jual', l: 'Penjualan', tables: ['padi_penjualan'], week: true },
   ] },
   iklim: { nama: 'Iklim', icon: '🌦️', key: 'Iklim', tabs: [
     { k: 'data', l: 'Cuaca Harian', tables: ['iklim'] },
@@ -205,8 +207,21 @@ const SUMMARY = {
     monthlyChart(el, A, 'Total box panen per bulan', [{ label: 'Total box', color: '#2f6b3f', rows: P('pisang_box'), fn: (r) => r.jumlah_box }]); // total saja, tanpa per kelas (permintaan user)
   },
   async pisang_jual(el, A) {
+    const { fmtNum, esc } = A; const P = A.ctx.rows;
+    const jual = P('pisang_penjualan').filter((r) => r.tipe === 'Penjualan'), thn = String(new Date().getFullYear());
+    const tj = jual.filter((r) => String(r.tanggal).startsWith(thn));
+    const piutang = jual.map((r) => ({ r, s: nominalJual(r) - n(r.dibayar) })).filter((x) => x.s > 0.5);
+    const per = {}; for (const x of piutang) per[x.r.pembeli || '–'] = (per[x.r.pembeli || '–'] || 0) + x.s;
+    const top = document.createElement('div');
+    top.innerHTML = `<div class="kpis">
+      ${tile(`Penjualan ${thn}`, 'Rp ' + fmtNum(sum(P('pisang_penjualan').filter((r) => isJual(r) && String(r.tanggal).startsWith(thn)), nominalJual)), `${fmtNum(new Set(tj.map((r) => r.no_sj)).size)} surat jalan`)}
+      ${tile(`Box terjual ${thn}`, `${fmtNum(sum(tj, (r) => r.jumlah_box))} <small>box</small>`, `+ ${fmtNum(sum(tj, (r) => r.berat_kg), 1)} kg dijual per kg`)}
+      ${tile('Piutang (belum dibayar)', `<span style="color:${piutang.length ? 'var(--danger)' : 'var(--ok)'}">Rp ${fmtNum(sum(piutang, (x) => x.s))}</span>`, `${piutang.length} baris · ${Object.keys(per).length} pembeli`)}
+    </div>
+    ${piutang.length ? `<div class="card o-card" style="margin-bottom:14px"><h3>Piutang per pembeli</h3><table class="mini"><tr><th>Pembeli</th><th class="num">Belum dibayar</th></tr>
+      ${Object.entries(per).sort((a, b) => b[1] - a[1]).map(([p, v]) => `<tr><td>${esc(p)}</td><td class="num">Rp ${fmtNum(v)}</td></tr>`).join('')}</table></div>` : ''}`;
+    el.appendChild(top);
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang', /Penjualan|terjual/);
-    const P = A.ctx.rows;
     monthlyChart(el, A, 'Penjualan pisang per bulan (Rp juta)', [{ label: 'Penjualan', color: '#d4a017', rows: P('pisang_penjualan').filter(isJual), fn: (r) => nominalJual(r) / 1e6 }]);
   },
   // ---------------- PADI

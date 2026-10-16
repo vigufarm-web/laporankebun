@@ -197,9 +197,13 @@ export function panenJualLines(A, kom) {
   const L = [];
   if (!kom || kom === 'Pisang') L.push(
     ['🍌 Pokok dipanen (PKK)', P('pisang_panen_pkk'), (r) => r.pkk_panen, 0, 'pkk'],
-    ['🍌 Box pisang (PH)', P('pisang_box'), (r) => r.jumlah_box, 0, 'box']);
+    ['🍌 Box pisang (PH)', P('pisang_box'), (r) => r.jumlah_box, 0, 'box'],
+    ['💰 Penjualan pisang', P('pisang_penjualan').filter(isJual), (r) => nominalJual(r), 0, 'Rp'],
+    ['🍌 Box terjual', P('pisang_penjualan').filter((r) => r.tipe === 'Penjualan'), (r) => r.jumlah_box, 0, 'box']);
   if (!kom || kom === 'Padi') L.push(
-    ['🌾 Beras masuk gudang', P('padi_giling'), (r) => r.beras_kg, 0, 'kg']);
+    ['🌾 Beras masuk gudang', P('padi_giling'), (r) => r.beras_kg, 0, 'kg'],
+    ['💰 Penjualan beras', P('padi_penjualan').filter(isJual), (r) => (r.nominal != null && r.nominal !== '' ? n(r.nominal) : n(r.berat_kg) * n(r.harga_kg)), 0, 'Rp'],
+    ['🌾 Beras terjual', P('padi_penjualan').filter((r) => r.tipe === 'Penjualan'), (r) => r.berat_kg, 1, 'kg']);
   return L;
 }
 export function renderPanenJual(el, A, kom, only) {
@@ -244,6 +248,7 @@ export async function renderOwner(main, A) {
     <div id="o1"></div>
     <h2 class="o-h">2. Progres kebun</h2><div id="o2a"></div><div id="o2b"></div>
     <h2 class="o-h">3. Panen</h2><div id="o4"></div>
+    <h2 class="o-h">4. Penjualan</h2><div id="o6"></div>
     <div id="o5"></div>`;
   const wp = weekPicker(() => renderOwner(main, A));
   wp.insertAdjacentHTML('beforeend', '<button class="btn primary" onclick="window.print()">🖨 Cetak / PDF</button>');
@@ -276,11 +281,12 @@ export async function renderOwner(main, A) {
     </div>`;
   renderProgres($('#o2a'), A, gis, 'Pisang');
   if (P('lahan_blok').some((r) => r.peruntukan === 'Padi')) renderProgres($('#o2b'), A, gis, 'Padi');
-  renderPanenJual($('#o4'), A, null);
+  renderPanenJual($('#o4'), A, null, /^(?!.*(Penjualan|terjual))/); // 3. panen saja
+  renderPanenJual($('#o6'), A, null, /Penjualan|terjual/); // 4. penjualan pisang & beras
 
   // data terakhir masuk
   const lastIn = (t) => P(t).reduce((m, r) => (r.tanggal > m ? r.tanggal : m), '');
-  const src = [['Progres tanam', 'lahan_harian'], ['Panen PKK', 'pisang_panen_pkk'], ['Box PH', 'pisang_box'], ['Beras masuk', 'padi_giling']];
+  const src = [['Progres tanam', 'lahan_harian'], ['Panen PKK', 'pisang_panen_pkk'], ['Box PH', 'pisang_box'], ['Beras masuk', 'padi_giling'], ['Penjualan pisang', 'pisang_penjualan'], ['Penjualan beras', 'padi_penjualan']];
   $('#o5').innerHTML = `<div class="card o-card" style="margin-top:14px"><h3>Data terakhir yang masuk</h3><div style="display:flex;flex-wrap:wrap;gap:8px">
     ${src.map(([l, t]) => { const d = lastIn(t); const late = d && util.daysSince(d) > 7; return `<span class="tag" style="${late ? 'background:#fee2e2;color:#991b1b' : ''}">${l}: ${d ? fmtDate(d) : 'belum ada'}${late ? ' ⚠' : ''}</span>`; }).join('')}
     </div><p class="small muted" style="margin:6px 0 0">⚠ = tidak ada input lebih dari 7 hari — angka minggu ini mungkin belum lengkap.</p></div>`;
