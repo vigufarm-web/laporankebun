@@ -21,12 +21,13 @@ function kpiJualBulan(A, rows, nom, qty) {
   const bln = (xs, k) => xs.filter((r) => String(r.tanggal).slice(0, 7) === k), sd = (xs) => xs.filter((r) => String(r.tanggal) >= `${y}-01` && String(r.tanggal).slice(0, 7) <= ini);
   const sj = (xs) => new Set(xs.map((r) => r.no_sj).filter(Boolean)).size;
   const akhir = rp.map((r) => String(r.tanggal)).filter((t) => t <= `${ini}-31`).sort().at(-1);
-  const nI = sum(bln(rp, ini), nom), nSd = sum(sd(rp), nom);
+  const nI = sum(bln(rp, ini), nom), nSd = sum(sd(rp), nom), og = rows.filter((r) => r.tipe === 'Ongkir');
+  const ong = (xs) => (xs.length ? `<br>+ ongkir ditagih Rp ${fmtNum(sum(xs, nom))} (terpisah)` : ''); // ongkir = biaya kirim ditagih ke pembeli, bukan hasil jual pisang
   const nBln = new Set(sd(rp).map((r) => String(r.tanggal).slice(0, 7))).size; // bulan yang ada penjualannya
   const juta = (v) => `Rp ${fmtNum(v / 1e6, 1)} juta`;
-  return tile(`Penjualan bulan ini (${nmBln(y, m)})`, rpVal(fmtNum, nI), `${bln(rp, ini).length ? `${qty(bln(jl, ini))} · ${sj(bln(jl, ini))} surat jalan` : 'Belum ada penjualan'}${akhir ? `<br>Data terakhir ${fmtDate(akhir)}` : ''}`)
-    + tile(`Bulan lalu (${nmBln(m ? y : y - 1, m ? m - 1 : 11)})`, rpVal(fmtNum, sum(bln(rp, lalu), nom)), `${qty(bln(jl, lalu))}<br>${sj(bln(jl, lalu))} surat jalan`)
-    + tile(`S.d. bulan ini (Jan–${nmBln(y, m)})`, rpVal(fmtNum, nSd), `${qty(sd(jl))}${nBln ? `<br>Rata-rata ${juta(nSd / nBln)}/bulan · ${nBln} bulan` : ''}`);
+  return tile(`Penjualan bulan ini (${nmBln(y, m)})`, rpVal(fmtNum, nI), `${bln(rp, ini).length ? `${qty(bln(jl, ini))} · ${sj(bln(jl, ini))} surat jalan` : 'Belum ada penjualan'}${ong(bln(og, ini))}${akhir ? `<br>Data terakhir ${fmtDate(akhir)}` : ''}`)
+    + tile(`Bulan lalu (${nmBln(m ? y : y - 1, m ? m - 1 : 11)})`, rpVal(fmtNum, sum(bln(rp, lalu), nom)), `${qty(bln(jl, lalu))}<br>${sj(bln(jl, lalu))} surat jalan${ong(bln(og, lalu))}`)
+    + tile(`S.d. bulan ini (Jan–${nmBln(y, m)})`, rpVal(fmtNum, nSd), `${qty(sd(jl))}${nBln ? `<br>Rata-rata ${juta(nSd / nBln)}/bulan · ${nBln} bulan` : ''}${ong(sd(og))}`);
 }
 const POKOK_HA = POKOK_PER_HA, SULAM = 0.1, MIN_UMUR_TANAM = 3; // 2.000 pkk/ha — sama dengan hitungan netto tertanam
 
@@ -226,16 +227,23 @@ const SUMMARY = {
   },
   async pisang_jual(el, A) {
     const { fmtNum, esc } = A; const P = A.ctx.rows;
-    const jual = P('pisang_penjualan').filter((r) => r.tipe === 'Penjualan');
-    const piutang = jual.map((r) => ({ r, s: nominalJual(r) - n(r.dibayar) })).filter((x) => x.s > 0.5);
-    const per = {}; for (const x of piutang) per[x.r.pembeli || '–'] = (per[x.r.pembeli || '–'] || 0) + x.s;
+    // Piutang = per pembeli: tagihan (barang + ongkir − retur) − semua pembayaran — sama dengan PIUTANG di Excel penjualan (TOTAL − UANG MASUK).
+    // Dihitung per pembeli, bukan per baris, karena satu transfer sering dicatat di satu baris untuk beberapa baris/SJ.
+    const per = {};
+    for (const r of P('pisang_penjualan').filter((r) => r.tipe !== 'Mutasi Internal')) {
+      const x = (per[r.pembeli || '–'] ??= { s: 0, ong: 0, ret: 0 }), sisa = nominalJual(r) - n(r.dibayar);
+      x.s += sisa; if (r.tipe === 'Ongkir') x.ong += sisa; if (r.tipe === 'Retur') x.ret -= sisa;
+    }
+    const piutang = Object.entries(per).filter(([, x]) => x.s > 0.5).sort((a, b) => b[1].s - a[1].s), lebih = Object.entries(per).filter(([, x]) => x.s < -0.5);
+    const rinci = (x) => [x.ong > 0.5 ? `termasuk ongkir Rp ${fmtNum(x.ong)}` : '', x.ret > 0.5 ? `sudah dipotong retur Rp ${fmtNum(x.ret)}` : ''].filter(Boolean).join(' · ');
     const top = document.createElement('div');
     top.innerHTML = `<div class="kpis jual">
       ${kpiJualBulan(A, P('pisang_penjualan'), nominalJual, (rs) => `${fmtNum(sum(rs, (r) => r.jumlah_box))} box${sum(rs, (r) => r.berat_kg) ? ` + ${fmtNum(sum(rs, (r) => r.berat_kg), 1)} kg` : ''}`)}
-      ${tile('Piutang (belum dibayar)', `<span style="color:${piutang.length ? 'var(--danger)' : 'var(--ok)'}">${rpVal(fmtNum, sum(piutang, (x) => x.s))}</span>`, `${piutang.length} baris<br>${Object.keys(per).length} pembeli`)}
+      ${tile('Piutang (belum dibayar)', `<span style="color:${piutang.length ? 'var(--danger)' : 'var(--ok)'}">${rpVal(fmtNum, sum(piutang, ([, x]) => x.s) + sum(lebih, ([, x]) => x.s))}</span>`, `${piutang.length} pembeli · barang + ongkir − retur − pembayaran${lebih.length ? `<br>sudah dikurangi lebih bayar Rp ${fmtNum(-sum(lebih, ([, x]) => x.s))}` : ''}`)}
     </div>
-    ${piutang.length ? `<div class="card o-card" style="margin-bottom:14px"><h3>Piutang per pembeli</h3><table class="mini"><tr><th>Pembeli</th><th class="num">Belum dibayar</th></tr>
-      ${Object.entries(per).sort((a, b) => b[1] - a[1]).map(([p, v]) => `<tr><td>${esc(p)}</td><td class="num">Rp ${fmtNum(v)}</td></tr>`).join('')}</table></div>` : ''}`;
+    ${piutang.length ? `<div class="card o-card" style="margin-bottom:14px"><h3>Piutang per pembeli</h3><table class="mini"><tr><th>Pembeli</th><th class="num">Belum dibayar</th><th>Keterangan</th></tr>
+      ${piutang.map(([p, x]) => `<tr><td>${esc(p)}</td><td class="num">Rp ${fmtNum(x.s)}</td><td class="small muted">${rinci(x)}</td></tr>`).join('')}</table>
+      ${lebih.length ? `<p class="small muted" style="margin:8px 0 0">Lebih bayar (deposit): ${lebih.map(([p, x]) => `${esc(p)} Rp ${fmtNum(-x.s)}`).join(' · ')}</p>` : ''}</div>` : ''}`;
     el.appendChild(top);
     renderPanenJual(el.appendChild(document.createElement('div')), A, 'Pisang', /Penjualan|terjual/);
     monthlyChart(el, A, 'Penjualan pisang per bulan (Rp juta)', [{ label: 'Penjualan', color: '#d4a017', rows: P('pisang_penjualan').filter(isJual), fn: (r) => nominalJual(r) / 1e6, rp: true }]);
