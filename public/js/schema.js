@@ -96,7 +96,7 @@ export const DIVISIONS = [
   { key: 'pisang', name: 'Pisang', icon: '🍌', color: '#ca8a04',
     tables: ['pisang_blok', 'pisang_panen_pkk', 'pisang_box', 'pisang_estimasi', 'pisang_handclass', 'pisang_bibit', 'pisang_kegiatan'] },
   { key: 'padi', name: 'Padi', icon: '🌾', color: '#65a30d',
-    tables: ['padi_benih', 'padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt', 'padi_panen', 'padi_giling'] },
+    tables: ['padi_benih', 'padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt', 'padi_rencana', 'padi_panen', 'padi_giling'] },
   { key: 'lahan', name: 'Infra & Pembukaan Lahan', icon: '🚜', color: '#b45309',
     tables: ['lahan_blok', 'lahan_harian', 'lahan_target', 'lahan_aktivitas'] },
   { key: 'iklim', name: 'Iklim', icon: '🌦️', color: '#0284c7',
@@ -313,6 +313,23 @@ export const TABLES = {
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
   },
+  padi_rencana: {
+    title: 'Rencana Kerja Mingguan', div: 'padi', date: 'mulai', sort: '-mulai',
+    desc: 'Rencana & realisasi kerja mingguan divisi padi (format sama dengan Excel "Laporan mingguan Padi"): satu baris per aktivitas per petak. Baris dengan Pekerjaan "Catatan" = keterangan umum minggu itu. Dipakai Laporan Owner (realisasi minggu ini & rencana minggu depan).',
+    f: [
+      { k: 'mulai', l: 'Minggu Mulai', t: 'date', req: true },
+      { k: 'selesai', l: 'Minggu Selesai', t: 'date', req: true },
+      { k: 'minggu_ke', l: 'Minggu ke', t: 'int' },
+      { k: 'pekerjaan', l: 'Pekerjaan', t: 'text', sug: ['Perawatan padi', 'Panen dan Pascapanen', 'Olah lahan', 'Persemaian', 'Tanam', 'Catatan'] },
+      { k: 'aktivitas', l: 'Aktivitas', t: 'text', req: true, sug: ['Jaga Burung dan Irigasi', 'Spray Pestisida', 'Pemasangan tali dan jaring burung', 'Pemupukan', 'Penyiangan', 'Arit manual', 'Perontokan Gabah', 'Penjemuran'] },
+      { k: 'petak', l: 'Petak', t: 'ref', ref: 'padi_petak' },
+      { k: 'rencana', l: 'Rencana', t: 'num' },
+      { k: 'satuan', l: 'Satuan', t: 'select', opt: ['ha', 'kg', 'HK'] },
+      { k: 'realisasi', l: 'Realisasi', t: 'num' },
+      { k: 'capaian', l: '% Capaian', t: 'calc', fmt: 'pct', fn: (r) => (n(r.rencana) && r.realisasi != null && r.realisasi !== '' ? n(r.realisasi) / n(r.rencana) : null) },
+      { k: 'keterangan', l: 'Keterangan', t: 'text' },
+    ],
+  },
   padi_panen: {
     title: 'Panen Padi', div: 'padi', sort: 'petak',
     desc: 'Satu baris per blok: total karung & berat gabah blok itu (semua tahap panen dijumlah).',
@@ -516,6 +533,7 @@ export const EXCEL_SHEETS = [
   { sheet: 'Padi - Stok Benih', table: 'padi_benih', omit: ['untuk'] },
   { sheet: 'Padi - Panen', table: 'padi_panen', omit: ['musim_tanam'] },
   { sheet: 'Padi - Beras Masuk', table: 'padi_giling' },
+  { sheet: 'Padi - Rencana Mingguan', table: 'padi_rencana' },
   { sheet: 'Padi - Penjualan Beras', table: 'padi_penjualan' },
   { sheet: 'Progres - Urutan Tahap', table: 'lahan_aktivitas' },
   { sheet: 'Progres - Rencana Blok', table: 'lahan_blok' },
@@ -535,7 +553,7 @@ export const ROLES = {
   panen_pisang: { label: 'Panen Pisang', desc: 'Panen PKK, box PH, estimasi panen, hand class', edit: ['pisang_panen_pkk', 'pisang_box', 'pisang_estimasi', 'pisang_handclass'] },
   panen_padi: { label: 'Panen Padi', desc: 'Panen padi & penggilingan (beras masuk)', edit: ['padi_panen', 'padi_giling'] },
   kebun_pisang: { label: 'Kebun Pisang', desc: 'Blok, bibit, kegiatan pisang', edit: ['pisang_blok', 'pisang_bibit', 'pisang_kegiatan'] },
-  kebun_padi: { label: 'Kebun Padi', desc: 'Stok benih, petak, musim tanam, kegiatan, OPT', edit: ['padi_benih', 'padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt'] },
+  kebun_padi: { label: 'Kebun Padi', desc: 'Stok benih, petak, musim tanam, kegiatan, OPT', edit: ['padi_benih', 'padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt', 'padi_rencana'] },
   lahan: { label: 'Progres Tanam / Pembukaan Lahan', desc: 'Progres LC/bajak/tanam pisang & padi', edit: ['lahan_blok', 'lahan_harian', 'lahan_target', 'lahan_aktivitas', 'lahan_rencana'] },
   gis: { label: 'GIS', desc: 'Layer peta, catatan peta, titik lokasi', edit: ['gis_layer', 'gis_titik'] },
   iklim: { label: 'Iklim', desc: 'Data stasiun cuaca', edit: ['iklim'] },
@@ -783,6 +801,8 @@ export function susunRencana(c, mulai) {
 export function porsiRencana(r, a, dari, sampai) {
   const m = util.d(r.mulai), s = util.d(r.selesai), lo = util.d(dari), hi = util.d(sampai);
   if (!m || !s || !lo || !hi) return 0;
+  // baris "Sudah dikerjakan": dibagi menurut tanggal kerja sebenarnya di Progres Harian (mis. tanam hari Minggu tetap masuk minggu itu)
+  if (r.harian?.length) { const tot = r.harian.reduce((t, h) => t + h.ha, 0), dlm = r.harian.filter((h) => h.tanggal >= dari && h.tanggal <= sampai).reduce((t, h) => t + h.ha, 0); if (tot > 0) return (n(r.luas_ha) * dlm) / tot; }
   const kerja = hariKerjaAkt(a);
   let tot = 0, dlm = 0;
   for (const d = new Date(m); d <= s; d.setDate(d.getDate() + 1)) if (kerja(d)) { tot++; if (d >= lo && d <= hi) dlm++; }
@@ -807,7 +827,8 @@ export function statusRencana(c) {
     let ada = Math.min(total, Math.max(0, total - sisa));
     for (const r of [...list].sort((x, y) => String(x.mulai).localeCompare(String(y.mulai)) || String(x.selesai).localeCompare(String(y.selesai)))) {
       const luas = n(r.luas_ha), done = Math.min(luas, ada); ada -= done;
-      hasil.set(r, { ...r, a: A.get(r.aktivitas), urut: acts.indexOf(A.get(r.aktivitas)), luas, done, kurang: Math.max(0, luas - done), beres: luas - done <= 0.005 });
+      const harian = /^sudah dikerjakan/i.test(r.keterangan || '') ? c.rows('lahan_harian').filter((h) => h.aktivitas === r.aktivitas && util.key(h.blok) === k && h.tanggal >= r.mulai && h.tanggal <= r.selesai).map((h) => ({ tanggal: h.tanggal, ha: n(h.hasil_ha) })) : null;
+      hasil.set(r, { ...r, a: A.get(r.aktivitas), urut: acts.indexOf(A.get(r.aktivitas)), luas, done, kurang: Math.max(0, luas - done), beres: luas - done <= 0.005, harian });
     }
   }
   return rs.map((r) => hasil.get(r));

@@ -30,16 +30,16 @@ function periode(p) {
   if (p.mode === 'bulan') {
     const ym = (p.a || hariIni).slice(0, 7), y = +ym.slice(0, 4), m = +ym.slice(5) - 1;
     const mk = (yy, mm) => { const a = iso(new Date(yy, mm, 1)), b = iso(new Date(yy, mm + 1, 0)); const d = util.d(a); return { a, b, label: `${BULAN[d.getMonth()]} ${d.getFullYear()}` }; };
-    return { mode: 'bulan', ...mk(y, m), prev: mk(y, m - 1), next: mk(y, m + 1), jenis: 'Bulanan', lalu: 'bulan lalu', depan: 'bulan depan' };
+    return { mode: 'bulan', ...mk(y, m), prev: mk(y, m - 1), next: mk(y, m + 1), jenis: 'Bulanan', judul: `Laporan Bulanan ${mk(y, m).label}`, rentang: rentangLbl(mk(y, m).a, mk(y, m).b), lalu: 'bulan lalu', depan: 'bulan depan' };
   }
   if (p.mode === 'rentang' && p.a && p.b && p.a <= p.b) {
     const hari = Math.round((util.d(p.b) - util.d(p.a)) / 864e5) + 1;
     const mk = (a, b) => ({ a, b, label: rentangLbl(a, b) });
-    return { mode: 'rentang', ...mk(p.a, p.b), prev: mk(util.addDays(p.a, -hari), util.addDays(p.a, -1)), next: mk(util.addDays(p.b, 1), util.addDays(p.b, hari)), jenis: 'Periode', lalu: `${hari} hari sebelumnya`, depan: `${hari} hari berikutnya` };
+    return { mode: 'rentang', ...mk(p.a, p.b), prev: mk(util.addDays(p.a, -hari), util.addDays(p.a, -1)), next: mk(util.addDays(p.b, 1), util.addDays(p.b, hari)), jenis: 'Periode', judul: `Laporan Periode ${rentangLbl(p.a, p.b)}`, rentang: rentangLbl(p.a, p.b), lalu: `${hari} hari sebelumnya`, depan: `${hari} hari berikutnya` };
   }
   const mk = (a) => { const b = util.addDays(a, 6); return { a, b, label: `Minggu ke-${isoWeek(a)} · ${rentangLbl(a, b)}` }; };
   const a = senin(p.a || hariIni);
-  return { mode: 'minggu', ...mk(a), prev: mk(util.addDays(a, -7)), next: mk(util.addDays(a, 7)), jenis: 'Mingguan', lalu: 'minggu lalu', depan: 'minggu depan' };
+  return { mode: 'minggu', ...mk(a), prev: mk(util.addDays(a, -7)), next: mk(util.addDays(a, 7)), jenis: 'Mingguan', judul: `Laporan Mingguan Minggu ke-${isoWeek(a)}`, rentang: rentangLbl(a, util.addDays(a, 6)), lalu: 'minggu lalu', depan: 'minggu depan' };
 }
 
 export function renderLaporan(main, A) {
@@ -59,6 +59,7 @@ export function renderLaporan(main, A) {
         : PR.mode === 'bulan' ? `<button class="btn" data-g="-1">‹ Bulan lalu</button><input type="month" class="btn" id="lpBln" value="${PR.a.slice(0, 7)}"><button class="btn" data-g="1">Bulan depan ›</button><button class="btn" data-g="0">Bulan ini</button>`
         : `<label class="small">Dari <input type="date" class="btn" id="lpA" value="${PR.a}"></label><label class="small">s/d <input type="date" class="btn" id="lpB" value="${PR.b}"></label><button class="btn" id="lpTerap">Terapkan</button>`}
         <span style="margin-left:auto"></span><button class="btn primary" id="lpPdf">⬇ Unduh PDF</button><button class="btn" id="lpDoc">⬇ Unduh Word</button></div>
+      <p class="small muted" style="margin:8px 0 0">Unduh PDF: di jendela cetak pilih <b>Tujuan = Simpan sebagai PDF</b>, lalu di <b>Setelan lainnya</b> matikan <b>Header dan footer</b> (supaya tanggal/URL browser tidak ikut tercetak) dan nyalakan <b>Grafis latar belakang</b>.</p>
     </div>
     <div id="lp" class="lp"></div>`;
   main.querySelectorAll('[data-m]').forEach((x) => (x.onclick = () => simpan(x.dataset.m === 'rentang' ? { mode: 'rentang', a: PR.a, b: PR.b > hariIni && PR.a <= hariIni ? hariIni : PR.b } : { mode: x.dataset.m, a: jalan0 ? hariIni : PR.a }))); // periode berjalan → tetap di hari ini
@@ -70,7 +71,7 @@ export function renderLaporan(main, A) {
   $('#lpTgl', main)?.addEventListener('change', (e) => e.target.value && simpan({ mode: 'minggu', a: e.target.value }));
   $('#lpBln', main)?.addEventListener('change', (e) => e.target.value && simpan({ mode: 'bulan', a: e.target.value + '-01' }));
   $('#lpTerap', main)?.addEventListener('click', () => { const a = $('#lpA', main).value, b = $('#lpB', main).value; if (!a || !b || a > b) return A.toast('Tanggal "dari" harus sebelum "s/d"', true); simpan({ mode: 'rentang', a, b }); });
-  const namaFile = () => `Laporan Owner - ${PR.jenis} - ${PR.label.replace(/[·/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim()}`;
+  const namaFile = () => `${PR.judul} (${PR.rentang})`.replace(/[·/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
   $('#lpPdf', main).onclick = () => { const t = document.title; document.title = namaFile(); window.print(); setTimeout(() => (document.title = t), 1500); };
   // Word: dokumen HTML yang dibuka Microsoft Word (.doc) — bisa langsung diedit; gaya tabel ditulis di dalam file
   $('#lpDoc', main).onclick = () => {
@@ -115,7 +116,8 @@ export function renderLaporan(main, A) {
   const HW = P('lahan_harian').filter((r) => inP(r.tanggal, a, s1)), kerja = new Map();
   for (const r of HW) { const x = kerja.get(r.aktivitas) || { ha: 0, bl: new Set() }; x.ha += n(r.hasil_ha); x.bl.add(r.blok); kerja.set(r.aktivitas, x); }
   const tile = (l, v, nt) => `<div class="kpi"><div class="lbl">${l}</div><div class="val">${v}</div>${nt ? `<div class="note">${nt}</div>` : ''}</div>`;
-  const tabel = (head, rows, kanan = []) => `<table class="mini lp-t"><tr>${head.map((h, i) => `<th class="${kanan.includes(i) ? 'num' : ''}">${h}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((v, i) => `<td class="${kanan.includes(i) ? 'num' : ''}">${v}</td>`).join('')}</tr>`).join('')}</table>`;
+  // PDF: judul kolom di <thead> (diulang tiap halaman); tabel pendek tidak dipotong antar halaman, tabel panjang boleh berlanjut
+  const tabel = (head, rows, kanan = []) => `<table class="mini lp-t${rows.length > 18 ? ' panjang' : ''}"><thead><tr>${head.map((h, i) => `<th class="${kanan.includes(i) ? 'num' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((v, i) => `<td class="${kanan.includes(i) ? 'num' : ''}">${v}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
   const kosong = (t) => `<p class="small muted">${t}</p>`;
 
   const hAkhir = akhir('lahan_harian'), bAkhir = akhir('pisang_box');
@@ -132,6 +134,10 @@ export function renderLaporan(main, A) {
   const kondisi = (p) => (p.keterangan && /Status di peta[^:]*:\s*(.+)$/.exec(p.keterangan)?.[1].trim()) || p.status || '–';
   const petak = P('padi_petak'), grpPetak = new Map();
   for (const p of petak) { const k = kondisi(p); if (!grpPetak.has(k)) grpPetak.set(k, []); grpPetak.get(k).push(p); }
+  const tengah = (r) => { const x = util.d(r.mulai), y = util.d(r.selesai || r.mulai); return x && y ? iso(new Date((x.getTime() + y.getTime()) / 2)) : r.mulai; };
+  const RPadi = (p, q) => P('padi_rencana').filter((r) => inP(tengah(r), p, q)), RPi = RPadi(a, b), RPn = RPadi(PR.next.a, PR.next.b);
+  const qty = (v, sat) => (v == null || v === '' ? '–' : `${fmtNum(v, sat === 'kg' ? 0 : 2)} ${esc(sat || 'ha')}`);
+  const catPadi = (rs) => rs.filter((r) => /^catatan$/i.test(r.pekerjaan || '')), kerjaPadi = (rs) => rs.filter((r) => !/^catatan$/i.test(r.pekerjaan || ''));
   const PP = padiPanen(a, b), GL = P('padi_giling').filter((r) => inP(r.tanggal, a, b)), KG = P('padi_kegiatan').filter((r) => inP(r.tanggal, a, b));
   const kegPadi = new Map(); for (const r of KG) { const x = kegPadi.get(r.kegiatan) || { hk: 0, n: 0 }; x.hk += n(r.hk); x.n++; kegPadi.set(r.kegiatan, x); }
   // ---------- infra
@@ -158,8 +164,8 @@ export function renderLaporan(main, A) {
 
   $('#lp', main).innerHTML = `
     <div class="lp-head"><div class="lp-co">${esc(A.settings().nama || 'PT VIGU FARM INDONESIA')}</div>
-      <div class="lp-jd">Laporan Pertanggungjawaban ${PR.jenis}</div>
-      <div class="lp-pr">${esc(PR.label)}${jalan ? ` · data s/d ${tgl(hariIni)}` : ''} · Divisi Pisang, Padi &amp; Infrastruktur</div></div>
+      <div class="lp-jd">${esc(PR.judul)}</div>
+      <div class="lp-pr">${esc(PR.rentang)}${jalan ? ` · data s/d ${tgl(hariIni)}` : ''} · Divisi Pisang, Padi &amp; Infrastruktur</div></div>
 
     <h2 class="o-h">${nomor()}. Ringkasan</h2>
     <div class="kpis">
@@ -195,6 +201,13 @@ export function renderLaporan(main, A) {
     ${blokPadi.length && aktPadi.length ? `<div class="card o-card"><h3>Progres persiapan petak (olah tanah s/d tanam)</h3>
       ${tabel(['Tahap', 'Selesai (ha)', 'Dari (ha)', '%'], progPadi.map((x) => [esc(x.akt), f2(x.done), f2(x.tot), f0(x.tot ? x.done / x.tot * 100 : 0) + '%']), [1, 2, 3])}
       <p class="small muted" style="margin:6px 0 0">Dari Progres Harian blok peruntukan Padi (${blokPadi.length} petak); petak yang sudah tanam sebelum pencatatan dihitung selesai.</p></div>` : ''}
+    <div class="card o-card"><h3>Rencana kerja padi — realisasi ${PR.mode === 'minggu' ? 'minggu ini' : 'periode ini'}</h3>
+      ${kerjaPadi(RPi).length ? (() => { // satu baris per aktivitas (petak digabung) supaya ringkas
+        const g = new Map(); for (const r of kerjaPadi(RPi)) { const k = `${r.pekerjaan}|${r.aktivitas}|${r.satuan || 'ha'}`; const x = g.get(k) || { pek: r.pekerjaan, akt: r.aktivitas, sat: r.satuan || 'ha', petak: [], ren: 0, real: 0, adaReal: false, ket: new Set() }; x.petak.push(r.petak); x.ren += n(r.rencana); if (r.realisasi != null && r.realisasi !== '') { x.real += n(r.realisasi); x.adaReal = true; } if (r.keterangan) x.ket.add(r.keterangan); g.set(k, x); }
+        return tabel(['Pekerjaan', 'Aktivitas', 'Petak', 'Rencana', 'Realisasi', '%', 'Keterangan'], [...g.values()].map((x) => [esc(x.pek || '–'), esc(x.akt || '–'), esc(x.petak.filter(Boolean).join(', ') || '–'), qty(x.ren, x.sat), x.adaReal ? qty(x.real, x.sat) : '–', x.adaReal && x.ren ? f0(x.real / x.ren * 100) + '%' : '–', esc([...x.ket].join('; '))]), [3, 4, 5]);
+      })()
+        : kosong('Belum ada rencana kerja padi untuk periode ini (menu Padi → Rencana Mingguan).')}
+      ${catPadi(RPi).length ? `<ul class="small" style="margin:6px 0 0 18px;padding:0">${catPadi(RPi).map((r) => `<li>${esc(r.keterangan || r.aktivitas)}</li>`).join('')}</ul>` : ''}</div>
     <div class="card o-card"><h3>Panen, giling &amp; kegiatan di periode ini</h3>
       ${PP.length ? tabel(['Tanggal', 'Petak', 'GKP (kg)', 'Karung'], PP.map((r) => [tgl(r.tanggal), esc(r.petak || '–'), f0(r.gkp_kg), f0(r.jumlah_karung)]), [2, 3]) : kosong('Tidak ada panen padi tercatat di periode ini.')}
       ${GL.length ? tabel(['Tanggal', 'Gudang', 'Beras (kg)'], GL.map((r) => [tgl(r.tanggal), esc(r.gudang || '–'), f0(r.beras_kg)]), [2]) : ''}
@@ -238,7 +251,12 @@ export function renderLaporan(main, A) {
       <p class="small muted" style="margin:6px 0 0">Nilai bersih setelah retur, tidak termasuk ongkir &amp; mutasi internal. Rincian ada di menu Penjualan (marketing).</p></div>
 
     <h2 class="o-h">${nomor()}. Rencana ${PR.depan} (${esc(PR.next.label)})</h2>
-    <div class="card o-card">${TN.length ? tabel(['Divisi', 'Kegiatan', 'Target (ha)', 'Blok'], [...TN.filter(isLC), ...TN.filter((t) => !isLC(t))].map((t) => [isLC(t) ? 'Infrastruktur' : 'Pisang', esc(t.a), f2(t.target), esc(t.bl.map((x) => `${x.blok} ${f2(x.ha)}`).join(', '))]), [2]) : kosong('Tidak ada target kegiatan di periode berikutnya.')}</div>
+    ${(() => { // pisang & infrastruktur dari Rencana Kerja; padi dari Rencana Kerja Mingguan Padi (dijumlah per aktivitas)
+      const gp = new Map(); for (const r of kerjaPadi(RPn)) { const k = (r.aktivitas || '–') + '|' + (r.satuan || 'ha'); const g = gp.get(k) || { akt: r.aktivitas || '–', sat: r.satuan || 'ha', tot: 0, bl: [] }; g.tot += n(r.rencana); if (r.petak) g.bl.push(`${r.petak}${r.rencana != null && r.rencana !== '' ? ' ' + fmtNum(r.rencana, g.sat === 'kg' ? 0 : 2) + (g.sat === 'kg' ? ' kg' : '') : ''}`); gp.set(k, g); }
+      const baris = [...[...TN.filter(isLC), ...TN.filter((t) => !isLC(t))].map((t) => [isLC(t) ? 'Infrastruktur' : 'Pisang', esc(t.a), `${f2(t.target)} ha`, esc(t.bl.map((x) => `${x.blok} ${f2(x.ha)}`).join(', '))]),
+        ...[...gp.values()].map((g) => ['Padi', esc(g.akt), qty(g.tot, g.sat), esc(g.bl.join(', ') || '–')])];
+      return `<div class="card o-card">${baris.length ? tabel(['Divisi', 'Kegiatan', 'Target', 'Blok / petak'], baris, [2]) : kosong('Tidak ada rencana kegiatan di periode berikutnya.')}
+        ${(() => { const sdh = new Set(catPadi(RPi).map((r) => r.keterangan)), baru = catPadi(RPn).filter((r) => !sdh.has(r.keterangan)); return baru.length ? `<p class="small muted" style="margin:6px 0 0">Catatan padi: ${baru.map((r) => esc(r.keterangan || r.aktivitas)).join(' · ')}</p>` : ''; })()}</div>`; })()}
 
     <p class="small muted lp-foot">Dibuat otomatis ${tgl(hariIni)} dari aplikasi Monitoring Kebun. Data terakhir — progres harian: ${tgl(hAkhir)}, panen pisang: ${tgl(bAkhir)}, iklim: ${tgl(akhir('iklim'))}.</p>`;
 
@@ -254,14 +272,14 @@ export function renderLaporan(main, A) {
       let isi;
       if (j.FT.some((f) => sudah(f) || belum(f))) { // jalan kebun: progres per jenis jalan
         const jenis = [...new Set(j.FT.map((f) => P0(f).Jenis_Jala || 'Lainnya'))].sort((x, y) => ['Utama', 'Koleksi', 'Panen', 'Bantu'].indexOf(x) - ['Utama', 'Koleksi', 'Panen', 'Bantu'].indexOf(y));
-        const baris = (FT, lbl) => [lbl, km(FT), km(FT.filter((f) => sudah(f) && !/timbun/i.test(P0(f).Status2 || ''))), km(FT.filter((f) => sudah(f) && /timbun/i.test(P0(f).Status2 || ''))), km(FT.filter(belum)), String(FT.length)];
-        isi = tabel(['Jenis jalan', 'Total (km)', 'Sudah dibuka (km)', 'Sudah timbun padat (km)', 'Belum dikerjakan (km)', 'Ruas'],
-          [...jenis.map((x) => baris(j.FT.filter((f) => (P0(f).Jenis_Jala || 'Lainnya') === x), esc(x))), baris(j.FT, '<b>Total</b>')], [1, 2, 3, 4, 5]);
+        const baris = (FT, lbl) => [lbl, km(FT), km(FT.filter((f) => sudah(f) && !/timbun/i.test(P0(f).Status2 || ''))), km(FT.filter((f) => sudah(f) && /timbun/i.test(P0(f).Status2 || ''))), km(FT.filter(belum))];
+        isi = tabel(['Jenis jalan', 'Total (km)', 'Sudah dibuka (km)', 'Sudah timbun padat (km)', 'Belum dikerjakan (km)'],
+          [...jenis.map((x) => baris(j.FT.filter((f) => (P0(f).Jenis_Jala || 'Lainnya') === x), esc(x))), baris(j.FT, '<b>Total</b>')], [1, 2, 3, 4]);
       } else { // jalan akses: per kondisi (lebar / timbun)
         const kond = [...new Set(j.FT.map((f) => P0(f).Status || '–'))].filter((x) => x !== '–' || j.FT.some((f) => !P0(f).Status && Number(P0(f).Length) > 0));
-        isi = tabel(['Kondisi', 'Panjang (km)', 'Ruas'], [...kond.map((x) => { const FT = j.FT.filter((f) => (P0(f).Status || '–') === x); return [esc(x), km(FT), String(FT.length)]; }), ['<b>Total</b>', km(j.FT), String(j.FT.length)]], [1, 2]);
+        isi = tabel(['Kondisi', 'Panjang (km)'], [...kond.map((x) => { const FT = j.FT.filter((f) => (P0(f).Status || '–') === x); return [esc(x), km(FT)]; }), ['<b>Total</b>', km(j.FT)]], [1]);
       }
-      return `<div style="margin-bottom:8px"><b>${esc(j.nama)}</b> <span class="small muted">· peta diperbarui ${tgl(tglLokal(j.upd))}</span>${isi}</div>`;
+      return `<div class="lp-utuh" style="margin-bottom:8px"><b>${esc(j.nama)}</b> <span class="small muted">· peta diperbarui ${tgl(tglLokal(j.upd))}</span>${isi}</div>`;
     }).join('');
     const st = serahTerima(await loadGis(A));
     if (st && $('#lpST', main)) $('#lpST', main).outerHTML = tile('Lahan sudah serah terima', `${f2(st.haS)} <small>ha</small>`, `${st.sudah.length} persil${st.belum.length ? ` · belum serah terima ${f2(st.haB)} ha` : ''}`);
