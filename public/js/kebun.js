@@ -1,6 +1,6 @@
 // Halaman Tim Kebun (/kebun): target vs realisasi progres tanam pisang per bulan — hanya lihat, tanpa login.
 // Data sama dengan aplikasi utama (otomatis dari Progres Harian, Rencana Blok, Blok Tanam, Target Tanam).
-import { util, aktivitasUntuk, lahanProgress, pisangTertanam, statusRencana, ringkasRencana, porsiRencana, hariKerjaAkt, liburDefault, tanamPerBulan } from './schema.js';
+import { util, aktivitasUntuk, lahanProgress, pisangTertanam, statusRencana, ringkasRencana, porsiRencana, hariKerjaAkt, liburDefault, tanamPerBulan, targetPeriode } from './schema.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const n = util.n, key = util.key;
@@ -69,19 +69,7 @@ function render(ctx) {
   const mingguDari = (s) => { const d = util.d(s); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const e = new Date(d); e.setDate(d.getDate() + 6); return [iso(d), iso(e)]; };
   const lblMinggu = (s) => { const [a, b] = mingguDari(s).map(util.d); return `${a.getDate()}${a.getMonth() !== b.getMonth() ? ' ' + BULAN[a.getMonth()].slice(0, 3) : ''}–${b.getDate()} ${BULAN[b.getMonth()].slice(0, 3)}`; };
   // target per minggu tiap kegiatan: bagian rencana minggu itu per blok (+ tunggakan minggu lalu untuk minggu ini); selesai = Progres Harian
-  const targetMinggu = (w0, w1, kini) => acts.map((a) => {
-    const per = new Map(); // satu chip per blok (baris "sudah dikerjakan" + sisa digabung)
-    for (const r of R.filter((x) => x.aktivitas === a.aktivitas)) {
-      const p = porsiRencana(r, r.a, w0, w1), tunggak = kini && r.selesai < w0 && !r.beres ? r.kurang : 0;
-      if (p <= 0.005 && tunggak <= 0.005) continue;
-      const b = per.get(key(r.blok)) || { blok: r.blok, ha: 0, tunggak: 0, beres: true };
-      b.ha += p + tunggak; b.tunggak += tunggak; b.beres = b.beres && r.beres;
-      per.set(key(r.blok), b);
-    }
-    const bl = [...per.values()];
-    const target = bl.reduce((s, x) => s + x.ha, 0), selesai = kini ? real(a.aktivitas, w0, w1 < tIso ? w1 : tIso) : 0;
-    return { a: a.aktivitas, bl, target, selesai, tunggak: bl.reduce((s, x) => s + x.tunggak, 0) };
-  }).filter((x) => x.target > 0.005 || x.selesai > 0.005);
+  const targetMinggu = (w0, w1) => targetPeriode(ctx, R, w0, w1, tIso); // sama dengan Laporan Owner
   const depan0 = util.addDays(sIso, 7), depan1 = util.addDays(mIso, 7);
   const MGG = [{ k: 'ini', lbl: `Minggu ini (${lblMinggu(sIso)})`, w: targetMinggu(sIso, mIso, true), kini: true }, { k: 'depan', lbl: `Minggu depan (${lblMinggu(depan0)})`, w: targetMinggu(depan0, depan1, false) }];
   petaPilih = { w: mingguPilih, a: MGG.find((m) => m.k === mingguPilih)?.w.some((x) => x.a === petaPilih.a) ? petaPilih.a : null };

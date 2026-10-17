@@ -825,6 +825,31 @@ export function ringkasRencana(c, sd, R = statusRencana(c)) {
   }).filter(Boolean);
 }
 
+// target vs hasil tiap kegiatan pada periode [dari, sampai] (minggu / bulan / rentang bebas) — dipakai /kebun & Laporan Owner.
+// target = bagian rencana di periode itu per blok (+ tunggakan rencana sebelumnya bila periode memuat hari ini);
+// selesai = hasil Progres Harian di periode itu (s/d hari ini); blokKerja = blok yang benar-benar dikerjakan.
+export function targetPeriode(c, R, dari, sampai, hariIni = util.iso(util.today())) {
+  if (!R.length) return [];
+  const acts = aktivitasUntuk(c, 'Pisang'), awal = R.reduce((m, r) => (r.mulai < m ? r.mulai : m), R[0].mulai);
+  const blokRen = new Set(R.map((r) => util.key(r.blok)));
+  const blokPis = new Set(c.rows('lahan_blok').filter((b) => (b.peruntukan || 'Pisang') === 'Pisang').map((b) => util.key(b.blok)));
+  const kini = dari <= hariIni && hariIni <= sampai, s1 = sampai < hariIni ? sampai : hariIni;
+  const har = c.rows('lahan_harian').filter((r) => (blokRen.has(util.key(r.blok)) || blokPis.has(util.key(r.blok))) && r.tanggal >= awal && r.tanggal >= dari && r.tanggal <= s1);
+  return acts.map((a) => {
+    const per = new Map(); // satu baris per blok (baris "sudah dikerjakan" + sisa digabung)
+    for (const r of R.filter((x) => x.aktivitas === a.aktivitas)) {
+      const p = porsiRencana(r, r.a, dari, sampai), tunggak = kini && r.selesai < dari && !r.beres ? r.kurang : 0;
+      if (p <= 0.005 && tunggak <= 0.005) continue;
+      const b = per.get(util.key(r.blok)) || { blok: r.blok, ha: 0, tunggak: 0, beres: true };
+      b.ha += p + tunggak; b.tunggak += tunggak; b.beres = b.beres && r.beres;
+      per.set(util.key(r.blok), b);
+    }
+    const bl = [...per.values()], hk = dari <= hariIni ? har.filter((r) => r.aktivitas === a.aktivitas) : [];
+    const target = bl.reduce((s, x) => s + x.ha, 0), selesai = hk.reduce((s, r) => s + n(r.hasil_ha), 0);
+    return { a: a.aktivitas, bl, target, selesai, tunggak: bl.reduce((s, x) => s + x.tunggak, 0), blokKerja: [...new Set(hk.map((r) => r.blok))] };
+  }).filter((x) => x.target > 0.005 || x.selesai > 0.005);
+}
+
 // Tanam per bulan berdasarkan LUASAN (permintaan user): rencana = bagian rencana Tanam di bulan itu; aktual = hasil Tanam di
 // Progres Harian pada bulan itu, blok mana pun (blok yang ditanam lebih cepat/lambat dari rencananya tetap dihitung di bulan
 // tanamnya). Status memakai kumulatif luas → tukar blok tidak membuat bulan "kurang" selama total luas sesuai rencana.

@@ -186,6 +186,43 @@ function log(aksi, tabel, id, data) {
   db.prepare('INSERT INTO _log (ts, aksi, tabel, row_id, data, oleh) VALUES (?,?,?,?,?,?)').run(now(), aksi, tabel, id ?? null, data ? JSON.stringify(data).slice(0, 4000) : null, currentUser ? currentUser.nama || currentUser.username : null);
 }
 
+// ---------- riwayat perubahan blok (lampiran GIS di Laporan Owner): satu catatan per blok — blok baru, dihapus, ganti nama,
+// atau kolom penting berubah (nilai lama → baru). Dipanggil dari form (tambah/ubah/hapus), upload Excel, dan upload peta Blok Tanam.
+const BLOK_T = {
+  pisang_blok: { k: 'nama_blok', f: ['luas_ha', 'pokok_tanam', 'tanggal_tanam', 'status', 'kehilangan', 'sulam'] },
+  lahan_blok: { k: 'blok', f: ['luas_ha', 'peruntukan', 'tahap'] },
+  padi_petak: { k: 'nama_petak', f: ['luas_ha', 'status'] },
+  gis_layer: { k: 'nama', f: ['luas_ha', 'lahan', 'status'] }, // fitur peta Blok Tanam
+};
+const samaNilai = (a, b) => (a ?? '') === (b ?? '') || (a != null && b != null && a !== '' && b !== '' && Number.isFinite(Number(a)) && Number.isFinite(Number(b)) && Math.abs(Number(a) - Number(b)) < 1e-6);
+function catatBlok(tabel, lama, baru, extra = {}) {
+  const cfg = BLOK_T[tabel]; if (!cfg) return 0;
+  const k = (r) => util.key(r[cfg.k]), beda = (l, b) => Object.fromEntries(cfg.f.filter((f) => !samaNilai(l[f], b[f])).map((f) => [f, [l[f] ?? null, b[f] ?? null]]));
+  const out = [];
+  if (lama.length === 1 && baru.length === 1 && k(lama[0]) !== k(baru[0])) { // satu baris diedit & namanya diganti
+    out.push({ jenis: 'ganti nama', blok: baru[0][cfg.k], lama: lama[0][cfg.k], ubah: beda(lama[0], baru[0]) });
+  } else {
+    const L = new Map(lama.filter((r) => r[cfg.k]).map((r) => [k(r), r])), B = new Map(baru.filter((r) => r[cfg.k]).map((r) => [k(r), r]));
+    const tambah = [...B].filter(([x]) => !L.has(x)).map(([, r]) => r), hapus = [...L].filter(([x]) => !B.has(x)).map(([, r]) => r);
+    for (const h of [...hapus]) { // blok hilang + blok baru dengan luas sama (±1%) → dianggap ganti nama
+      const i = tambah.findIndex((t) => Number(t.luas_ha) > 0 && Math.abs(Number(t.luas_ha) - Number(h.luas_ha)) <= 0.01 * Number(h.luas_ha));
+      if (i >= 0) { const t = tambah.splice(i, 1)[0]; hapus.splice(hapus.indexOf(h), 1); out.push({ jenis: 'ganti nama', blok: t[cfg.k], lama: h[cfg.k], ubah: beda(h, t) }); }
+    }
+    for (const t of tambah) out.push({ jenis: 'tambah', blok: t[cfg.k], nilai: Object.fromEntries(cfg.f.filter((f) => t[f] != null && t[f] !== '').map((f) => [f, t[f]])) });
+    for (const h of hapus) out.push({ jenis: 'hapus', blok: h[cfg.k], nilai: Object.fromEntries(cfg.f.filter((f) => h[f] != null && h[f] !== '').map((f) => [f, h[f]])) });
+    for (const [x, b] of B) { const l = L.get(x); if (!l) continue; const d = beda(l, b); if (Object.keys(d).length) out.push({ jenis: 'ubah', blok: b[cfg.k], ubah: d }); }
+  }
+  for (const o of out) log('perubahan blok', tabel, null, { ...o, ...extra });
+  return out.length;
+}
+// fitur peta Blok Tanam → baris { nama, luas_ha, lahan, status } (luas: Area_New > Shape_Area, m² → ha)
+function fiturBlok(geojson) {
+  let F = []; try { F = JSON.parse(geojson || '{}').features || []; } catch {}
+  return F.map((f) => { const p = f.properties || {}, m2 = Number(p.Area_New) > 0 ? Number(p.Area_New) : Number(p.Shape_Area) > 0 ? Number(p.Shape_Area) : null;
+    return { nama: p.Nama_Blok || p.nama_blok || p.Blok || p.NAMA_BLOK || null, luas_ha: m2 != null ? Math.round(m2) / 1e4 : null, lahan: p.Lahan ?? null, status: p.Status ?? null }; });
+}
+const layerBlok = (r) => r && /blok\s*tanam/i.test(`${r.jenis || ''} ${r.nama || ''}`);
+
 // ---------- login & sesi
 const SESSION_DAYS = 30;
 const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
@@ -218,6 +255,7 @@ function insertRow(table, row, doLog = true) {
   const res = db.prepare(sql).run(t, t, ...cols.map((c) => r[c]));
   const id = Number(res.lastInsertRowid);
   if (doLog) log('tambah', table, id, table === 'gis_layer' ? { nama: r.nama } : r);
+  if (doLog && BLOK_T[table] && table !== 'gis_layer') catatBlok(table, [], [r]);
   return id;
 }
 // ---------- keterhubungan data (field bertipe ref menyimpan nama induk, mis. nama blok)
@@ -538,6 +576,7 @@ async function api(req, res, url) {
       if (refs.length && !cascade) return send(res, 409, { error: 'Ada data lain yang terhubung', refs });
       const r = tx(() => { let c = 0, d = 0; for (const o of olds) { d += cascade ? deleteChildren(table, o) : 0; c += Number(db.prepare(`DELETE FROM ${q(table)} WHERE id=?`).run(o.id).changes); } return { c, d }; });
       log('hapus massal', table, null, { jumlah: r.c, data_terkait_ikut_dihapus: r.d || undefined });
+      if (BLOK_T[table] && table !== 'gis_layer') catatBlok(table, olds, []);
       return send(res, 200, { deleted: r.c, related: r.d });
     }
     if (m === 'POST') {
@@ -547,7 +586,10 @@ async function api(req, res, url) {
         log('import', table, null, { jumlah: ids.length });
         return send(res, 200, { ids });
       }
-      return send(res, 200, { id: insertRow(table, body) });
+      const blokLama = table === 'gis_layer' && layerBlok(body) ? db.prepare('SELECT * FROM gis_layer ORDER BY id DESC').all().find(layerBlok) : null; // layer Blok Tanam baru menggantikan yang lama
+      const nid = insertRow(table, body);
+      if (blokLama) catatBlok('gis_layer', fiturBlok(blokLama.geojson), fiturBlok(body.geojson), { layer: body.nama });
+      return send(res, 200, { id: nid });
     }
     if (m === 'PUT' && id) {
       const body = await readBody(req), old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
@@ -565,6 +607,11 @@ async function api(req, res, url) {
         }
       });
       log('ubah', table, id, table === 'gis_layer' ? { layer: r.nama || old?.nama, diubah: Object.keys(r).map((k) => ({ geojson: 'isi peta / atribut / catatan', gaya: 'tampilan', tampil: 'tampil/sembunyi' }[k] || k)).join(', ') } : { ...r, ...(related ? { data_terkait_diperbarui: related } : {}) });
+      if (old && BLOK_T[table]) {
+        const nu = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
+        if (table !== 'gis_layer') catatBlok(table, [old], [nu]);
+        else if ('geojson' in r && layerBlok(nu)) catatBlok('gis_layer', fiturBlok(old.geojson), fiturBlok(nu.geojson), { layer: nu.nama }); // peta Blok Tanam diganti
+      }
       return send(res, 200, { ...(db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id) || {}), _related: related });
     }
     if (m === 'DELETE' && id) {
@@ -575,6 +622,7 @@ async function api(req, res, url) {
       const related = tx(() => { const d = cascade && old ? deleteChildren(table, old) : 0; db.prepare(`DELETE FROM ${q(table)} WHERE id=?`).run(id); return d; });
       if (old && table === 'gis_layer') delete old.geojson;
       log('hapus', table, id, { ...old, ...(related ? { data_terkait_ikut_dihapus: related } : {}) });
+      if (old && BLOK_T[table] && table !== 'gis_layer') catatBlok(table, [old], []);
       return send(res, 200, { ok: true, related });
     }
   }
@@ -745,6 +793,7 @@ async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file'
   if (preview || !todo.length) { if (!preview) { xl.lastReport = rep; } return rep; }
   rep.backup = path.basename(backup('excel') || '') || null;
   const prevUser = currentUser; currentUser = { nama: oleh };
+  const blokSebelum = Object.fromEntries(todo.filter(({ p }) => BLOK_T[p.cfg.table]).map(({ p }) => { const sc = scopes[p.cfg.table]; const all = db.prepare(`SELECT * FROM ${q(p.cfg.table)}`).all(); return [p.cfg.table, sc ? all.filter(sc) : all]; }));
   try {
     tx(() => {
       for (const { p } of todo) {
@@ -756,6 +805,7 @@ async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file'
       }
     });
     for (const { p, s } of todo) log('sinkron Excel', p.cfg.table, null, { sheet: s.sheet, baris: s.baris, tambah_atau_ubah: s.tambah, hapus_atau_ubah: s.hapus, sumber });
+    for (const [t, sebelum] of Object.entries(blokSebelum)) { const sc = scopes[t], all = db.prepare(`SELECT * FROM ${q(t)}`).all(); catatBlok(t, sebelum, sc ? all.filter(sc) : all, { sumber: 'upload Excel' }); }
   } finally { currentUser = prevUser; }
   xl.lastReport = rep;
   db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('excel_laporan', JSON.stringify(rep));

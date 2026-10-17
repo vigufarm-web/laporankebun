@@ -1,6 +1,7 @@
 import { DIVISIONS, TABLES, ROLES, util, displayOf, canEdit, isAdmin, EXCEL_SHEETS } from './schema.js';
 import { renderGIS } from './gis.js';
 import { renderOwner } from './owner.js';
+import { renderLaporan } from './laporan.js';
 import { renderKomoditas, KOM } from './komoditas.js';
 
 let me = null;                                  // pengguna yang login
@@ -133,6 +134,7 @@ let settings = {};
 function renderSidebar(info, route) {
   const nav = (href, ico, label, active, extra = '') => `<a class="nav-item ${active ? 'active' : ''}" href="#/${href}"><span class="ico">${ico}</span>${label}${extra}</a>`;
   let h = nav('', '🏢', '<b>Ringkasan</b>', route === '');
+  if (isAdmin(me)) h += nav('laporan', '📄', 'Laporan Owner', route === 'laporan'); // khusus admin
   for (const [k, K] of Object.entries(KOM)) {
     const on = route.startsWith('k/' + k);
     const tabs = K.tabs.filter((t) => !t.admin || isAdmin(me)); // tab khusus admin tidak tampil di menu pengunjung
@@ -203,6 +205,7 @@ async function route() {
   const [a, b, c, d] = r.split('/');
   if (!a) return renderOwner(main, App);
   if (a === 'owner') { location.hash = '#/'; return; }
+  if (a === 'laporan') return isAdmin(me) ? renderLaporan(main, App) : (main.innerHTML = emptyBox('Laporan Owner khusus admin — silakan login sebagai admin.'));
   if (a === 'k' && KOM[b]) return renderKomoditas(main, App, b, c, d);
   if (a === 'pengguna' && isAdmin(me)) return renderUsers(main);
   if (a === 't' && TABLES[b]) return renderTable(main, b);
