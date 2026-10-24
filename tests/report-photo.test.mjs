@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import sharp from 'sharp';import crypto from 'node:crypto';import {reportPhoto} from '../lib/report-photo.js';
+test('report photographs become valid JPEGs within the per-photo download budget',async()=>{const input=await sharp(crypto.randomBytes(420*420*3),{raw:{width:420,height:420,channels:3}}).webp().toBuffer();const out=await reportPhoto(input,16000),metadata=await sharp(out).metadata();assert.ok(out.length<=16000);assert.equal(metadata.format,'jpeg');assert.ok(metadata.width<=420);});
