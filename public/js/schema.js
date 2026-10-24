@@ -831,7 +831,7 @@ export function susunRencana(c, mulai) {
   const blok = [], ada = new Set();
   for (const t of c.rows('lahan_target')) {
     const k = util.key(t.blok), b = lb.get(k);
-    if (!b || ada.has(k) || tt.has(k)) continue;
+    if (!b || ada.has(k) || (tt.has(k) && n(tt.get(k).gross)>=n(b.luas_ha)-0.000001)) continue;
     ada.add(k);
     const p = lahanProgress(b, c), luas = n(b.luas_ha);
     blok.push({ blok: b.blok, ym: String(t.bulan || '').slice(0, 7), kelas: n(t.prioritas), total: p.total, sisa: acts.map((a) => Math.max(0, (1 - (p.per.find((x) => x.akt === a.aktivitas)?.pct || 0)) * luas)) });
@@ -924,7 +924,7 @@ export function statusRencana(c) {
   for (const list of grup.values()) {
     const r0 = list[0], k = util.key(r0.blok), b = lb.get(k);
     if (!prog.has(k)) prog.set(k, b ? lahanProgress(b, c) : null);
-    const pc = tt.has(k) ? 1 : prog.get(k)?.per.find((x) => x.akt === r0.aktivitas)?.pct || 0;
+    const pc = (tt.has(k)&&b&&n(tt.get(k).gross)>=n(b.luas_ha)-0.000001) ? 1 : prog.get(k)?.per.find((x) => x.akt === r0.aktivitas)?.pct || 0;
     const total = list.reduce((s, r) => s + n(r.luas_ha), 0), sisa = Math.max(0, (1 - pc) * n(b?.luas_ha));
     let ada = Math.min(total, Math.max(0, total - sisa));
     for (const r of [...list].sort((x, y) => String(x.mulai).localeCompare(String(y.mulai)) || String(x.selesai).localeCompare(String(y.selesai)))) {

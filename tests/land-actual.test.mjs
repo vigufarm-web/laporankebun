@@ -11,3 +11,7 @@ test('actual import reconciles changes without double counting and caps Daily at
 test('one tractor serializes Bajak 1, Bajak 2 and Ridger across blocks',()=>{
  const acts=['Bajak 1','Bajak 2','Ridger'].map((aktivitas,i)=>({aktivitas,urutan:i+1,untuk:'Pisang',hari_per_ha:1,tim:1}));const rows={lahan_aktivitas:acts,lahan_blok:[{blok:'A01',luas_ha:1,peruntukan:'Pisang'},{blok:'A02',luas_ha:1,peruntukan:'Pisang'}],lahan_target:[{blok:'A01',bulan:'2026-11-30'},{blok:'A02',bulan:'2026-11-30'}],lahan_harian:[],pisang_blok:[],gis_layer:[]};const plan=susunRencana({rows:t=>rows[t]||[]},'2026-10-26');assert.equal(plan.length,6);assert.equal(new Set(plan.map(r=>r.mulai)).size,6,'one full working day per task, no simultaneous use');
 });
+test('partial planting does not mark the whole block complete or remove remaining work',()=>{
+ const rows={lahan_aktivitas:['Bajak 1','Bajak 2','Tanam'].map((aktivitas,i)=>({aktivitas,urutan:i+1,untuk:'Pisang',hari_per_ha:1,tim:1})),lahan_blok:[{blok:'D10',luas_ha:1,peruntukan:'Pisang'}],lahan_target:[{blok:'D10',bulan:'2026-11-30'}],lahan_harian:[{tanggal:'2026-09-01',blok:'D10',aktivitas:'Bajak 1',hasil_ha:1},{tanggal:'2026-09-02',blok:'D10',aktivitas:'Bajak 2',hasil_ha:1},{tanggal:'2026-09-03',blok:'D10',aktivitas:'Tanam',hasil_ha:.5}],pisang_blok:[],gis_layer:[]};
+ const plan=susunRencana({rows:t=>rows[t]||[]},'2026-10-26');assert.equal(plan.length,1);assert.equal(plan[0].aktivitas,'Tanam');assert.equal(plan[0].luas_ha,.5);
+});
