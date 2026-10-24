@@ -222,6 +222,7 @@ async function route() {
   }
   $('#main').classList.remove('summary-page');
   if(r==='daily'){renderSidebar({},r);$('#note').hidden=true;return renderDaily($('#main'),App).catch(e=>$('#main').innerHTML='<div class="card">'+esc(e.message)+'</div>');}
+  if(r==='pengaturan'){renderSidebar({},r);$('#note').hidden=true;return renderSettings($('#main'));}
   let info;
   try { [info] = await Promise.all([syncAll(r), api.get('/api/settings').then((s) => { settings = s; }).catch(() => {})]); } catch (e) { $('#main').innerHTML = `<div class="card">Server tidak bisa dihubungi: ${esc(e.message)}</div>`; return; }
   renderSidebar(info, r);
