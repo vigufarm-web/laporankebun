@@ -1,4 +1,5 @@
 import {reportWeek} from './lib/report-week.js';
+import {githubStore,githubDataConfig} from './lib/github-store.js';
 import {kebunPlan} from './lib/kebun-plan.js';
 import {summaryPeriods} from './lib/summary-periods.js';
 import {cloudOverview,cloudOverviewPeriods} from './lib/cloud-overview.js';
@@ -49,8 +50,9 @@ const ONLINE = (() => {
   if (env) return env;
   try { const j = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'online.json'), 'utf8')); return j.url && j.token ? j : null; } catch { return null; }
 })();
-const BELUM_ONLINE = VERCEL && !ONLINE; // di Vercel tapi database Turso belum disambungkan → tampilkan petunjuk
-const cloud = ONLINE ? turso(ONLINE.url, ONLINE.token) : null;
+const GITHUB_DATA=githubDataConfig(process.env);
+const BELUM_ONLINE = VERCEL && !ONLINE && !GITHUB_DATA;
+const cloud = GITHUB_DATA ? githubStore(GITHUB_DATA) : ONLINE ? turso(ONLINE.url, ONLINE.token) : null;
 
 // Mode online: data dibaca dari salinan di memori (cepat), setiap perubahan dikirim ke database online sebagai satu transaksi.
 // Nomor versi (_ver) mencegah dua tempat menimpa perubahan satu sama lain.
@@ -1399,7 +1401,7 @@ async function handler(req, res) {
     if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/daily' || url.pathname === '/daily/')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
     if (!VERCEL && (url.pathname === '/daily' || url.pathname === '/daily/')) return serveFile(res, path.join(ROOT, 'public', 'index.html'));
     if (url.pathname === '/kebun' || url.pathname === '/kebun/') return VERCEL ? send(res, 200, KEBUN_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' }) : serveFile(res, path.join(ROOT, 'public', 'kebun.html'));
-    if (BELUM_ONLINE && url.pathname.startsWith('/api/')) return send(res, 503, { error: 'Database online belum disambungkan. Di Vercel: buka proyek → Storage → Create Database → Turso → Connect ke proyek ini, lalu Deployments → Redeploy.' });
+    if (BELUM_ONLINE && url.pathname.startsWith('/api/')) return send(res, 503, { error: 'Penyimpanan online belum disambungkan. Admin perlu mengatur penyimpanan GitHub atau database online pada proyek Vercel.' });
     if (url.pathname.startsWith('/api/')) {
       await apiRequest(req, res, url);
       // perubahan lewat aplikasi → samakan file Excel
@@ -1421,7 +1423,7 @@ if (!VERCEL) http.createServer(handler).listen(PORT, '0.0.0.0', () => {
   console.log(`   Komputer ini : http://localhost:${PORT}`);
   for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs || [])
     if (i.family === 'IPv4' && !i.internal) console.log(`   Jaringan/HP  : http://${i.address}:${PORT}`);
-  console.log(`   Database     : ${cloud ? 'ONLINE (Turso) — data sama dengan versi internet' : DB_FILE}\n   Excel input  : ${EXCEL_FILE}\n   Tutup jendela ini untuk menghentikan server.\n`);
+  console.log(`   Database     : ${cloud ? 'ONLINE ('+(GITHUB_DATA?'GitHub':'Turso')+') — data sama dengan versi internet' : DB_FILE}\n   Excel input  : ${EXCEL_FILE}\n   Tutup jendela ini untuk menghentikan server.\n`);
 });
 
 // Saat lokal tidak ada Vercel Cron; bersihkan saat start dan setiap 24 jam.
@@ -1435,6 +1437,10 @@ return handler;
 let application;
 export default async function serve(req,res){
   const pathname=new URL(req.url,'http://localhost').pathname;
+  if(process.env.VERCEL&&['/','/index.html','/daily','/daily/'].includes(pathname)){
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});
+    return res.end(fs.readFileSync(new URL('./public/index.html',import.meta.url)));
+  }
   if(process.env.VERCEL&&(pathname==='/kebun'||pathname==='/kebun/')){
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});
     return res.end(fs.readFileSync(new URL('./public/kebun.html',import.meta.url)));
