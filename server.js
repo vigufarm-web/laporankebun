@@ -431,7 +431,7 @@ function validateOperationalBlock(table,row,old=null) {
   }
   for(const f of TABLES[table]?.f||[]) {
     if(f.t!=='ref'||!masterFields[f.ref]||!row[f.k]||old&&row[f.k]===old[f.k])continue;
-    const block=blocks.find(row[f.k]);if(!block||!block.active||!block.layer_id||block.ownership!=='Sudah milik kebun'){const e=new Error('Pilih blok GIS aktif yang sudah terverifikasi milik kebun.');e.status=400;throw e;}
+    const block=blocks.find(row[f.k]);if(!block||!block.active||!ownedDailyLocations().some(x=>x.id===block.id)){const e=new Error('Pilih blok GIS aktif yang sudah terverifikasi milik kebun.');e.status=400;throw e;}
   }
 }
 
@@ -758,6 +758,7 @@ async function api(req, res, url) {
       const applied=blocks.apply({...layer,id,geojson:preview.geojson},{mappings:body.mappings||{}});
       const values=clean('gis_layer',{...layer,geojson:applied.geojson}),cols=Object.keys(values);db.prepare('UPDATE gis_layer SET updated_at=?'+cols.map(k=>', '+q(k)+'=?').join('')+' WHERE id=?').run(now(),...cols.map(k=>values[k]),id);
       db.prepare('INSERT INTO _gis_revisions (layer_id,before_json,after_json,summary,oleh,created_at) VALUES (?,?,?,?,?,?)').run(id,old?.geojson||null,applied.geojson,JSON.stringify(preview.changes),user.nama||user.username,now());
+      capLandRows(db,now);
       log('revisi GIS','gis_layer',id,{changes:preview.changes});return {id,changes:preview.changes};
     });
     return send(res,200,result);

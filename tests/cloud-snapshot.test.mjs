@@ -4,7 +4,7 @@ import http from 'node:http';
 import { once } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { turso } from '../lib/turso.js';
-import { copyCloudSnapshot } from '../lib/cloud-snapshot.js';
+import { copyCloudSnapshot, mergeSnapshotTables } from '../lib/cloud-snapshot.js';
 
 for(const chunkSize of [16384,32768])test('cloud snapshot streams geometry and blobs within one read transaction '+chunkSize, async () => {
   const source=new DatabaseSync(':memory:');
@@ -45,7 +45,7 @@ for(const chunkSize of [16384,32768])test('cloud snapshot streams geometry and b
     assert.equal(snapshot.db.prepare('SELECT COUNT(*) n FROM records').get().n,251);
     assert.equal(snapshot.db.prepare('SELECT seq FROM sqlite_sequence WHERE name=?').get('gis_layer').seq,1);
     assert.ok(snapshot.db.prepare("SELECT 1 FROM sqlite_master WHERE name='attachment_id'").get());
-    const partial=await copyCloudSnapshot(turso('http://127.0.0.1:'+server.address().port,'test-token'),{tables:['_ver','records']});assert.equal(partial.db.prepare('SELECT COUNT(*) n FROM gis_layer').get().n,0);assert.equal(partial.db.prepare('SELECT COUNT(*) n FROM records').get().n,251);partial.db.close();
+    const partial=await copyCloudSnapshot(turso('http://127.0.0.1:'+server.address().port,'test-token'),{tables:['_ver','records']});assert.equal(partial.db.prepare('SELECT COUNT(*) n FROM gis_layer').get().n,0);assert.equal(partial.db.prepare('SELECT COUNT(*) n FROM records').get().n,251);mergeSnapshotTables(partial.db,snapshot.db,['gis_layer']);assert.equal(partial.db.prepare('SELECT geojson FROM gis_layer').get().geojson,geometry);assert.equal(partial.db.prepare('SELECT count(*) n FROM records').get().n,251);partial.db.close();
     assert.equal(active,false);assert.ok(largest<chunkSize*7);assert.ok(reads>20);assert.ok(requests<60,'bounded requests for full and partial snapshots');
   }finally{snapshot?.db.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));source.close();}
 });
