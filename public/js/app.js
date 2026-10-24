@@ -595,7 +595,8 @@ async function renderLog(main) {
 }
 
 async function renderSettings(main) {
-  const bk = await api.get('/api/backups');
+  let bk=[];
+  try { bk=await api.get('/api/backups'); } catch(e) { toast('Daftar backup belum tersedia. Silakan coba lagi.'); }
   main.innerHTML = `<div class="page-head"><div><h1>⚙️ Pengaturan & Backup</h1></div></div>
     <div class="cols-2">
       <div class="card"><h3>Identitas</h3>
