@@ -1,3 +1,4 @@
+import { copyCloudSnapshot } from './lib/cloud-snapshot.js';
 import { photoExpiresAt, photoExpired } from './lib/photo-retention.js';
 import { createReadModels } from './lib/read-models.js';
 import { createBlockRegistry, isBlockLayer } from './lib/blocks.js';
@@ -59,31 +60,9 @@ const db = {
   },
 };
 const q = (s) => `"${s.replace(/"/g, '')}"`;
-async function loadCloud(coba = 0) {
-  // daftar tabel + nomor versi dulu, lalu semua isi dibaca dalam SATU transaksi baca (potret yang konsisten).
-  // Kalau ada yang menyimpan di antara keduanya (versi berubah) → ulangi.
-  const [master, [v0]] = await cloud.query(["SELECT type, name, sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE 'libsql_%' AND name NOT LIKE '\\_litestream%' ESCAPE '\\'", 'SELECT MAX(v) v FROM _ver']);
-  const tables = master.filter((t) => t.type==='table' && !t.name.startsWith('sqlite_'));
-  const hasSeq = master.some((t) => t.name === 'sqlite_sequence'), hasVer = true;
-  const res = (await cloud.query(['BEGIN', ...tables.map((t) => `SELECT * FROM ${q(t.name)}`), ...(hasSeq ? ['SELECT name, seq FROM sqlite_sequence'] : []), 'SELECT MAX(v) v FROM _ver', 'COMMIT'])).slice(1, -1);
-  if (Number(res[res.length - 1][0]?.v || 0) !== Number(v0?.v || 0)) {
-    if (coba < 5) return loadCloud(coba + 1);
-    throw new Error('Database online sedang sibuk, coba lagi sebentar');
-  }
-  const mem = new DatabaseSync(':memory:');
-  mem.exec('BEGIN');
-  tables.forEach((t, i) => {
-    mem.exec(t.sql);
-    const rows = res[i]; if (!rows.length) return;
-    const cols = Object.keys(rows[0]);
-    const st = mem.prepare(`INSERT INTO ${q(t.name)} (${cols.map(q).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`);
-    for (const r of rows) st.run(...cols.map((c) => r[c]));
-  });
-  if (hasSeq) { mem.exec('DELETE FROM sqlite_sequence'); const st = mem.prepare('INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)'); for (const s of res[tables.length]) st.run(s.name, s.seq); }
-  for(const index of master.filter(t=>t.type==='index'&&t.sql))mem.exec(index.sql);
-  mem.exec('COMMIT');
-  const old = raw; raw = mem; old?.close();
-  ver = hasVer ? Number(res[res.length - 1][0]?.v || 0) : 0;
+async function loadCloud() {
+  const snapshot=await copyCloudSnapshot(cloud);
+  const old=raw;raw=snapshot.db;ver=snapshot.version;old?.close();
 }
 // kirim perubahan yang tertunda ke database online (dipecah bila sangat besar, mis. pulihkan database)
 async function flush() {

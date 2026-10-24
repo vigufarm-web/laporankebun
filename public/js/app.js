@@ -569,6 +569,7 @@ async function renderExcel(main) {
 // pantau sinkron Excel di latar: kalau ada data baru dari Excel, muat ulang halaman yang sedang dibuka
 let lastExcelTs = null;
 setInterval(async () => {
+  if (server.vercel || document.hidden || !me) return;
   try {
     const st = await api.get('/api/excel/status'); const ts = st.laporan?.waktu;
     if (lastExcelTs && ts && ts !== lastExcelTs && st.laporan.sheets?.some((s) => s.status === 'diperbarui') && $('#modal').hidden) {
