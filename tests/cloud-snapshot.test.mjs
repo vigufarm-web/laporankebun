@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { turso } from '../lib/turso.js';
 import { copyCloudSnapshot } from '../lib/cloud-snapshot.js';
 
-test('cloud snapshot streams geometry and blobs within one read transaction', async () => {
+for(const chunkSize of [16384,32768])test('cloud snapshot streams geometry and blobs within one read transaction '+chunkSize, async () => {
   const source=new DatabaseSync(':memory:');
   source.exec('CREATE TABLE _ver(v INTEGER PRIMARY KEY); INSERT INTO _ver VALUES(7); CREATE TABLE gis_layer(id INTEGER PRIMARY KEY AUTOINCREMENT,geojson TEXT); CREATE TABLE records(code TEXT PRIMARY KEY,value TEXT) WITHOUT ROWID; CREATE TABLE attachments(id INTEGER PRIMARY KEY,data BLOB); CREATE INDEX attachment_id ON attachments(id)');
   const geometry='peta 🌴 '.repeat(100000),blob=Buffer.alloc(90000,42);
@@ -31,20 +31,20 @@ test('cloud snapshot streams geometry and blobs within one read transaction', as
       }
       const response=JSON.stringify({baton:active?'snapshot-token':null,results});
       largest=Math.max(largest,Buffer.byteLength(response));
-      if(Buffer.byteLength(response)>100000){res.destroy();return;}
+      if(Buffer.byteLength(response)>chunkSize*7){res.destroy();return;}
       res.setHeader('Content-Type','application/json');res.end(response);
     }catch(error){res.statusCode=500;res.end(String(error));}
   }).listen(0,'127.0.0.1');
   await once(server,'listening');
   let snapshot;
   try {
-    snapshot=await copyCloudSnapshot(turso('http://127.0.0.1:'+server.address().port,'test-token'));
+    snapshot=await copyCloudSnapshot(turso('http://127.0.0.1:'+server.address().port,'test-token'),{chunkSize});
     assert.equal(snapshot.version,7);
     assert.equal(snapshot.db.prepare('SELECT geojson FROM gis_layer').get().geojson,geometry);
     assert.deepEqual(Buffer.from(snapshot.db.prepare('SELECT data FROM attachments').get().data),blob);
     assert.equal(snapshot.db.prepare('SELECT COUNT(*) n FROM records').get().n,251);
     assert.equal(snapshot.db.prepare('SELECT seq FROM sqlite_sequence WHERE name=?').get('gis_layer').seq,1);
     assert.ok(snapshot.db.prepare("SELECT 1 FROM sqlite_master WHERE name='attachment_id'").get());
-    assert.equal(active,false);assert.ok(largest<100000);assert.ok(reads>20);assert.ok(requests<40,'bounded requests for a large geometry');
+    assert.equal(active,false);assert.ok(largest<chunkSize*7);assert.ok(reads>20);assert.ok(requests<40,'bounded requests for a large geometry');
   }finally{snapshot?.db.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));source.close();}
 });

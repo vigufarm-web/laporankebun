@@ -66,7 +66,7 @@ const db = {
 };
 const q = (s) => `"${s.replace(/"/g, '')}"`;
 async function loadCloud() {
-  const snapshot=await copyCloudSnapshot(cloud);
+  const snapshot=await copyCloudSnapshot(cloud,{chunkSize:32768});
   const old=raw;raw=snapshot.db;ver=snapshot.version;completeSnapshot=true;photoContextId=null;old?.close();
 }
 // kirim perubahan yang tertunda ke database online (dipecah bila sangat besar, mis. pulihkan database)
