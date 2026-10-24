@@ -71,9 +71,9 @@ function ownerTable(reports, query = '') {
     {label:'Divisi',show:new Set(rows.map(x=>x.report.divisi)).size>1,cell:x=>'<span class="dr-div '+x.report.divisi.toLowerCase()+'">'+safe(x.report.divisi)+'</span>'},
     {label:'Blok / lokasi',show:rows.some(x=>x.blocks.size),cell:x=>'<b>'+safe([...x.blocks].join(', '))+'</b>'},
     {label:'Pekerjaan',show:true,cell:x=>'<b>'+safe(x.aktivitas)+'</b>'+(x.notes.size?'<details class="dr-source"><summary>Catatan</summary><small class="dr-cell-note">'+safe([...x.notes].join('\n'))+'</small></details>':'')},
+    {label:'HI — Hasil hari ini',numeric:true,show:rows.some(x=>has(x.realisasi)),cell:x=>quantity(x.realisasi,x.satuan)},
+    {label:'SDHI — Hasil minggu ini',numeric:true,show:cumulative,cell:x=>quantity(x.hasil_sdhi,x.satuan)},
     {label:'HK',numeric:true,show:rows.some(x=>has(x.hk_realisasi)),cell:x=>quantity(x.hk_realisasi)},
-    {label:'Hasil hari ini',numeric:true,show:rows.some(x=>has(x.realisasi)),cell:x=>quantity(x.realisasi,x.satuan)},
-    {label:'Hasil minggu ini',numeric:true,show:cumulative,cell:x=>quantity(x.hasil_sdhi,x.satuan)},
     {label:'Target mingguan',numeric:true,show:weekly,cell:x=>Number(x.target)>0?quantity(x.target,x.satuan):''},
     {label:'Capaian',numeric:true,show:weekly,cell:x=>Number(x.target)>0&&has(x.hasil_sdhi)?'<span class="dr-pct">'+Math.round(Number(x.hasil_sdhi)/Number(x.target)*100)+'%</span>':''},
     {label:'Status',show:rows.some(x=>!isDone(x.report)),cell:x=>'<span class="st '+(isDone(x.report)?'ok':'wait')+'">'+safe(x.report.status)+'</span>'}
