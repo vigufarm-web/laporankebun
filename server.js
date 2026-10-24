@@ -20,6 +20,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { put as blobPut, get as blobGet, del as blobDel } from '@vercel/blob';
 
+async function createApplication() {
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const VERCEL = !!process.env.VERCEL; // berjalan online di Vercel: tidak ada folder tetap, hanya /tmp
 const PORT = Number(process.env.PORT) || 3000;
@@ -1278,7 +1279,7 @@ async function apiRequest(req, res, url) {
 const INDEX_HTML = VERCEL ? fs.readFileSync(new URL('./public/index.html', import.meta.url)) : null;
 const KEBUN_HTML = VERCEL ? fs.readFileSync(new URL('./public/kebun.html', import.meta.url)) : null; // halaman Tim Kebun (/kebun)
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
   try {
     if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/daily' || url.pathname === '/daily/')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
@@ -1314,3 +1315,22 @@ if (!VERCEL) {
   cleanupDailyPhotos().catch((e) => console.warn('Pembersihan foto gagal:', e.message));
   setInterval(() => cleanupDailyPhotos().catch((e) => console.warn('Pembersihan foto gagal:', e.message)), 60 * 60e3).unref();
 }
+
+return handler;
+}
+let application;
+export default async function serve(req,res){
+  const pathname=new URL(req.url,'http://localhost').pathname;
+  if(process.env.VERCEL&&(pathname==='/kebun'||pathname==='/kebun/')){
+    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});
+    return res.end(fs.readFileSync(new URL('./public/kebun.html',import.meta.url)));
+  }
+  try{
+    application ||= createApplication().catch(error=>{application=null;throw error;});
+    return (await application)(req,res);
+  }catch(error){
+    console.error('Inisialisasi aplikasi gagal:',error.message);
+    if(!res.headersSent){res.writeHead(503,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify({error:'Koneksi data belum siap. Silakan muat ulang. '+error.message}));}
+  }
+}
+if(!process.env.VERCEL)application=createApplication();
