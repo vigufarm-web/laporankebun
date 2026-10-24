@@ -1,3 +1,4 @@
+import { createParcelLocations } from './lib/gis-ownership.js';
 import { importPadi } from './lib/padi-import.js';
 import { loadPhotoContext } from './lib/photo-context.js';
 import { transferDaily } from './lib/daily-transfer.js';
@@ -212,8 +213,10 @@ function weeklyPlanPayload(plan) {
   return { ...plan, items: db.prepare('SELECT * FROM daily_week_item WHERE plan_id=? ORDER BY urutan, id').all(plan.id) };
 }
 
+let parcelLocations;
 function ownedDailyLocations() {
-  return blocks.list().filter(b=>b.active && b.layer_id && b.ownership==='Sudah milik kebun').map(b=>({id:b.id,blok_id:b.id,nama:b.nama,divisi:b.divisi,jenis:'Blok GIS milik kebun',sumber:'GIS',rank:0}));
+  parcelLocations ||= createParcelLocations(db,blocks);
+  return parcelLocations();
 }
 
 function dailyPayload(report) {
