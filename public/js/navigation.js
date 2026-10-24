@@ -12,7 +12,6 @@ export const KOM = {
     { k: 'bibit', l: 'Stok Benih', tables: ['padi_benih'] },
     { k: 'tertanam', l: 'Tertanam', tables: ['padi_petak', 'padi_tanam', 'padi_kegiatan', 'padi_opt'] },
     { k: 'progres', l: 'Progres Tanam', tables: ['lahan_harian', 'lahan_blok', 'lahan_aktivitas'], week: true },
-    { k: 'rencana', l: 'Rencana Mingguan', tables: ['padi_rencana'] }, // rencana & realisasi kerja mingguan (Excel "Laporan mingguan Padi")
     { k: 'panen', l: 'Panen', tables: ['padi_panen', 'padi_giling'] },
     { k: 'jual', l: 'Penjualan', tables: ['padi_penjualan'], week: true },
   ] },
@@ -21,4 +20,4 @@ export const KOM = {
   ] },
 };
 
-export const RECORD_ROUTES={pisang:{bibit:'pisang_bibit',tertanam:'pisang_blok',panen:'pisang_box',jual:'pisang_penjualan'},padi:{bibit:'padi_benih',tertanam:'padi_tanam',panen:'padi_panen',jual:'padi_penjualan',rencana:'padi_rencana'}};
+export const RECORD_ROUTES={pisang:{bibit:'pisang_bibit',tertanam:'pisang_blok',panen:'pisang_box',jual:'pisang_penjualan'},padi:{bibit:'padi_benih',tertanam:'padi_tanam',panen:'padi_panen',jual:'padi_penjualan'}};

@@ -59,7 +59,7 @@ export function renderLaporan(main, A) {
         : PR.mode === 'bulan' ? `<button class="btn" data-g="-1">‹ Bulan lalu</button><input type="month" class="btn" id="lpBln" value="${PR.a.slice(0, 7)}"><button class="btn" data-g="1">Bulan depan ›</button><button class="btn" data-g="0">Bulan ini</button>`
         : `<label class="small">Dari <input type="date" class="btn" id="lpA" value="${PR.a}"></label><label class="small">s/d <input type="date" class="btn" id="lpB" value="${PR.b}"></label><button class="btn" id="lpTerap">Terapkan</button>`}
         <span style="margin-left:auto"></span><button class="btn primary" id="lpPdf">⬇ Unduh PDF</button><button class="btn" id="lpDoc">⬇ Unduh Word</button></div>
-      <p class="small muted" style="margin:8px 0 0">Unduh PDF: di jendela cetak pilih <b>Tujuan = Simpan sebagai PDF</b>, lalu di <b>Setelan lainnya</b> matikan <b>Header dan footer</b> (supaya tanggal/URL browser tidak ikut tercetak) dan nyalakan <b>Grafis latar belakang</b>.</p>
+      <p class="small muted" style="margin:8px 0 0">PDF diunduh langsung dengan format laporan yang rapi.</p>
     </div>
     <div id="lp" class="lp"></div>`;
   main.querySelectorAll('[data-m]').forEach((x) => (x.onclick = () => simpan(x.dataset.m === 'rentang' ? { mode: 'rentang', a: PR.a, b: PR.b > hariIni && PR.a <= hariIni ? hariIni : PR.b } : { mode: x.dataset.m, a: jalan0 ? hariIni : PR.a }))); // periode berjalan → tetap di hari ini
@@ -72,7 +72,7 @@ export function renderLaporan(main, A) {
   $('#lpBln', main)?.addEventListener('change', (e) => e.target.value && simpan({ mode: 'bulan', a: e.target.value + '-01' }));
   $('#lpTerap', main)?.addEventListener('click', () => { const a = $('#lpA', main).value, b = $('#lpB', main).value; if (!a || !b || a > b) return A.toast('Tanggal "dari" harus sebelum "s/d"', true); simpan({ mode: 'rentang', a, b }); });
   const namaFile = () => `${PR.judul} (${PR.rentang})`.replace(/[·/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
-  $('#lpPdf', main).onclick = () => { const t = document.title; document.title = namaFile(); window.print(); setTimeout(() => (document.title = t), 1500); };
+  $('#lpPdf', main).onclick = () => {const a=document.createElement('a');a.href='/api/reports/owner.pdf?'+new URLSearchParams({from:PR.a,to:PR.b});a.download=namaFile()+'.pdf';a.click();};
   // Word: dokumen HTML yang dibuka Microsoft Word (.doc) — bisa langsung diedit; gaya tabel ditulis di dalam file
   $('#lpDoc', main).onclick = () => {
     const css = 'body{font-family:Arial,sans-serif;font-size:10.5pt;color:#1f2a24}h2{color:#2f6b3f;font-size:13pt;border-bottom:1.5pt solid #cfe3d5;margin:14pt 0 6pt}h3{font-size:11pt;margin:8pt 0 4pt}'
@@ -85,7 +85,7 @@ export function renderLaporan(main, A) {
   };
 
   // ================= data
-  const P = A.ctx.rows, c = A.ctx, { a, b } = PR, s1 = b < hariIni ? b : hariIni; // hasil dinilai s/d hari ini
+  const P = t=>A.ctx.rows(t).filter(r=>t!=='lahan_harian'||(!r.diganti_aktual&&!String(r.source_key||'').startsWith('baseline:'))), c = {rows:P}, { a, b } = PR, s1 = b < hariIni ? b : hariIni; // hasil dinilai s/d hari ini
   const jalan = a <= hariIni && hariIni <= b, belumMulai = a > hariIni;
   const R = statusRencana(c), T = targetPeriode(c, R, a, b, hariIni), TN = targetPeriode(c, R, PR.next.a, PR.next.b, hariIni);
   const TB = R.length ? tanamPerBulan(c, R, hariIni) : [];
@@ -122,7 +122,7 @@ export function renderLaporan(main, A) {
 
   const hAkhir = akhir('lahan_harian'), bAkhir = akhir('pisang_box');
   // Land Clearing (buka lahan) dikerjakan Divisi Infrastruktur; kegiatan lain Divisi Pisang
-  const isLC = (x) => /land\s*clearing/i.test(typeof x === 'string' ? x : x.a);
+  const isLC = (x) => /^(?:land\s*clearing|lc)$/i.test(typeof x === 'string' ? x : x.a);
   const TP = T.filter((t) => !isLC(t)), TI = T.filter(isLC);
   const tabelTarget = (L, kerjaL) => L.length ? tabel(['Kegiatan', 'Blok target', 'Target periode (ha)', ...(jalan ? ['Target s/d kemarin'] : []), 'Hasil (ha)', 'Blok dikerjakan'], // tanpa kolom status (permintaan user)
       L.map((t) => [esc(t.a), esc(t.bl.map((x) => x.blok).join(', ') || '–'), f2(t.target) + (t.tunggak > 0.005 ? `<div class="small muted">termasuk tunggakan ${f2(t.tunggak)}</div>` : ''), ...(jalan ? [f2(tSd(t))] : []), belumMulai ? '–' : f2(t.selesai), esc(t.blokKerja.join(', ') || '–')]), jalan ? [2, 3, 4] : [2, 3])
@@ -135,7 +135,7 @@ export function renderLaporan(main, A) {
   const petak = P('padi_petak'), grpPetak = new Map();
   for (const p of petak) { const k = kondisi(p); if (!grpPetak.has(k)) grpPetak.set(k, []); grpPetak.get(k).push(p); }
   const tengah = (r) => { const x = util.d(r.mulai), y = util.d(r.selesai || r.mulai); return x && y ? iso(new Date((x.getTime() + y.getTime()) / 2)) : r.mulai; };
-  const RPadi = (p, q) => P('padi_rencana').filter((r) => inP(tengah(r), p, q)), RPi = RPadi(a, b), RPn = RPadi(PR.next.a, PR.next.b);
+  const RPadi = (p, q) => P('padi_rencana').filter((r) => inP(tengah(r), p, q)), RPi = [], RPn = [];
   const qty = (v, sat) => (v == null || v === '' ? '–' : `${fmtNum(v, sat === 'kg' ? 0 : 2)} ${esc(sat || 'ha')}`);
   const catPadi = (rs) => rs.filter((r) => /^catatan$/i.test(r.pekerjaan || '')), kerjaPadi = (rs) => rs.filter((r) => !/^catatan$/i.test(r.pekerjaan || ''));
   const PP = padiPanen(a, b), GL = P('padi_giling').filter((r) => inP(r.tanggal, a, b)), KG = P('padi_kegiatan').filter((r) => inP(r.tanggal, a, b));
@@ -201,13 +201,6 @@ export function renderLaporan(main, A) {
     ${blokPadi.length && aktPadi.length ? `<div class="card o-card"><h3>Progres persiapan petak (olah tanah s/d tanam)</h3>
       ${tabel(['Tahap', 'Selesai (ha)', 'Dari (ha)', '%'], progPadi.map((x) => [esc(x.akt), f2(x.done), f2(x.tot), f0(x.tot ? x.done / x.tot * 100 : 0) + '%']), [1, 2, 3])}
       <p class="small muted" style="margin:6px 0 0">Dari Progres Harian blok peruntukan Padi (${blokPadi.length} petak); petak yang sudah tanam sebelum pencatatan dihitung selesai.</p></div>` : ''}
-    <div class="card o-card"><h3>Rencana kerja padi — realisasi ${PR.mode === 'minggu' ? 'minggu ini' : 'periode ini'}</h3>
-      ${kerjaPadi(RPi).length ? (() => { // satu baris per aktivitas (petak digabung) supaya ringkas
-        const g = new Map(); for (const r of kerjaPadi(RPi)) { const k = `${r.pekerjaan}|${r.aktivitas}|${r.satuan || 'ha'}`; const x = g.get(k) || { pek: r.pekerjaan, akt: r.aktivitas, sat: r.satuan || 'ha', petak: [], ren: 0, real: 0, adaReal: false, ket: new Set() }; x.petak.push(r.petak); x.ren += n(r.rencana); if (r.realisasi != null && r.realisasi !== '') { x.real += n(r.realisasi); x.adaReal = true; } if (r.keterangan) x.ket.add(r.keterangan); g.set(k, x); }
-        return tabel(['Pekerjaan', 'Aktivitas', 'Petak', 'Rencana', 'Realisasi', '%', 'Keterangan'], [...g.values()].map((x) => [esc(x.pek || '–'), esc(x.akt || '–'), esc(x.petak.filter(Boolean).join(', ') || '–'), qty(x.ren, x.sat), x.adaReal ? qty(x.real, x.sat) : '–', x.adaReal && x.ren ? f0(x.real / x.ren * 100) + '%' : '–', esc([...x.ket].join('; '))]), [3, 4, 5]);
-      })()
-        : kosong('Belum ada rencana kerja padi untuk periode ini (menu Padi → Rencana Mingguan).')}
-      ${catPadi(RPi).length ? `<ul class="small" style="margin:6px 0 0 18px;padding:0">${catPadi(RPi).map((r) => `<li>${esc(r.keterangan || r.aktivitas)}</li>`).join('')}</ul>` : ''}</div>
     <div class="card o-card"><h3>Panen, giling &amp; kegiatan di periode ini</h3>
       ${PP.length ? tabel(['Tanggal', 'Petak', 'GKP (kg)', 'Karung'], PP.map((r) => [tgl(r.tanggal), esc(r.petak || '–'), f0(r.gkp_kg), f0(r.jumlah_karung)]), [2, 3]) : kosong('Tidak ada panen padi tercatat di periode ini.')}
       ${GL.length ? tabel(['Tanggal', 'Gudang', 'Beras (kg)'], GL.map((r) => [tgl(r.tanggal), esc(r.gudang || '–'), f0(r.beras_kg)]), [2]) : ''}
@@ -215,7 +208,7 @@ export function renderLaporan(main, A) {
 
     <h2 class="o-h">${nomor()}. Divisi Infrastruktur</h2>
     <div class="card o-card"><h3>Buka lahan (land clearing) — target vs hasil</h3>
-      ${tabelTarget(TI, [...kerja].filter(([k]) => isLC(k)))}
+      <div class="kpis">${tile('LC periode ini',f2(sum(HW.filter(r=>isLC(r.aktivitas)),r=>r.hasil_ha))+' ha',a+' s.d. '+s1)}${tile('LC kumulatif',f2(sum(A.ctx.rows('lahan_harian').filter(r=>!r.diganti_aktual&&isLC(r.aktivitas)&&r.tanggal<=s1),r=>r.hasil_ha))+' ha','Termasuk saldo pekerjaan selesai sebelum Oktober')}</div>${tabelTarget(TI, [...kerja].filter(([k]) => isLC(k)))}
       <p class="small muted" style="margin:6px 0 0">${catTarget}</p></div>
     <div class="card o-card"><h3>Jaringan jalan (dari peta GIS)</h3><div id="lpJalan">${kosong('Memuat peta…')}</div></div>
     <div class="card o-card"><h3>Proyek infrastruktur</h3>${proyek.length ? tabel(['Proyek', 'Jenis', 'Lokasi', 'Status', 'Progres', 'Target selesai'], proyek.map((r) => { const p = pf(r); return [esc(r.nama_proyek), esc(r.jenis || '–'), esc(r.lokasi || '–'), esc(r.status || '–'), p == null ? '–' : f0(p * 100) + '%', r.target_selesai ? tgl(r.target_selesai) : '–']; }), [4])
