@@ -721,7 +721,7 @@ async function api(req, res, url) {
 
   // Lightweight read models and versioned GIS changes.
   if (['overview','records','climate','blocks','gis'].includes(parts[1]) && dailyOnly(user)) return send(res,403,{error:'Akun lapangan hanya dapat mengakses Daily Report.'});
-  if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,ownedDailyLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
+  if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,ownedDailyLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10),url.searchParams.get('kom')==='Padi'?'Padi':'Pisang'));
   if(parts[1]==='kebun'&&m==='GET'){
     const tables=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
     const data=Object.fromEntries(tables.map(t=>[t,db.prepare('SELECT * FROM '+q(t)).all().map(({created_at,updated_at,block_name_snapshot,...r})=>r)]));
@@ -736,9 +736,10 @@ async function api(req, res, url) {
     const t=parts[2];if(!TABLES[t]||t.startsWith('daily_')||t==='gis_layer')return send(res,400,{error:'Gunakan endpoint khusus untuk data ini.'});
     return send(res,200,reads.records(t,url.searchParams));
   }
+  if(parts[1]==='nursery-summary'&&m==='GET'){if(!isAdmin(user))return send(res,403,{error:'Khusus admin'});const {nurserySummary}=await import('./lib/nursery-summary.js');return send(res,200,nurserySummary(db));}
   if(parts[1]==='blocks' && m==='GET') {
     if(parts[2] && parts[3]==='history') {if(!user)return send(res,401,{error:'Silakan login.'});return send(res,200,blocks.history(parts[2]));}
-    return send(res,200,blocks.list());
+    return send(res,200,verifiedOverviewBlocks());
   }
   if(parts[1]==='gis' && parts[2]==='layers' && m==='GET') {
     if(parts[3]) {const row=db.prepare('SELECT * FROM gis_layer WHERE id=?').get(Number(parts[3]));return send(res,row?200:404,row||{error:'Layer tidak ditemukan'});}
@@ -1320,6 +1321,8 @@ function readScope(req,url){
   if(req.method==='POST'&&p==='/api/daily')return [...authTables,'lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
+  if(p==='/api/nursery-summary')return [...authTables,'pisang_bibit'];
+  if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/overview')return authTables;
   if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/kebun')return [...authTables,...land];

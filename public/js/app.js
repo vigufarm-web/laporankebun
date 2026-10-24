@@ -215,7 +215,7 @@ async function route() {
   charts.forEach((c) => c.destroy()); charts = [];
   $('#sidebar').classList.remove('open');
   document.body.classList.toggle('public-summary-mode',!isAdmin(me)&&!isDailyOnly());
-  const publicView=(!isAdmin(me)&&!isDailyOnly())||!r||r==='hub'||r.startsWith('hub/');
+  const publicView=(!isAdmin(me)&&!isDailyOnly())||!r;
   if(publicView){
     $('#note').hidden=true;renderSidebar({},r);if(!isAdmin(me))$('#sidebar').innerHTML='<a class="nav-item active" href="#/">Ringkasan kebun</a>';
     return import('./public-summary.js').then(m=>m.renderPublicSummary($('#main'),App));
@@ -223,6 +223,9 @@ async function route() {
   $('#main').classList.remove('summary-page');
   if(r==='daily'){renderSidebar({},r);$('#note').hidden=true;return renderDaily($('#main'),App).catch(e=>$('#main').innerHTML='<div class="card">'+esc(e.message)+'</div>');}
   if(r==='pengaturan'){renderSidebar({},r);$('#note').hidden=true;return renderSettings($('#main'));}
+  if(r==='hub'||r.startsWith('hub/')){renderSidebar({},r);$('#note').hidden=true;return import('./hub.js').then(m=>m.renderHub($('#main'),App,r.split('/')[1]));}
+  if(/^k\/(pisang|padi)\/progres$/.test(r)){renderSidebar({},r);$('#note').hidden=true;return import('./progress-view.js').then(m=>m.renderProgressView($('#main'),App,r.split('/')[1]));}
+  if(r.startsWith('records/')||r==='blocks'){renderSidebar({},r);$('#note').hidden=true;const t=r.split('/')[1];return r==='blocks'?import('./block-ui.js').then(m=>m.renderBlocks($('#main'),App)):import('./hub.js').then(m=>m.renderRecords($('#main'),App,t));}
   let info;
   try { [info] = await Promise.all([syncAll(r), api.get('/api/settings').then((s) => { settings = s; }).catch(() => {})]); } catch (e) { $('#main').innerHTML = `<div class="card">Server tidak bisa dihubungi: ${esc(e.message)}</div>`; return; }
   renderSidebar(info, r);
@@ -719,7 +722,7 @@ function changePassword() {
 async function renderUsers(main) {
   const users = await api.get('/api/users');
   main.innerHTML = `<div class="page-head"><div><h1>👥 Pengguna & Akses</h1>
-      <p class="desc">Semua pengguna bisa <b>melihat</b> seluruh data & Laporan Owner. Peran menentukan data apa yang boleh <b>diubah</b>. Satu orang boleh punya beberapa peran.</p></div>
+      <p class="desc">Ringkasan tersedia untuk umum. Rincian input dan Laporan Owner hanya admin; mandor mengakses Daily divisinya. Satu orang boleh punya beberapa peran.</p></div>
       <div class="actions"><button class="btn primary" id="uAdd">＋ Tambah pengguna</button></div></div>
     <div class="cols-3">
       <div class="table-wrap"><table class="data"><thead><tr><th>Nama</th><th>Username</th><th>Peran</th><th>Status</th><th>Login terakhir</th></tr></thead><tbody>
