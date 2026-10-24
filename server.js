@@ -1,3 +1,4 @@
+import { importPadi } from './lib/padi-import.js';
 import { loadPhotoContext } from './lib/photo-context.js';
 import { transferDaily } from './lib/daily-transfer.js';
 import { execChanged } from './lib/tracked-sql.js';
@@ -720,6 +721,13 @@ async function api(req, res, url) {
     return send(res,200,result);
   }
 
+  if(parts[1]==='padi' && parts[2]==='import-harvest' && m==='POST') {
+    if(!user || !isAdmin(user))return send(res,403,{error:'Impor panen khusus admin.'});
+    const body=await readBody(req);
+    const result=importPadi({db,tx,blocks,insertRow,now,actor:user.nama||user.username},body);
+    if(body.mode==='apply'&&!result.already_applied)log('impor panen padi','padi_panen',null,{jumlah:result.added});
+    return send(res,200,result);
+  }
   if(parts[1]==='daily' && parts[2]==='transfer' && m==='POST') {
     if(!user || !isAdmin(user))return send(res,403,{error:'Pemindahan laporan khusus admin.'});
     const body=await readBody(req);
