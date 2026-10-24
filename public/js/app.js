@@ -3,6 +3,7 @@ import { renderGIS } from './gis.js';
 import { renderOwner } from './owner.js';
 import { renderLaporan } from './laporan.js';
 import { renderKomoditas, KOM } from './komoditas.js';
+import { renderDaily } from './daily.js';
 
 let me = null;                                  // pengguna yang login
 let server = {};                                // info server: online (database Turso) / vercel
@@ -126,6 +127,7 @@ async function gisLayers() {
 }
 
 const emptyBox = (msg) => `<div class="empty"><div class="big">📭</div>${msg}</div>`;
+const isDailyOnly = () => !!me && !isAdmin(me) && !(me.peran || []).includes('management') && (me.peran || []).some((r) => r.startsWith('daily_'));
 
 // ================================================================ sidebar & router
 const state = { tbl: {} };
@@ -133,8 +135,10 @@ let settings = {};
 
 function renderSidebar(info, route) {
   const nav = (href, ico, label, active, extra = '') => `<a class="nav-item ${active ? 'active' : ''}" href="#/${href}"><span class="ico">${ico}</span>${label}${extra}</a>`;
+  if (isDailyOnly()) { $('#sidebar').innerHTML = nav('daily', '📋', '<b>Input & Laporan Saya</b>', true); return; }
   let h = nav('', '🏢', '<b>Ringkasan</b>', route === '');
   if (isAdmin(me)) h += nav('laporan', '📄', 'Laporan Owner', route === 'laporan'); // khusus admin
+  if (me) h += nav('daily', '📋', '<b>Daily Report</b>', route === 'daily');
   for (const [k, K] of Object.entries(KOM)) {
     const on = route.startsWith('k/' + k);
     const tabs = K.tabs.filter((t) => !t.admin || isAdmin(me)); // tab khusus admin tidak tampil di menu pengunjung
@@ -192,7 +196,8 @@ function editNote(key, n, r) {
 }
 
 async function route() {
-  const r = location.hash.replace(/^#\/?/, '');
+  let r = location.hash ? location.hash.replace(/^#\/?/, '') : /^\/daily\/?$/.test(location.pathname) ? 'daily' : '';
+  if (isDailyOnly() && r !== 'daily') { location.hash = '#/daily'; return; }
   charts.forEach((c) => c.destroy()); charts = [];
   $('#sidebar').classList.remove('open');
   let info;
@@ -206,6 +211,7 @@ async function route() {
   if (!a) return renderOwner(main, App);
   if (a === 'owner') { location.hash = '#/'; return; }
   if (a === 'laporan') return isAdmin(me) ? renderLaporan(main, App) : (main.innerHTML = emptyBox('Laporan Owner khusus admin — silakan login sebagai admin.'));
+  if (a === 'daily') { if (!me) { main.innerHTML = emptyBox('Daily Report hanya untuk pengguna yang sudah login.'); openLogin(); return; } return renderDaily(main, App).catch((e) => { main.innerHTML = `<div class="card">Daily Report gagal dimuat: ${esc(e.message)}</div>`; }); }
   if (a === 'k' && KOM[b]) return renderKomoditas(main, App, b, c, d);
   if (a === 'pengguna' && isAdmin(me)) return renderUsers(main);
   if (a === 't' && TABLES[b]) return renderTable(main, b);
@@ -655,7 +661,8 @@ async function boot() {
   needSetup = !!r.setup;
   server = { online: !!r.online, vercel: !!r.vercel };
   renderUserChip();
-  route();
+  if (isDailyOnly() && location.hash !== '#/daily') location.hash = '#/daily';
+  else route();
 }
 function changePassword() {
   const md = openModal(`<div class="modal-head"><h2>Ganti password</h2><button class="x">×</button></div>

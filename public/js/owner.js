@@ -27,6 +27,20 @@ const luasF = (f) => { const p = f.properties || {}; return Number(p.Area_New) >
 const barH = (p) => `<div class="bar"><i style="width:${Math.min(100, p * 100)}%;background:${p >= 0.98 ? 'var(--ok)' : p >= 0.5 ? '#65a30d' : 'var(--warn)'}"></i></div>`;
 const tile = (lbl, v, note) => `<div class="kpi"><div class="lbl">${lbl}</div><div class="val">${v}</div>${note ? `<div class="note">${note}</div>` : ''}</div>`;
 
+function renderDailyToday(el, A, reports, today) {
+  if (!el) return;
+  const { esc, fmtNum } = A, spec = [['Pisang', '🍌'], ['Padi', '🌾'], ['Infra', '🚜']];
+  const pct = (r) => { const xs = (r?.items || []).filter((x) => n(x.target) > 0); return xs.length ? xs.reduce((a, x) => a + Math.min(1, n(x.realisasi) / n(x.target)), 0) / xs.length : null; };
+  const cards = spec.map(([divisi, icon]) => {
+    const r = reports.find((x) => x.divisi === divisi), p = pct(r), photos = r?.photos?.filter((x) => !x.deleted_at).length || 0;
+    const status = !r ? 'Belum masuk' : r.status, cls = !r ? 'no' : ['Selesai', 'Dikirim'].includes(r.status) ? 'ok' : 'wait';
+    return `<a class="od-card ${cls}" href="#/daily"><div class="od-top"><span class="od-icon">${icon}</span><div><b>${divisi}</b><small>Daily Report</small></div><span class="st ${cls}">${status}</span></div>
+      ${r ? `<div class="od-values"><span><b>${r.items.length}</b><small>kegiatan</small></span><span><b>${fmtNum(r.apel_hadir || 0)}</b><small>jumlah HK</small></span><span><b>${photos}</b><small>foto</small></span><span><b>${p == null ? '—' : Math.round(p * 100) + '%'}</b><small>hasil kerja</small></span></div>` : '<div class="od-missing">Belum ada laporan hari ini.</div>'}</a>`;
+  }).join('');
+  const missing = spec.length - reports.filter((r) => ['Selesai', 'Dikirim'].includes(r.status)).length;
+  el.innerHTML = `<div class="od-head"><div><h2>Daily Report hari ini</h2><p>${new Date(today + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}${missing ? ` · <b>${missing} laporan belum dikirim</b>` : ' · Semua laporan sudah dikirim'}</p></div><a class="btn" href="#/daily">Buka semua laporan →</a></div><div class="od-grid">${cards}</div>`;
+}
+
 // ---------- minggu yang dilihat (dipakai bersama semua halaman)
 let wkStart = null;
 export function week() {
@@ -245,6 +259,7 @@ export async function renderOwner(main, A) {
       <p class="desc"><b>${weekLabel()}</b>. Semua angka dihitung otomatis dari data yang diinput tim di lapangan.</p></div>
       <div id="wp"></div>
     </div>
+    <div id="odaily"></div>
     <div id="o1"></div>
     <h2 class="o-h">2. Progres kebun</h2><div id="o2a"></div><div id="o2b"></div>
     <h2 class="o-h">3. Panen</h2><div id="o4"></div>
@@ -253,8 +268,10 @@ export async function renderOwner(main, A) {
   const wp = weekPicker(() => renderOwner(main, A));
   wp.insertAdjacentHTML('beforeend', '<button class="btn primary" onclick="window.print()">🖨 Cetak / PDF</button>');
   $('#wp').replaceWith(wp);
-  const gis = await loadGis(A);
+  const today = util.iso(util.today());
+  const [gis, daily] = await Promise.all([loadGis(A), A.me() ? A.api.get(`/api/daily?from=${today}&to=${today}`).catch(() => []) : Promise.resolve([])]);
   if (!$('#o1')) return; // halaman sudah diganti sebelum peta selesai dimuat
+  if (A.me()) renderDailyToday($('#odaily'), A, daily, today);
 
   // 1. informasi kebun
   const st = serahTerima(gis), peta = petaKomoditas(gis);

@@ -7,7 +7,9 @@ import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
+import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { put as blobPut, get as blobGet, del as blobDel } from '@vercel/blob';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const VERCEL = !!process.env.VERCEL; // berjalan online di Vercel: tidak ada folder tetap, hanya /tmp
@@ -15,7 +17,9 @@ const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : VERCEL ? path.join(os.tmpdir(), 'kebun') : path.join(ROOT, 'data');
 const BACKUP_DIR = path.join(DATA_DIR, 'backup');
 const DB_FILE = path.join(DATA_DIR, 'kebun.db');
+const PHOTO_DIR = path.join(DATA_DIR, 'daily-photos');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
+fs.mkdirSync(PHOTO_DIR, { recursive: true });
 
 const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, ruteDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
@@ -131,6 +135,11 @@ function migrate() {
       }
     }
   }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS daily_report_hari_divisi ON daily_report(tanggal, divisi)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS daily_week_plan_minggu_divisi ON daily_week_plan(week_start, divisi)');
+  db.exec('CREATE INDEX IF NOT EXISTS daily_week_item_plan ON daily_week_item(plan_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS daily_item_report ON daily_item(report_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS daily_photo_expire ON daily_photo(expires_at, deleted_at)');
 }
 migrate();
 
@@ -184,6 +193,91 @@ function clean(table, row) {
 let currentUser = null; // pengguna yang sedang memproses request (dipakai untuk log)
 function log(aksi, tabel, id, data) {
   db.prepare('INSERT INTO _log (ts, aksi, tabel, row_id, data, oleh) VALUES (?,?,?,?,?,?)').run(now(), aksi, tabel, id ?? null, data ? JSON.stringify(data).slice(0, 4000) : null, currentUser ? currentUser.nama || currentUser.username : null);
+}
+
+// ---------- Daily Report: akses mandor per divisi + foto sementara 14 hari
+const DAILY_ROLE = { Pisang: 'daily_pisang', Padi: 'daily_padi', Infra: 'daily_infra' };
+const DAILY_DIVISI = Object.keys(DAILY_ROLE);
+const canDaily = (user, divisi) => !!user && (isAdmin(user) || (user.peran || []).includes(DAILY_ROLE[divisi]));
+const dailyOnly = (user) => !!user && !isAdmin(user) && !(user.peran || []).includes('management') && (user.peran || []).some((r) => r.startsWith('daily_'));
+const dailyDivisions = (user) => DAILY_DIVISI.filter((d) => canDaily(user, d));
+const textLimit = (v, n = 500) => String(v ?? '').trim().slice(0, n) || null;
+const numberOrNull = (v) => v === '' || v == null || !Number.isFinite(Number(v)) ? null : Number(v);
+
+function weekBounds(value) {
+  const d = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  const dow = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() - dow + 1);
+  const start = d.toISOString().slice(0, 10);
+  d.setUTCDate(d.getUTCDate() + 6);
+  return { start, end: d.toISOString().slice(0, 10) };
+}
+
+function weeklyPlanPayload(plan) {
+  if (!plan) return null;
+  return { ...plan, items: db.prepare('SELECT * FROM daily_week_item WHERE plan_id=? ORDER BY urutan, id').all(plan.id) };
+}
+
+function dailyPayload(report) {
+  const weekStart = weekBounds(report.tanggal).start;
+  const plan = db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(weekStart, report.divisi);
+  const plannedById = plan ? db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(plan.id) : [];
+  const cumulative = db.prepare(`SELECT SUM(COALESCE(di.realisasi,0)) total, MAX(NULLIF(di.target,0)) weekly_target
+    FROM daily_item di JOIN daily_report dr ON dr.id=di.report_id
+    WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ?
+      AND lower(trim(di.aktivitas))=lower(trim(?))
+      AND lower(trim(COALESCE(di.blok,'')))=lower(trim(COALESCE(?,'')))
+      AND lower(trim(COALESCE(di.satuan,'')))=lower(trim(COALESCE(?,'')))`);
+  const items = db.prepare('SELECT * FROM daily_item WHERE report_id=? ORDER BY urutan, id').all(report.id)
+    .map((item) => {
+      const sum = cumulative.get(report.divisi, weekStart, report.tanggal, item.aktivitas, item.blok, item.satuan);
+      const planned = plannedById.find((p) => Number(item.plan_item_id) === Number(p.id)) || plannedById.find((p) =>
+        util.key(p.aktivitas) === util.key(item.aktivitas) && util.key(p.blok) === util.key(item.blok) && util.key(p.satuan) === util.key(item.satuan));
+      const outside = item.di_luar_rencana != null ? Number(item.di_luar_rencana) : plan ? Number(!planned) : 0;
+      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target: planned?.target ?? item.target ?? sum.weekly_target ?? null, hasil_sdhi: sum.total ?? null };
+    });
+  const photos = db.prepare('SELECT * FROM daily_photo WHERE report_id=? ORDER BY id').all(report.id)
+    .map((p) => ({ ...p, url: p.deleted_at ? null : `/api/daily/photo/${p.id}` }));
+  return { ...report, items, photos };
+}
+
+async function storeDailyPhoto(buf, mime, report) {
+  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[mime];
+  const name = `${crypto.randomUUID()}.${ext}`;
+  if (VERCEL) {
+    if (!process.env.BLOB_READ_WRITE_TOKEN) throw new Error('Vercel Blob belum disambungkan (BLOB_READ_WRITE_TOKEN tidak ada)');
+    const pathname = `daily-report/${report.tanggal}/${report.divisi.toLowerCase()}/${name}`;
+    const blob = await blobPut(pathname, buf, { access: 'private', cacheControlMaxAge: 3600 });
+    return { storage: 'blob', lokasi: blob.url };
+  }
+  const rel = path.join(report.tanggal.slice(0, 7), name);
+  const file = path.join(PHOTO_DIR, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, buf);
+  return { storage: 'local', lokasi: rel.replace(/\\/g, '/') };
+}
+
+async function removeStoredPhoto(photo) {
+  if (!photo?.lokasi) return;
+  if (photo.storage === 'blob') await blobDel(photo.lokasi);
+  else {
+    const file = safeJoin(PHOTO_DIR, photo.lokasi);
+    if (file && fs.existsSync(file)) fs.unlinkSync(file);
+  }
+}
+
+async function cleanupDailyPhotos() {
+  const expired = db.prepare("SELECT * FROM daily_photo WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at<=? ORDER BY id LIMIT 200").all(now());
+  let deleted = 0;
+  for (const photo of expired) {
+    try {
+      await removeStoredPhoto(photo);
+      db.prepare('UPDATE daily_photo SET deleted_at=?, lokasi=NULL, updated_at=? WHERE id=?').run(now(), now(), photo.id);
+      deleted++;
+    } catch (e) { console.warn(`Foto Daily Report ${photo.id} belum dapat dihapus:`, e.message); }
+  }
+  return deleted;
 }
 
 // ---------- riwayat perubahan blok (lampiran GIS di Laporan Owner): satu catatan per blok — blok baru, dihapus, ganti nama,
@@ -295,8 +389,27 @@ function tx(fn) {
 
 // data awal untuk tabel yang masih kosong
 function seed() {
+  // Data kebun yang disiapkan pemilik menjadi isi awal untuk instalasi baru.
+  // Instalasi yang sudah berisi data tidak ditimpa.
+  const inputFile = path.join(ROOT, 'seed', 'input-data-2026-10-23.json');
+  if (fs.existsSync(inputFile)) {
+    const input = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+    for (const [name, rows] of Object.entries(input)) {
+      if (!TABLES[name] || db.prepare(`SELECT COUNT(*) c FROM ${q(name)}`).get().c) continue;
+      for (const r of rows) insertRow(name, r, false);
+    }
+  }
   for (const [name, rows] of Object.entries(SEED)) {
     if (db.prepare(`SELECT COUNT(*) c FROM ${q(name)}`).get().c === 0) for (const r of rows) insertRow(name, r, false);
+  }
+  const persilFile = path.join(ROOT, 'seed', 'persil-lahan-2026-10-21.geojson');
+  if (fs.existsSync(persilFile) && !db.prepare("SELECT 1 FROM gis_layer WHERE nama='Persil Lahan 21-10-2026'").get()) {
+    insertRow('gis_layer', { nama: 'Persil Lahan 21-10-2026', jenis: 'Persil Lahan', field_nama: 'No', warna: '#7c3aed', urutan: 5, tampil: 1, gaya: JSON.stringify({ label: 'No', mode: 'attr:Status', opacity: 0.55 }), geojson: fs.readFileSync(persilFile, 'utf8') }, false);
+  }
+  // Tambahkan kategori legenda ke layer Persil lama tanpa menyentuh GeoJSON atau data petanya.
+  for (const layer of db.prepare("SELECT id, gaya FROM gis_layer WHERE jenis='Persil Lahan' OR nama LIKE 'Persil Lahan%'").all()) {
+    let gaya = {}; try { gaya = JSON.parse(layer.gaya || '{}'); } catch {}
+    if (!gaya.mode) { gaya.mode = 'attr:Status'; db.prepare('UPDATE gis_layer SET gaya=?, updated_at=? WHERE id=?').run(JSON.stringify(gaya), now(), layer.id); }
   }
   // urutan aktivitas progres tanam dipisah per komoditas (data lama = Pisang); tambahkan urutan Padi bila belum ada
   if (db.prepare(`SELECT 1 FROM lahan_aktivitas WHERE untuk IS NULL OR untuk=''`).get()) db.exec(`UPDATE lahan_aktivitas SET untuk='Pisang' WHERE untuk IS NULL OR untuk=''`);
@@ -357,6 +470,28 @@ function seed() {
     }
     tandai('seed:lahan_rencana'); tandai('seed:lahan_rencana_v2'); tandai('seed:lahan_rencana_v3');
   }
+  // Arsip awal dari grup WhatsApp DAILY REPORT. Idempoten: tidak menimpa laporan yang sudah ada/diubah.
+  const waFile = path.join(ROOT, 'seed', 'daily-wa-2026-10.json');
+  if (fs.existsSync(waFile)) {
+    const reports = JSON.parse(fs.readFileSync(waFile, 'utf8'));
+    const addItem = db.prepare('INSERT INTO daily_item (created_at, updated_at, report_id, urutan, aktivitas, blok, target, realisasi, satuan, hk_rencana, hk_realisasi, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+    for (const r of reports) {
+      if (db.prepare('SELECT 1 FROM daily_report WHERE tanggal=? AND divisi=?').get(r.tanggal, r.divisi)) continue;
+      const t = now(), finished = r.status === 'Selesai';
+      const id = Number(db.prepare('INSERT INTO daily_report (created_at, updated_at, tanggal, divisi, mandor, siklus, status, apel_hadir, apel_catatan, dikirim_at, rencana_at, selesai_at, dibuat_oleh) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(t, t, r.tanggal, r.divisi, null, `${r.divisi} Oktober 2026`, r.status, r.apel_hadir ?? null, null, finished ? t : null, t, finished ? t : null, null).lastInsertRowid);
+      for (const [i, x] of (r.items || []).entries()) addItem.run(t, t, id, i + 1, x[0], x[1] || null, x[2], x[3], x[4], x[5], x[6], null);
+    }
+    db.prepare("UPDATE daily_report SET siklus=divisi || ' Oktober 2026', updated_at=? WHERE (siklus IS NULL OR siklus='') AND tanggal BETWEEN '2026-10-01' AND '2026-10-31'").run(now());
+    db.prepare("UPDATE daily_report SET mandor=NULL, dibuat_oleh=NULL, apel_catatan=NULL, updated_at=? WHERE dibuat_oleh='Impor WhatsApp' OR apel_catatan='Impor arsip WhatsApp DAILY REPORT'").run(now());
+    db.prepare("UPDATE daily_item SET keterangan=NULL, updated_at=? WHERE keterangan='Sumber: WhatsApp DAILY REPORT'").run(now());
+  }
+  // Target lama yang kosong memakai hasil kumulatif/harian sebagai target sementara.
+  // Target mingguan berikutnya diisi mandor langsung pada setiap kegiatan.
+  if (!sudah('isi:daily_target_realisasi_v1')) {
+    db.prepare('UPDATE daily_item SET target=COALESCE(hasil_sdhi, realisasi), updated_at=? WHERE target IS NULL AND COALESCE(hasil_sdhi, realisasi) IS NOT NULL').run(now());
+    tandai('isi:daily_target_realisasi_v1');
+  }
 }
 seed();
 // mode online: tabel/kolom baru & data awal ikut dibuat di database online.
@@ -397,7 +532,7 @@ function restoreFrom(file, keepUser) {
 }
 
 // ---------- HTTP
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.map': 'application/json' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.map': 'application/json' };
 // kirim respons; teks/JSON > 1 KB dikompres gzip (data jadi ±5–10× lebih kecil di jaringan)
 const canGzip = (res, type) => /json|text|javascript|css|svg/.test(type) && /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '');
 function send(res, code, body, type = 'application/json; charset=utf-8', extra = {}) {
@@ -484,6 +619,12 @@ async function api(req, res, url) {
     res.setHeader('Set-Cookie', 'kebun_sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
     return send(res, 200, { ok: true });
   }
+  // Vercel Cron memanggil ini sekali sehari. CRON_SECRET mencegah pemanggilan umum.
+  if (parts[1] === 'daily' && parts[2] === 'cleanup' && m === 'GET') {
+    const bearer = req.headers.authorization === `Bearer ${process.env.CRON_SECRET || ''}`;
+    if ((!process.env.CRON_SECRET || !bearer) && !(user && isAdmin(user))) return send(res, 403, { error: 'Tidak diizinkan' });
+    return send(res, 200, { ok: true, deleted: await cleanupDailyPhotos() });
+  }
   // membaca data & tampilan terbuka untuk semua; menambah/mengubah/menghapus wajib login
   // export tabel yang sedang dilihat ke Excel (data memang terbuka untuk dilihat)
   if (parts[1] === 'export' && m === 'POST') {
@@ -494,6 +635,139 @@ async function api(req, res, url) {
   }
   const publicRead = m === 'GET' && ['tables', 't', 'settings', 'excel'].includes(parts[1]);
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
+
+  // --- Daily Report (harus login; mandor hanya dapat mengubah divisinya)
+  if (parts[1] === 'daily') {
+    if (m === 'GET' && parts[2] === 'locations') {
+      if (!user) return send(res, 401, { error: 'Silakan login untuk memilih lokasi Daily Report' });
+      const found = new Map();
+      const add = (nama, jenis, divisi, sumber, rank = 5) => { nama = textLimit(nama, 150); if (!nama) return; const key = util.key(nama); const purelyNumber = /^\s*\d+(?:[.,-]\d+)*\s*$/.test(nama); const item = { nama, jenis: jenis || 'Lokasi', divisi: divisi || 'Umum', sumber, rank: purelyNumber ? 99 : rank }; if (!found.has(key) || found.get(key).rank > item.rank) found.set(key, item); };
+      for (const r of db.prepare('SELECT nama_blok nama FROM pisang_blok WHERE nama_blok IS NOT NULL').all()) add(r.nama, 'Petak Pisang', 'Pisang', 'Data kebun', 0);
+      for (const r of db.prepare('SELECT nama_petak nama FROM padi_petak WHERE nama_petak IS NOT NULL').all()) add(r.nama, 'Petak Padi', 'Padi', 'Data kebun', 0);
+      for (const r of db.prepare('SELECT blok nama, peruntukan FROM lahan_blok WHERE blok IS NOT NULL').all()) add(r.nama, r.peruntukan ? `Petak ${r.peruntukan}` : 'Blok', r.peruntukan || 'Infra', 'Data lahan', r.peruntukan ? 1 : 7);
+      for (const r of db.prepare('SELECT nama, kategori FROM gis_titik WHERE nama IS NOT NULL').all()) add(r.nama, r.kategori || 'Titik lokasi', 'Umum', 'GIS', 6);
+      for (const layer of db.prepare("SELECT nama, jenis, field_nama, geojson FROM gis_layer WHERE geojson IS NOT NULL AND geojson!=''").all()) {
+        let features = []; try { features = JSON.parse(layer.geojson).features || []; } catch { continue; }
+        for (const f of features) { const p = f.properties || {}, nama = p[layer.field_nama] || p.Nama_Blok || p.nama_blok || p.Blok || p.NAMA_BLOK || p.Nama || p.Name || p.name || p.Lokasi || p.lokasi; const div = p.Lahan || p.Divisi || p.divisi || p.Peruntukan || (/padi/i.test(`${layer.nama} ${layer.jenis}`) ? 'Padi' : /pisang/i.test(`${layer.nama} ${layer.jenis}`) ? 'Pisang' : 'Umum'); add(nama, layer.jenis || 'Lokasi GIS', div, 'GIS', /pisang|padi|komoditas|petak|blok/i.test(`${div} ${layer.nama} ${layer.jenis}`) ? 2 : 8); }
+      }
+      return send(res, 200, [...found.values()].sort((a,b) => a.rank - b.rank || a.divisi.localeCompare(b.divisi) || a.nama.localeCompare(b.nama, 'id', { numeric:true })));
+    }
+    if (m === 'GET' && parts[2] === 'plans') {
+      const selected = url.searchParams.get('week') || now().slice(0, 10), bounds = weekBounds(selected);
+      if (!bounds) return send(res, 400, { error: 'Minggu tidak valid' });
+      const divisi = url.searchParams.get('divisi'), where = ['week_start=?'], args = [bounds.start];
+      if (divisi && DAILY_DIVISI.includes(divisi)) { where.push('divisi=?'); args.push(divisi); }
+      if (dailyOnly(user)) { const allowed = dailyDivisions(user); if (!allowed.length) return send(res, 200, []); where.push(`divisi IN (${allowed.map(() => '?').join(',')})`); args.push(...allowed); }
+      return send(res, 200, db.prepare(`SELECT * FROM daily_week_plan WHERE ${where.join(' AND ')} ORDER BY divisi`).all(...args).map(weeklyPlanPayload));
+    }
+    if (m === 'POST' && parts[2] === 'plans') {
+      const b = await readBody(req), divisi = String(b.divisi || ''), bounds = weekBounds(b.week_start);
+      if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
+      if (!bounds) return send(res, 400, { error: 'Minggu pelaksanaan wajib diisi' });
+      if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah rencana ${divisi}` });
+      const old = b.id ? db.prepare('SELECT * FROM daily_week_plan WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(bounds.start, divisi);
+      if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah rencana ini' });
+      const status = b.status === 'Dikirim' ? 'Dikirim' : 'Draf', penginput = user.nama || user.username;
+      let planId;
+      tx(() => {
+        if (old) { planId = old.id; db.prepare('UPDATE daily_week_plan SET updated_at=?, week_start=?, week_end=?, divisi=?, status=?, catatan=?, dikirim_at=?, dibuat_oleh=? WHERE id=?').run(now(), bounds.start, bounds.end, divisi, status, textLimit(b.catatan, 2000), status === 'Dikirim' ? old.dikirim_at || now() : old.dikirim_at || null, penginput, planId); db.prepare('DELETE FROM daily_week_item WHERE plan_id=?').run(planId); }
+        else { const r = db.prepare('INSERT INTO daily_week_plan (created_at, updated_at, week_start, week_end, divisi, status, catatan, dikirim_at, dibuat_oleh) VALUES (?,?,?,?,?,?,?,?,?)').run(now(), now(), bounds.start, bounds.end, divisi, status, textLimit(b.catatan, 2000), status === 'Dikirim' ? now() : null, penginput); planId = Number(r.lastInsertRowid); }
+        const insert = db.prepare('INSERT INTO daily_week_item (created_at, updated_at, plan_id, urutan, blok, aktivitas, target, satuan, hk_rencana, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?)');
+        for (const [i, x] of (Array.isArray(b.items) ? b.items : []).slice(0, 200).entries()) { const blok = textLimit(x.blok, 200), aktivitas = textLimit(x.aktivitas, 300); if (!blok || !aktivitas) continue; insert.run(now(), now(), planId, i + 1, blok, aktivitas, numberOrNull(x.target), textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), textLimit(x.keterangan, 1000)); }
+      });
+      log(old ? 'ubah' : 'tambah', 'daily_week_plan', planId, { week_start: bounds.start, divisi, status, jumlah_kegiatan: (b.items || []).length });
+      return send(res, 200, weeklyPlanPayload(db.prepare('SELECT * FROM daily_week_plan WHERE id=?').get(planId)));
+    }
+    if (m === 'GET' && parts[2] === 'photo' && parts[3]) {
+      const photo = db.prepare('SELECT * FROM daily_photo WHERE id=?').get(Number(parts[3]));
+      if (!photo || photo.deleted_at || !photo.lokasi) return send(res, 404, { error: 'Foto sudah dihapus atau tidak ditemukan' });
+      const photoReport = db.prepare('SELECT * FROM daily_report WHERE id=?').get(photo.report_id);
+      if (dailyOnly(user) && (!photoReport || !canDaily(user, photoReport.divisi))) return send(res, 403, { error: 'Foto bukan milik divisi Anda' });
+      if (photo.storage === 'blob') {
+        const result = await blobGet(photo.lokasi, { access: 'private' });
+        if (!result || result.statusCode !== 200) return send(res, 404, { error: 'Foto tidak ditemukan' });
+        res.writeHead(200, { 'Content-Type': result.blob.contentType || photo.mime || 'application/octet-stream', 'Content-Length': result.blob.size, 'Cache-Control': 'private, max-age=300', ETag: result.blob.etag });
+        return Readable.fromWeb(result.stream).pipe(res);
+      }
+      const file = safeJoin(PHOTO_DIR, photo.lokasi);
+      if (!file || !fs.existsSync(file)) return send(res, 404, { error: 'Foto tidak ditemukan' });
+      return serveFile(res, file);
+    }
+    if (m === 'GET' && !parts[2]) {
+      const from = url.searchParams.get('from'), to = url.searchParams.get('to'), divisi = url.searchParams.get('divisi');
+      const where = [], args = [];
+      if (from) { where.push('tanggal>=?'); args.push(from); }
+      if (to) { where.push('tanggal<=?'); args.push(to); }
+      if (divisi && DAILY_DIVISI.includes(divisi)) { where.push('divisi=?'); args.push(divisi); }
+      if (dailyOnly(user)) {
+        const allowed = dailyDivisions(user);
+        if (!allowed.length) return send(res, 200, []);
+        where.push(`divisi IN (${allowed.map(() => '?').join(',')})`); args.push(...allowed);
+      }
+      const sql = `SELECT * FROM daily_report${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY tanggal DESC, divisi, id DESC LIMIT 400`;
+      return send(res, 200, db.prepare(sql).all(...args).map(dailyPayload));
+    }
+    if (m === 'POST' && parts[2] === 'photo') {
+      const report = db.prepare('SELECT * FROM daily_report WHERE id=?').get(Number(url.searchParams.get('report')));
+      if (!report) return send(res, 404, { error: 'Laporan tidak ditemukan' });
+      if (!canDaily(user, report.divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${report.divisi}` });
+      const mime = String(req.headers['content-type'] || '').split(';')[0].toLowerCase();
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) return send(res, 400, { error: 'Foto harus JPG, PNG, atau WebP' });
+      if (Number(req.headers['content-length'] || 0) > 2.5e6) return send(res, 413, { error: 'Foto maksimal 2,5 MB setelah dikompres' });
+      const buf = await readRaw(req);
+      if (!buf.length || buf.length > 2.5e6) return send(res, 413, { error: 'Foto kosong atau lebih dari 2,5 MB' });
+      const saved = await storeDailyPhoto(buf, mime, report);
+      const expires = new Date(Date.now() + 14 * 864e5).toISOString();
+      const result = db.prepare('INSERT INTO daily_photo (created_at, updated_at, report_id, jenis, caption, storage, lokasi, mime, ukuran, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(now(), now(), report.id, ['Apel', 'Kegiatan', 'Kendala'].includes(url.searchParams.get('jenis')) ? url.searchParams.get('jenis') : 'Kegiatan', textLimit(url.searchParams.get('caption'), 200), saved.storage, saved.lokasi, mime, buf.length, expires);
+      const id = Number(result.lastInsertRowid);
+      log('unggah foto', 'daily_photo', id, { report_id: report.id, divisi: report.divisi, expires_at: expires });
+      return send(res, 200, { id, url: `/api/daily/photo/${id}`, expires_at: expires });
+    }
+    if (m === 'DELETE' && parts[2] === 'photo' && parts[3]) {
+      const photo = db.prepare('SELECT * FROM daily_photo WHERE id=?').get(Number(parts[3]));
+      const report = photo && db.prepare('SELECT * FROM daily_report WHERE id=?').get(photo.report_id);
+      if (!photo || !report) return send(res, 404, { error: 'Foto tidak ditemukan' });
+      if (!canDaily(user, report.divisi)) return send(res, 403, { error: 'Tidak diizinkan' });
+      await removeStoredPhoto(photo);
+      db.prepare('UPDATE daily_photo SET deleted_at=?, lokasi=NULL, updated_at=? WHERE id=?').run(now(), now(), photo.id);
+      log('hapus foto', 'daily_photo', photo.id, { report_id: report.id, divisi: report.divisi });
+      return send(res, 200, { ok: true });
+    }
+    if (m === 'POST' && !parts[2]) {
+      const b = await readBody(req), divisi = String(b.divisi || '');
+      if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.tanggal || ''))) return send(res, 400, { error: 'Tanggal wajib diisi' });
+      if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${divisi}` });
+      let old = b.id ? db.prepare('SELECT * FROM daily_report WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_report WHERE tanggal=? AND divisi=?').get(b.tanggal, divisi);
+      if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah laporan ini' });
+      const status = ['Rencana Dikirim', 'Selesai'].includes(b.status) ? b.status : b.status === 'Dikirim' ? 'Selesai' : 'Draf';
+      const rencanaAt = status !== 'Draf' ? old?.rencana_at || now() : old?.rencana_at || null;
+      const selesaiAt = status === 'Selesai' ? now() : old?.selesai_at || null;
+      const penginput = user.nama || user.username;
+      const values = [b.tanggal, divisi, null, textLimit(b.siklus, 100), status, null, null, numberOrNull(b.apel_hadir), textLimit(b.apel_catatan, 2000), textLimit(b.kendala, 2000), textLimit(b.tindak_lanjut, 2000), selesaiAt, rencanaAt, selesaiAt, penginput];
+      let reportId;
+      tx(() => {
+        if (old) {
+          reportId = old.id;
+          db.prepare('UPDATE daily_report SET updated_at=?, tanggal=?, divisi=?, mandor=?, siklus=?, status=?, apel_mulai=?, apel_selesai=?, apel_hadir=?, apel_catatan=?, kendala=?, tindak_lanjut=?, dikirim_at=?, rencana_at=?, selesai_at=?, dibuat_oleh=? WHERE id=?').run(now(), ...values, reportId);
+          db.prepare('DELETE FROM daily_item WHERE report_id=?').run(reportId);
+        } else {
+          const r = db.prepare('INSERT INTO daily_report (created_at, updated_at, tanggal, divisi, mandor, siklus, status, apel_mulai, apel_selesai, apel_hadir, apel_catatan, kendala, tindak_lanjut, dikirim_at, rencana_at, selesai_at, dibuat_oleh) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+            .run(now(), now(), ...values);
+          reportId = Number(r.lastInsertRowid);
+        }
+        const insert = db.prepare('INSERT INTO daily_item (created_at, updated_at, report_id, plan_item_id, di_luar_rencana, urutan, aktivitas, blok, target, realisasi, hasil_sdhi, satuan, hk_rencana, hk_realisasi, alat, meter_awal, meter_akhir, ritase, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+        for (const [i, x] of (Array.isArray(b.items) ? b.items : []).slice(0, 100).entries()) {
+          const aktivitas = textLimit(x.aktivitas, 300); if (!aktivitas) continue;
+          insert.run(now(), now(), reportId, numberOrNull(x.plan_item_id), x.di_luar_rencana ? 1 : 0, i + 1, aktivitas, textLimit(x.blok, 200), numberOrNull(x.target), numberOrNull(x.realisasi), null, textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), numberOrNull(x.hk_realisasi), textLimit(x.alat, 200), numberOrNull(x.meter_awal), numberOrNull(x.meter_akhir), numberOrNull(x.ritase), textLimit(x.keterangan, 1000));
+        }
+      });
+      log(old ? 'ubah' : 'tambah', 'daily_report', reportId, { tanggal: b.tanggal, divisi, status, jumlah_kegiatan: (b.items || []).length });
+      return send(res, 200, dailyPayload(db.prepare('SELECT * FROM daily_report WHERE id=?').get(reportId)));
+    }
+    return send(res, 404, { error: 'Alamat Daily Report tidak dikenal' });
+  }
   if (parts[1] === 'password' && m === 'POST') {
     const b = await readBody(req);
     const u = db.prepare('SELECT * FROM _users WHERE id=?').get(user.id);
@@ -557,13 +831,19 @@ async function api(req, res, url) {
     }
   }
   if (parts[1] === 'tables' && m === 'GET') {
+    if (dailyOnly(user)) return send(res, 200, {});
     const counts = {};
-    for (const t of Object.keys(TABLES)) counts[t] = db.prepare(`SELECT COUNT(*) c, MAX(updated_at) u FROM ${q(t)}`).get();
+    for (const t of Object.keys(TABLES)) {
+      if ((!user || dailyOnly(user)) && t.startsWith('daily_')) continue;
+      counts[t] = db.prepare(`SELECT COUNT(*) c, MAX(updated_at) u FROM ${q(t)}`).get();
+    }
     return send(res, 200, counts);
   }
   if (parts[1] === 't') {
     const table = parts[2];
     if (!TABLES[table]) return send(res, 404, { error: 'Tabel tidak dikenal' });
+    if (dailyOnly(user)) return send(res, 403, { error: 'Akun mandor hanya dapat membuka Daily Report miliknya' });
+    if (table.startsWith('daily_') && (!user || dailyOnly(user))) return send(res, 403, { error: 'Gunakan halaman Daily Report' });
     const id = parts[3] ? Number(parts[3]) : null;
     // ?jenis=Blok Tanam → satu layer peta saja (halaman Tim Kebun di HP tidak perlu mengunduh semua layer)
     if (m === 'GET' && table === 'gis_layer' && url.searchParams.get('jenis')) { const j = url.searchParams.get('jenis'); return send(res, 200, db.prepare('SELECT * FROM gis_layer WHERE jenis=? OR nama=? ORDER BY id').all(j, j)); }
@@ -878,7 +1158,8 @@ const KEBUN_HTML = VERCEL ? fs.readFileSync(new URL('./public/kebun.html', impor
 export default async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
   try {
-    if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
+    if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/daily' || url.pathname === '/daily/')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
+    if (!VERCEL && (url.pathname === '/daily' || url.pathname === '/daily/')) return serveFile(res, path.join(ROOT, 'public', 'index.html'));
     if (url.pathname === '/kebun' || url.pathname === '/kebun/') return VERCEL ? send(res, 200, KEBUN_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' }) : serveFile(res, path.join(ROOT, 'public', 'kebun.html'));
     if (BELUM_ONLINE && url.pathname.startsWith('/api/')) return send(res, 503, { error: 'Database online belum disambungkan. Di Vercel: buka proyek → Storage → Create Database → Turso → Connect ke proyek ini, lalu Deployments → Redeploy.' });
     if (url.pathname.startsWith('/api/')) {
@@ -904,3 +1185,9 @@ if (!VERCEL) http.createServer(handler).listen(PORT, '0.0.0.0', () => {
     if (i.family === 'IPv4' && !i.internal) console.log(`   Jaringan/HP  : http://${i.address}:${PORT}`);
   console.log(`   Database     : ${cloud ? 'ONLINE (Turso) — data sama dengan versi internet' : DB_FILE}\n   Excel input  : ${EXCEL_FILE}\n   Tutup jendela ini untuk menghentikan server.\n`);
 });
+
+// Saat lokal tidak ada Vercel Cron; bersihkan saat start dan setiap 24 jam.
+if (!VERCEL) {
+  cleanupDailyPhotos().catch((e) => console.warn('Pembersihan foto gagal:', e.message));
+  setInterval(() => cleanupDailyPhotos().catch((e) => console.warn('Pembersihan foto gagal:', e.message)), 24 * 60 * 60e3).unref();
+}

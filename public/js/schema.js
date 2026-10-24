@@ -517,6 +517,91 @@ export const TABLES = {
       { k: 'geojson', l: 'GeoJSON', t: 'text' },
     ],
   },
+
+  // ------------------------------------------------------------ DAILY REPORT
+  // Ditampilkan lewat halaman khusus. Tetap masuk schema agar migrasi lama -> baru
+  // hanya menambah tabel/kolom dan tidak menyentuh data kebun yang sudah ada.
+  daily_report: {
+    title: 'Daily Report', div: 'daily', date: 'tanggal', sort: '-tanggal', hidden: true,
+    f: [
+      { k: 'tanggal', l: 'Tanggal', t: 'date', req: true },
+      { k: 'divisi', l: 'Divisi', t: 'select', opt: ['Pisang', 'Padi', 'Infra'], req: true },
+      { k: 'mandor', l: 'Mandor (data lama)', t: 'text' },
+      { k: 'siklus', l: 'Siklus / Periode', t: 'text' },
+      { k: 'status', l: 'Status', t: 'select', opt: ['Draf', 'Rencana Dikirim', 'Selesai'], req: true },
+      { k: 'apel_mulai', l: 'Apel Mulai', t: 'text' },
+      { k: 'apel_selesai', l: 'Apel Selesai', t: 'text' },
+      { k: 'apel_hadir', l: 'Hadir Apel (HK)', t: 'int' },
+      { k: 'apel_catatan', l: 'Catatan Apel', t: 'area' },
+      { k: 'kendala', l: 'Kendala', t: 'area' },
+      { k: 'tindak_lanjut', l: 'Tindak Lanjut', t: 'area' },
+      { k: 'dikirim_at', l: 'Dikirim', t: 'text' },
+      { k: 'rencana_at', l: 'Rencana Dikirim', t: 'text' },
+      { k: 'selesai_at', l: 'Laporan Selesai', t: 'text' },
+      { k: 'dibuat_oleh', l: 'Dibuat Oleh', t: 'text' },
+    ],
+  },
+  daily_week_plan: {
+    title: 'Rencana Mingguan Daily Report', div: 'daily', sort: '-week_start', hidden: true,
+    f: [
+      { k: 'week_start', l: 'Awal Minggu', t: 'date', req: true },
+      { k: 'week_end', l: 'Akhir Minggu', t: 'date', req: true },
+      { k: 'divisi', l: 'Divisi', t: 'select', opt: ['Pisang', 'Padi', 'Infra'], req: true },
+      { k: 'status', l: 'Status', t: 'select', opt: ['Draf', 'Dikirim'], req: true },
+      { k: 'catatan', l: 'Catatan', t: 'area' },
+      { k: 'dikirim_at', l: 'Dikirim', t: 'text' },
+      { k: 'dibuat_oleh', l: 'Dibuat Oleh', t: 'text' },
+    ],
+  },
+  daily_week_item: {
+    title: 'Kegiatan Rencana Mingguan', div: 'daily', sort: 'urutan', hidden: true,
+    f: [
+      { k: 'plan_id', l: 'ID Rencana', t: 'int', req: true },
+      { k: 'urutan', l: 'Urutan', t: 'int' },
+      { k: 'blok', l: 'Blok / Lokasi', t: 'text', req: true },
+      { k: 'aktivitas', l: 'Aktivitas', t: 'text', req: true },
+      { k: 'target', l: 'Target Mingguan', t: 'num' },
+      { k: 'satuan', l: 'Satuan', t: 'text' },
+      { k: 'hk_rencana', l: 'HK Rencana', t: 'num' },
+      { k: 'keterangan', l: 'Keterangan', t: 'area' },
+    ],
+  },
+  daily_item: {
+    title: 'Rencana & Realisasi Daily Report', div: 'daily', sort: 'urutan', hidden: true,
+    f: [
+      { k: 'report_id', l: 'ID Laporan', t: 'int', req: true },
+      { k: 'plan_item_id', l: 'ID Kegiatan Rencana', t: 'int' },
+      { k: 'di_luar_rencana', l: 'Di Luar Rencana', t: 'int' },
+      { k: 'urutan', l: 'Urutan', t: 'int' },
+      { k: 'aktivitas', l: 'Aktivitas', t: 'text', req: true },
+      { k: 'blok', l: 'Blok / Lokasi', t: 'text' },
+      { k: 'target', l: 'Rencana', t: 'num' },
+      { k: 'realisasi', l: 'Hasil Kerja', t: 'num' },
+      { k: 'hasil_sdhi', l: 'SDHI', t: 'num' },
+      { k: 'satuan', l: 'Satuan', t: 'text' },
+      { k: 'hk_rencana', l: 'HK Rencana', t: 'num' },
+      { k: 'hk_realisasi', l: 'HK Realisasi', t: 'num' },
+      { k: 'alat', l: 'Alat / Kendaraan', t: 'text' },
+      { k: 'meter_awal', l: 'HM/KM Awal', t: 'num' },
+      { k: 'meter_akhir', l: 'HM/KM Akhir', t: 'num' },
+      { k: 'ritase', l: 'Ritase', t: 'num' },
+      { k: 'keterangan', l: 'Keterangan', t: 'area' },
+    ],
+  },
+  daily_photo: {
+    title: 'Foto Daily Report', div: 'daily', sort: '-created_at', hidden: true,
+    f: [
+      { k: 'report_id', l: 'ID Laporan', t: 'int', req: true },
+      { k: 'jenis', l: 'Jenis Foto', t: 'select', opt: ['Apel', 'Kegiatan', 'Kendala'] },
+      { k: 'caption', l: 'Keterangan', t: 'text' },
+      { k: 'storage', l: 'Penyimpanan', t: 'text' },
+      { k: 'lokasi', l: 'Lokasi File', t: 'text' },
+      { k: 'mime', l: 'Tipe File', t: 'text' },
+      { k: 'ukuran', l: 'Ukuran (byte)', t: 'int' },
+      { k: 'expires_at', l: 'Kedaluwarsa', t: 'text' },
+      { k: 'deleted_at', l: 'Dihapus', t: 'text' },
+    ],
+  },
 };
 
 // ------------------------------------------------------------ EXCEL INPUT
@@ -557,6 +642,9 @@ export const ROLES = {
   lahan: { label: 'Progres Tanam / Pembukaan Lahan', desc: 'Progres LC/bajak/tanam pisang & padi', edit: ['lahan_blok', 'lahan_harian', 'lahan_target', 'lahan_aktivitas', 'lahan_rencana'] },
   gis: { label: 'GIS', desc: 'Layer peta, catatan peta, titik lokasi', edit: ['gis_layer', 'gis_titik'] },
   iklim: { label: 'Iklim', desc: 'Data stasiun cuaca', edit: ['iklim'] },
+  daily_pisang: { label: 'Daily Report — Pisang', desc: 'Input Daily Report divisi Pisang', edit: [] },
+  daily_padi: { label: 'Daily Report — Padi', desc: 'Input Daily Report divisi Padi', edit: [] },
+  daily_infra: { label: 'Daily Report — Infra', desc: 'Input Daily Report divisi Infra', edit: [] },
 };
 export function canEdit(user, table) {
   if (!user) return false;
