@@ -85,6 +85,7 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   let response=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(response.status,403);
   response=await fetch(base+'/api/reports/daily.pdf?from=2026-10-01&to=2026-10-24&divisi=Padi',{headers:{cookie}});assert.equal(response.status,403);
   response=await fetch(base+'/api/reports/daily.pdf?from=2026-10-01&to=2026-10-24&divisi=Pisang',{headers:{cookie}});assert.equal(response.status,200);
+  r=await request('/api/overview');assert.equal(r.status,200,'foremen can read the same aggregate summary as public visitors');
   r=await request('/api/daily/transfer','POST',{reports:[transferReport]});assert.equal(r.status,403);
   r=await request('/api/reports/share?from=2026-10-24&to=2026-10-24&divisi=Pisang');assert.equal(r.status,200);assert.ok(r.body.text.includes('Pemupukan test'));assert.ok(!r.body.text.includes('/ Padi /'));
   response=await fetch(base+'/api/reports/daily.pdf');assert.equal(response.status,401);
