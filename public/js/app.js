@@ -1,3 +1,4 @@
+import {cropLabel} from './crop-labels.js';
 import { DIVISIONS, TABLES, ROLES, util, displayOf, canEdit, isAdmin, EXCEL_SHEETS } from './schema.js';
 import { KOM, RECORD_ROUTES } from './navigation.js';
 const renderGIS=(...args)=>import('./gis.js').then(m=>m.renderGIS(...args));
@@ -157,7 +158,7 @@ function renderSidebar(info, route) {
   for (const [k, K] of Object.entries(KOM)) {
     const on = route.startsWith('k/' + k);
     const tabs = K.tabs.filter((t) => !t.admin || isAdmin(me)); // tab khusus admin tidak tampil di menu pengunjung
-    h += `<div class="nav-sec">${nav('hub/' + k, K.icon, K.nama, route==='hub/'+k)}`;
+    h += `<div class="nav-sec">${nav('hub/' + k, K.icon, cropLabel(K.nama), route==='hub/'+k)}`;
     if (tabs.length > 1) h += `<div class="nav-sub">${tabs.map((t) => nav(RECORD_ROUTES[k]?.[t.k] ? 'records/'+RECORD_ROUTES[k][t.k] : `k/${k}/${t.k}`, '', t.l, route === `k/${k}/${t.k}` || route.startsWith(`k/${k}/${t.k}/`))).join('')}</div>`;
     h += '</div>';
   }

@@ -327,3 +327,8 @@ table.mini td.num, table.mini th.num { text-align: right; font-variant-numeric: 
 #sumFigures{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:900px){#sumFigures{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .summary-page .table-wrap{max-height:none}
+/* Crop names remain readable on both desktop and phone. */
+.crop-name{display:inline-block;padding:2px 7px;border-radius:6px;font-weight:700;line-height:1.35}
+.crop-pisang{background:#fff2a8;color:#705400;border:1px solid #e7cc53}
+.crop-padi{background:#e1f1db;color:#245c2d;border:1px solid #9dca95}
+.plan-late{display:block;color:#965326;font-weight:600;margin-top:3px}
