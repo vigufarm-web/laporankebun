@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pindahkan Daily Report</title><link rel="stylesheet" href="/css/style.css">
+<main style="max-width:850px;margin:30px auto;padding:20px">
+<a href="/#/daily">← Daily Report</a><h1>Pindahkan laporan harian</h1>
+<p>Khusus admin. Periksa paket terlebih dahulu. Laporan di luar paket tetap tersimpan; versi sebelumnya disimpan sebelum pembaruan.</p>
+<section class="card"><label>Paket laporan JSON<input id="bundle" type="file" accept=".json"></label><div id="preview"></div><button class="btn primary" id="apply" disabled>Terapkan laporan</button></section>
+<section class="card"><h2>Foto kegiatan</h2><p>Pilih foto dan thumbnail dari paket. Unggah dapat dilanjutkan; foto yang sama tidak digandakan.</p><label>Berkas foto<input id="photos" type="file" accept="image/webp,image/jpeg,image/png" multiple></label><button class="btn primary" id="upload" disabled>Unggah foto</button></section>
+<p id="message" role="status" style="white-space:pre-wrap"></p>
+</main><script type="module" src="/js/daily-transfer.js"></script></html>

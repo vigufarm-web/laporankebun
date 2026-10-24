@@ -601,6 +601,7 @@ export const TABLES = {
       { k: 'lokasi', l: 'Lokasi File', t: 'text' },
       { k: 'thumb_lokasi', l: 'File Thumbnail', t: 'text' },
       { k: 'thumb_storage', l: 'Penyimpanan Thumbnail', t: 'text' },
+      { k: 'content_hash', l: 'Sidik Berkas', t: 'text' },
       { k: 'mime', l: 'Tipe File', t: 'text' },
       { k: 'ukuran', l: 'Ukuran (byte)', t: 'int' },
       { k: 'expires_at', l: 'Kedaluwarsa', t: 'text' },

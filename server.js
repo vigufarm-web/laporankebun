@@ -1,3 +1,4 @@
+import { transferDaily } from './lib/daily-transfer.js';
 import { execChanged } from './lib/tracked-sql.js';
 import { copyCloudSnapshot } from './lib/cloud-snapshot.js';
 import { photoExpiresAt, photoExpired } from './lib/photo-retention.js';
@@ -714,6 +715,13 @@ async function api(req, res, url) {
     return send(res,200,result);
   }
 
+  if(parts[1]==='daily' && parts[2]==='transfer' && m==='POST') {
+    if(!user || !isAdmin(user))return send(res,403,{error:'Pemindahan laporan khusus admin.'});
+    const body=await readBody(req);
+    const result=transferDaily({db,tx,blocks,now,actor:user.nama||user.username},body);
+    if(body.mode==='apply'&&!result.already_applied)log('pindahkan laporan','daily_report',null,{jumlah:result.reports.length});
+    return send(res,200,result);
+  }
   // --- Daily Report (harus login; mandor hanya dapat mengubah divisinya)
   if (parts[1] === 'daily') {
     if (m === 'GET' && parts[2] === 'locations') {
@@ -791,9 +799,12 @@ async function api(req, res, url) {
       const buf = await readRaw(req);
       if (!buf.length || buf.length > 2.5e6) return send(res, 413, { error: 'Foto kosong atau lebih dari 2,5 MB' });
       if(parts[3] && parts[4]==='thumbnail') {const photo=db.prepare('SELECT * FROM daily_photo WHERE id=? AND report_id=? AND deleted_at IS NULL').get(Number(parts[3]),report.id);if(!photo)return send(res,404,{error:'Foto tidak ditemukan'});if(buf.length>150000)return send(res,413,{error:'Thumbnail maksimal 150 KB'});const thumb=await storeDailyPhoto(buf,mime,report);if(photo.thumb_lokasi)await removeStoredPhoto({lokasi:photo.thumb_lokasi,storage:photo.thumb_storage});db.prepare('UPDATE daily_photo SET thumb_lokasi=?,thumb_storage=?,updated_at=? WHERE id=?').run(thumb.lokasi,thumb.storage,now(),photo.id);return send(res,200,{id:photo.id});}
+      const contentHash=crypto.createHash('sha256').update(buf).digest('hex');
+      const duplicate=db.prepare('SELECT id,expires_at FROM daily_photo WHERE report_id=? AND content_hash=? AND deleted_at IS NULL').get(report.id,contentHash);
+      if(duplicate)return send(res,200,{id:duplicate.id,url:'/api/daily/photo/'+duplicate.id,expires_at:duplicate.expires_at});
       const saved = await storeDailyPhoto(buf, mime, report);
-      const result = db.prepare('INSERT INTO daily_photo (created_at, updated_at, report_id, jenis, caption, storage, lokasi, mime, ukuran, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run(now(), now(), report.id, ['Apel', 'Kegiatan', 'Kendala'].includes(url.searchParams.get('jenis')) ? url.searchParams.get('jenis') : 'Kegiatan', textLimit(url.searchParams.get('caption'), 200), saved.storage, saved.lokasi, mime, buf.length, expires);
+      const result = db.prepare('INSERT INTO daily_photo (created_at, updated_at, report_id, jenis, caption, storage, lokasi, mime, ukuran, expires_at, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+        .run(now(), now(), report.id, ['Apel', 'Kegiatan', 'Kendala'].includes(url.searchParams.get('jenis')) ? url.searchParams.get('jenis') : 'Kegiatan', textLimit(url.searchParams.get('caption'), 200), saved.storage, saved.lokasi, mime, buf.length, expires, contentHash);
       const id = Number(result.lastInsertRowid);
       log('unggah foto', 'daily_photo', id, { report_id: report.id, divisi: report.divisi, expires_at: expires });
       return send(res, 200, { id, url: `/api/daily/photo/${id}`, expires_at: expires });
