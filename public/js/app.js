@@ -653,7 +653,7 @@ function applySettings() {
 }
 
 // ================================================================ start
-export const App = { tables: TABLES, api, cache, ctx, loadTable, openForm, renderTable, excelPanel, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, login:openLogin, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
+export const App = { tables: TABLES, api, cache, ctx, loadTable, openForm, renderTable, excelPanel, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, dailyFocus:()=>fieldMode, login:openLogin, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
 // ================================================================ LOGIN & PENGGUNA
 const peranLabel = (u) => (u.peran || []).map((r) => ROLES[r]?.label || r).join(', ') || '—';
 function renderUserChip() {

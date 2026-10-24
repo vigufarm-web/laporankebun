@@ -91,7 +91,7 @@ function ownerGallery(reports) {
 }
 
 export async function renderDaily(main, A) {
-  const today = iso(new Date()), allowed = editableDivisions(A), owner = A.isAdmin() || (A.me()?.peran || []).includes('management') || allowed.length === 0;
+  const today = iso(new Date()), allowed = editableDivisions(A), owner = !A.dailyFocus?.() && (A.isAdmin() || (A.me()?.peran || []).includes('management') || allowed.length === 0);
   if (!owner) return renderMandor(main, A, allowed, today);
   let selected = '', mode = '7', all = [], query = '';
   main.innerHTML = `<div class="page-head"><div><div class="crumb">Owner › Operasional Kebun</div><h1>Dashboard Kegiatan Kebun</h1><p class="desc">Pantau pekerjaan, tenaga kerja, hasil hari ini (HI), dan progres sampai hari ini (SDHI) seluruh divisi.</p></div><div class="actions">${A.isAdmin() ? '<button class="btn primary" id="drAdd">＋ Buat laporan</button>' : '<span class="tag">Dashboard Owner</span>'}</div></div>
