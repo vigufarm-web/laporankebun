@@ -1,8 +1,22 @@
 {
   "headers": [
-    { "source": "/vendor/(.*)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=2592000" }] }
+    {
+      "source": "/vendor/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=2592000"
+        }
+      ]
+    }
   ],
   "crons": [
-    { "path": "/api/daily/cleanup", "schedule": "0 17 * * *" }
+    {
+      "path": "/api/daily/cleanup",
+      "schedule": "0 17 * * *"
+    }
+  ],
+  "regions": [
+    "sin1"
   ]
 }
