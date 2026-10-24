@@ -386,7 +386,7 @@ function tx(fn) {
   try { const v = fn(); db.exec('COMMIT'); return v; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-const blocks = createBlockRegistry({db,TABLES,cascadeRename,log,clock:now});
+const blocks = createBlockRegistry({db,TABLES,cascadeRename,log,clock:now,bootstrapGIS:!cloud});
 blocks.migrate();
 db.exec('CREATE TABLE IF NOT EXISTS _import_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT,table_name TEXT,row_id INTEGER,before_json TEXT,created_at TEXT)');
 const reads = createReadModels({db,TABLES,nominalJual,isJual,iklimHarian});
