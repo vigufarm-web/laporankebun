@@ -1,4 +1,6 @@
+import {reportWeek} from './report-week.js';
 export function reportActions(container,A,options) {
+  if(options.owner)options={...options,...reportWeek(options.to||options.from||new Date(Date.now()+7*3600e3).toISOString().slice(0,10))};
   let file=null,shareText='',preparing=false;
   const params=new URLSearchParams(Object.fromEntries(Object.entries(options).filter(([,v])=>v!=null&&v!==''))),kind=options.owner?'owner':'daily';
   const url=`/api/reports/${kind}.pdf?${params}`;

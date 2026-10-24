@@ -222,6 +222,7 @@ async function route() {
   }
   $('#main').classList.remove('summary-page');
   if(r==='daily'){renderSidebar({},r);$('#note').hidden=true;return renderDaily($('#main'),App).catch(e=>$('#main').innerHTML='<div class="card">'+esc(e.message)+'</div>');}
+  if(r==='laporan'||r.startsWith('laporan/')){renderSidebar({},r);$('#note').hidden=true;return import('./weekly-owner.js').then(m=>m.renderWeeklyOwner($('#main'),App));}
   if(r==='pengaturan'){renderSidebar({},r);$('#note').hidden=true;return renderSettings($('#main'));}
   if(r==='hub'||r.startsWith('hub/')){renderSidebar({},r);$('#note').hidden=true;return import('./hub.js').then(m=>m.renderHub($('#main'),App,r.split('/')[1]));}
   if(/^k\/(pisang|padi)\/progres$/.test(r)){renderSidebar({},r);$('#note').hidden=true;return import('./progress-view.js').then(m=>m.renderProgressView($('#main'),App,r.split('/')[1]));}

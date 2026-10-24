@@ -80,6 +80,7 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   r=await request('/api/reports/share?from=2026-10-24&to=2026-10-24&divisi=Pisang');assert.equal(r.status,200);assert.ok(r.body.text.includes('Pemupukan test'));assert.ok(!r.body.text.includes('/ Padi /'));
   response=await fetch(base+'/api/reports/daily.pdf');assert.equal(response.status,401);
   cookie=adminCookie;
+  const weeklyPDF=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(weeklyPDF.status,200);assert.ok(weeklyPDF.headers.get('content-disposition').includes('2026-10-19-2026-10-25'));assert.equal(Buffer.from(await weeklyPDF.arrayBuffer()).subarray(0,4).toString(),'%PDF');
   // A second start reruns migration against existing data without losing IDs or results.
   const exit=once(proc,'exit');proc.kill();await exit;
   proc=spawn(process.execPath,['server.js'],{cwd:root,env:{...process.env,PORT:String(port),DATA_DIR:path.join(dir,'data'),EXCEL_FILE:path.join(dir,'input.xlsx')},stdio:['ignore','pipe','pipe']});proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b);

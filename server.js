@@ -1,3 +1,4 @@
+import {reportWeek} from './lib/report-week.js';
 import {cloudOverview} from './lib/cloud-overview.js';
 import {weeklyLand} from './lib/weekly-targets.js';
 import { importLand, capLandRows, landAreas, landStages, saveDailyLand, stageForDaily, registerHistoricalDailyCoverage } from './lib/land-actual.js';
@@ -289,6 +290,12 @@ async function storeDailyPhoto(buf, mime, report) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, buf);
   return { storage: 'local', lokasi: rel.replace(/\\/g, '/') };
+}
+
+async function attachReportPhotos(reports){
+  const jobs=[];for(const report of reports){report.photoImages=[];for(const photo of report.photos.filter(p=>!p.deleted_at&&!photoExpired(p)&&p.lokasi)){const image={id:photo.id,caption:photo.caption||photo.jenis||'Foto kegiatan',buffer:null};report.photoImages.push(image);jobs.push({photo,image});}}
+  if(!jobs.length)return;let index=0;const {default:sharp}=await import('sharp');
+  await Promise.all(Array.from({length:Math.min(4,jobs.length)},async()=>{while(index<jobs.length){const {photo,image}=jobs[index++];try{const location=photo.thumb_lokasi||photo.lokasi,storage=photo.thumb_lokasi?photo.thumb_storage:photo.storage;let buffer;if(storage==='blob'){const r=await blobGet(location,{access:'private'});if(!r||r.statusCode!==200)throw new Error('Foto tidak ditemukan');const chunks=[];for await(const c of Readable.fromWeb(r.stream))chunks.push(c);buffer=Buffer.concat(chunks);}else{const file=safeJoin(PHOTO_DIR,location);if(!file)throw new Error('Foto tidak valid');buffer=await fs.promises.readFile(file);}image.buffer=await sharp(buffer,{limitInputPixels:20000000}).rotate().resize({width:1000,height:1000,fit:'inside',withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:72}).toBuffer();}catch(e){image.error='Foto belum dapat dimuat';console.warn('Foto laporan '+photo.id+': '+e.message);}}}));
 }
 
 async function removeStoredPhoto(photo) {
@@ -696,9 +703,9 @@ async function api(req, res, url) {
 
   if(parts[1]==='reports' && m==='GET') {
     if(!user)return send(res,401,{error:'Silakan login untuk mengunduh laporan.'});
-    const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today,to=url.searchParams.get('to')||from,divisi=url.searchParams.get('divisi'),reportId=Number(url.searchParams.get('reportId'))||null;
+    const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),divisi=url.searchParams.get('divisi'),reportId=Number(url.searchParams.get('reportId'))||null;let from=url.searchParams.get('from')||today,to=url.searchParams.get('to')||from;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)return send(res,400,{error:'Periksa periode laporan.'});
-    const owner=parts[2]==='owner.pdf'||url.searchParams.get('owner')==='true';
+    const owner=parts[2]==='owner.pdf'||url.searchParams.get('owner')==='true';if(owner){try{({from,to}=reportWeek(url.searchParams.get('week')||to));}catch{return send(res,400,{error:'Tanggal minggu tidak valid.'});}}
     if(!isAdmin(user)&&!dailyOnly(user))return send(res,403,{error:'Rincian laporan khusus admin atau mandor sesuai divisinya.'});
     const canOwner=isAdmin(user);
     if(owner&&!canOwner)return send(res,403,{error:'Laporan gabungan khusus owner/management.'});
@@ -708,13 +715,14 @@ async function api(req, res, url) {
     if(divisi){where.push('divisi=?');args.push(divisi);}else{where.push('divisi IN ('+allowed.map(()=>'?').join(',')+')');args.push(...allowed);}
     if(reportId){where.push('id=?');args.push(reportId);}
     if(url.searchParams.get('cycle')){where.push('siklus=?');args.push(url.searchParams.get('cycle'));}
-    const reports=db.prepare('SELECT * FROM daily_report WHERE '+where.join(' AND ')+' ORDER BY tanggal,divisi,id').all(...args).map(dailyPayload);
+    const reports=db.prepare('SELECT * FROM daily_report WHERE '+where.join(' AND ')+' ORDER BY tanggal,divisi,id').all(...args).map(dailyPayload).filter(r=>!owner||r.items.some(x=>x.realisasi!=null||x.hk_realisasi!=null||x.keterangan)||r.kendala||r.tindak_lanjut||r.photos.some(p=>!p.deleted_at));
     if(parts[2]==='share') {
       const lines=reports.slice(0,5).map(r=>r.tanggal+' / '+r.divisi+' / '+r.status+'\n'+r.items.slice(0,4).map(x=>'- '+x.blok+': '+x.aktivitas+' '+(x.realisasi??'belum diisi')+' '+(x.satuan||'')+'; HK '+(x.hk_realisasi??'belum diisi')).join('\n'));
       return send(res,200,{text:'LAPORAN KEBUN VIGU FARM\n'+from+' s.d. '+to+'\n'+(owner?'Laporan gabungan owner.\n':'')+lines.join('\n\n')+'\n\nRincian lengkap terlampir pada PDF.'});
     }
     if(!['daily.pdf','owner.pdf'].includes(parts[2]))return send(res,404,{error:'Laporan tidak ditemukan'});
     const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),summary=owner?reads.overview({from,to,today,blocks:verifiedOverviewBlocks()}):null;
+    await attachReportPhotos(reports);
     const pdf=await buildReportPDF({name:db.prepare("SELECT v FROM _settings WHERE k='nama'").get()?.v||'PT VIGU FARM INDONESIA',from,to,reports,summary,sections:owner?ownerSections({db,from,to,climate:summary.climate}):[],owner,createdBy:user.nama||user.username});
     return send(res,200,pdf,'application/pdf',{'Content-Disposition':'attachment; filename="laporan-'+(owner?'owner':'daily')+'-'+from+'-'+to+'.pdf"'});
   }
