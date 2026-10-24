@@ -240,6 +240,10 @@ function dailyLandTargets(date){
   dailyTargetCache.set(key,result);return result;
 }
 
+function verifiedOverviewBlocks(){
+  const ids=new Set(ownedDailyLocations().map(x=>x.id)),layer=db.prepare("SELECT id FROM gis_layer WHERE nama='Blok Tanam' ORDER BY id LIMIT 1").get()?.id;
+  return blocks.list().map(b=>ids.has(b.id)?{...b,ownership:'Sudah milik kebun',layer_id:b.layer_id||layer}:b);
+}
 function dailyPayload(report) {
   const weekStart = weekBounds(report.tanggal).start;
   const plan = db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(weekStart, report.divisi);
@@ -712,7 +716,7 @@ async function api(req, res, url) {
       return send(res,200,{text:'LAPORAN KEBUN VIGU FARM\n'+from+' s.d. '+to+'\n'+(owner?'Laporan gabungan owner.\n':'')+lines.join('\n\n')+'\n\nRincian lengkap terlampir pada PDF.'});
     }
     if(!['daily.pdf','owner.pdf'].includes(parts[2]))return send(res,404,{error:'Laporan tidak ditemukan'});
-    const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),summary=owner?reads.overview({from,to,today,blocks:blocks.list()}):null;
+    const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),summary=owner?reads.overview({from,to,today,blocks:verifiedOverviewBlocks()}):null;
     const pdf=await buildReportPDF({name:db.prepare("SELECT v FROM _settings WHERE k='nama'").get()?.v||'PT VIGU FARM INDONESIA',from,to,reports,summary,sections:owner?ownerSections({db,from,to,climate:summary.climate}):[],owner,createdBy:user.nama||user.username});
     return send(res,200,pdf,'application/pdf',{'Content-Disposition':'attachment; filename="laporan-'+(owner?'owner':'daily')+'-'+from+'-'+to+'.pdf"'});
   }
@@ -727,7 +731,7 @@ async function api(req, res, url) {
   }
   if (parts[1]==='overview' && m==='GET') {
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today.slice(0,7)+'-01',to=url.searchParams.get('to')||today;
-    const summary=cloud?await cloudOverview(cloud,{from,to,today,TABLES}):reads.overview({from,to,today,blocks:blocks.list()});if(!user)summary.daily=[];return send(res,200,summary);
+    const summary=cloud?await cloudOverview(cloud,{from,to,today,TABLES}):reads.overview({from,to,today,blocks:verifiedOverviewBlocks()});if(!user)summary.daily=[];return send(res,200,summary);
   }
   if (parts[1]==='climate' && m==='GET') {const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10);return send(res,200,reads.climate(url.searchParams.get('from')||today.slice(0,7)+'-01',url.searchParams.get('to')||today));}
   if (parts[1]==='records' && m==='GET') {
