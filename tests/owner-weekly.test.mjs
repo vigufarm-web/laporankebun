@@ -16,3 +16,9 @@ test('owner sample photographs are bounded, prioritize activities and span divis
  reports.push({status:'Draf',tanggal:'2026-10-22',divisi:'Pisang',photos:[{id:999,jenis:'Kegiatan',caption:'Draf'}]});reports[0].photos.push({id:998,jenis:'Kegiatan',expires_at:'2000-01-01'},{id:997,jenis:'Kegiatan',deleted_at:'2026-10-22'});
  const sample=selectOwnerPhotos(reports),photos=sample.flatMap(r=>r.photos);assert.equal(photos.length,6);assert.equal(new Set(photos.map(p=>p.id)).size,6);assert.ok(photos.every(p=>p.jenis==='Kegiatan'));for(const division of ['Pisang','Padi','Infra'])assert.equal(new Set(sample.filter(r=>r.divisi===division).map(r=>r.tanggal)).size,2);assert.equal(reports[0].photos.length,4,'selection does not remove stored photographs');
 });
+test('HK-only days join the measured weekly activity only when its unit is unambiguous',()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE lahan_harian(tanggal TEXT,aktivitas TEXT,hasil_ha REAL,diganti_aktual INTEGER,source_key TEXT)');
+ const reports=[{id:1,status:'Selesai',tanggal:'2026-10-19',divisi:'Pisang',items:[{blok:'A1',aktivitas:'Bagging',satuan:'lainnya',realisasi:null,hk_realisasi:2}]},{id:2,status:'Selesai',tanggal:'2026-10-20',divisi:'Pisang',items:[{blok:'A1',aktivitas:'Bagging',satuan:'stem',realisasi:20,hk_realisasi:1}]}];
+ let work=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(work.length,1);assert.equal(work[0].actual,20);assert.equal(work[0].hk,3);assert.equal(work[0].unit,'stem');
+ reports[1].items.push({blok:'A1',aktivitas:'Bagging',satuan:'pokok',realisasi:5,hk_realisasi:1});work=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(work.length,3);assert.equal(work.find(x=>!x.unit).hk,2);db.close();
+});
