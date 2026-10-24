@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {importPadi} from '../lib/padi-import.js';
+test('harvest import preserves history, separates GKG, rejects conflicts and stale previews',()=>{
+ const db=new DatabaseSync(':memory:');
+ db.exec(`CREATE TABLE padi_petak(nama_petak TEXT);INSERT INTO padi_petak VALUES('P06a');CREATE TABLE padi_panen(id INTEGER PRIMARY KEY,tanggal TEXT,petak TEXT,gkp_kg REAL,detail_timbang TEXT,keterangan TEXT);INSERT INTO padi_panen VALUES(1,NULL,'P06a',100,NULL,NULL);CREATE TABLE padi_penjualan(id INTEGER PRIMARY KEY,tanggal TEXT,petak TEXT,berat_kg REAL,detail_timbang TEXT,keterangan TEXT,tipe TEXT,jenis TEXT,pembeli TEXT,harga_kg REAL,nominal REAL,dibayar REAL);`);
+ const ctx={db,blocks:{canonical:(_,r)=>r,linkTable(){}},now:()=>new Date().toISOString(),actor:'test',tx:fn=>{db.exec('BEGIN');try{fn();db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}},insertRow:(t,r)=>db.prepare(`INSERT INTO ${t} (${Object.keys(r).join(',')}) VALUES (${Object.keys(r).map(()=>'?').join(',')})`).run(...Object.values(r))};
+ const payload={harvest:[{tanggal:'2026-10-22',petak:'P06a',gkp_kg:61.36,detail_timbang:'31,64;29,72'}],transfers:[{tanggal:'2026-10-23',petak:'P06a',berat_kg:91.08,detail_timbang:'32,32;23,46;35,3'}]};
+ const preview=importPadi(ctx,{payload});assert.deepEqual(preview.totals,{gkpKg:61.36,gkgKg:91.08});
+ assert.throws(()=>importPadi(ctx,{payload,mode:'apply',token:'stale'}),e=>e.status===409);
+ assert.equal(importPadi(ctx,{payload,mode:'apply',token:preview.token}).added,2);
+ assert.equal(importPadi(ctx,{payload,mode:'apply',token:preview.token}).already_applied,true);
+ assert.equal(db.prepare('SELECT COUNT(*) n FROM padi_panen').get().n,2);
+ assert.equal(db.prepare('SELECT gkp_kg FROM padi_panen WHERE id=1').get().gkp_kg,100);
+ const transfer=db.prepare('SELECT * FROM padi_penjualan').get();assert.equal(transfer.tipe,'Mutasi Internal');assert.equal(transfer.jenis,'GKG');assert.equal(transfer.nominal,null);assert.equal(transfer.petak,'P06a');
+ const conflict=structuredClone(payload);conflict.harvest[0].gkp_kg=62;conflict.harvest[0].detail_timbang='62';const p=importPadi(ctx,{payload:conflict});assert.equal(p.preview[0].action,'Konflik');assert.throws(()=>importPadi(ctx,{payload:conflict,mode:'apply',token:p.token}),/konflik/i);
+ const bad=structuredClone(payload);bad.harvest[0].detail_timbang='1';assert.throws(()=>importPadi(ctx,{payload:bad}),/Rincian/);
+ const renamed=structuredClone(payload);renamed.harvest[0].petak='P06b';assert.throws(()=>importPadi(ctx,{payload:renamed}),/belum dikenali/);
+ db.close();
+});

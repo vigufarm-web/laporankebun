@@ -342,6 +342,7 @@ export const TABLES = {
       { k: 'gkp_kg', l: 'Berat Gabah / GKP (kg)', t: 'num', req: true },
       { k: 'kg_karung', l: 'Rata-rata kg/karung', t: 'calc', fmt: 'num2', fn: (r) => (n(r.jumlah_karung) ? n(r.gkp_kg) / n(r.jumlah_karung) : null) },
       { k: 'ton_ha', l: 'Hasil (ton/ha)', t: 'calc', fmt: 'num2', fn: (r, c) => { const l = luasPetak(c, r.petak); return l ? n(r.gkp_kg) / 1000 / l : null; } },
+      { k: 'detail_timbang', l: 'Rincian timbang (kg)', t: 'text', hint: 'Pisahkan tiap penimbangan dengan titik koma.' },
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
   },
@@ -360,11 +361,13 @@ export const TABLES = {
     ],
   },
   padi_penjualan: {
-    title: 'Penjualan Padi', div: 'padi', date: 'tanggal', sort: '-tanggal',
+    title: 'Penjualan / Mutasi Padi', div: 'padi', date: 'tanggal', sort: '-tanggal',
     f: [
       { k: 'tanggal', l: 'Tanggal', t: 'date', req: true },
+      { k: 'petak', l: 'Petak / Blok', t: 'ref', ref: 'padi_petak' },
+      { k: 'detail_timbang', l: 'Rincian timbang (kg)', t: 'text' },
       { k: 'no_sj', l: 'No. Surat Jalan', t: 'text' },
-      { k: 'pembeli', l: 'Pembeli', t: 'text' },
+      { k: 'pembeli', l: 'Pembeli / Tujuan', t: 'text' },
       { k: 'tipe', l: 'Tipe', t: 'select', opt: TIPE_JUAL },
       { k: 'jenis', l: 'Jenis', t: 'select', opt: ['GKP', 'GKG', 'Beras', 'Dedak/Lainnya'] },
       { k: 'jumlah_sak', l: 'Qty (sak/box)', t: 'int' },
