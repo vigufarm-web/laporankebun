@@ -801,7 +801,7 @@ export function hariKerjaAkt(a) {
 // hari kerja per ha untuk 1 tim: isian Urutan Aktivitas; kosong → dari Progres Harian (jumlah hari aktif ÷ total ha)
 export function hariPerHa(c, a) {
   if (n(a?.hari_per_ha) > 0) return n(a.hari_per_ha);
-  const h = c.rows('lahan_harian').filter((r) => r.aktivitas === a?.aktivitas);
+  const h = c.rows('lahan_harian').filter((r) => r.aktivitas === a?.aktivitas&&!String(r.source_key||'').startsWith('baseline:'));
   const ha = h.reduce((s, r) => s + n(r.hasil_ha), 0), hari = new Set(h.map((r) => r.tanggal)).size;
   return ha > 0 ? hari / ha : 0;
 }
@@ -853,7 +853,7 @@ export function susunRencana(c, mulai) {
   // blok yang sama-sama siap (Prioritas blok sama; bulan target diabaikan). Posisi awal = blok terakhir yang dikerjakan di Progres Harian.
   // Kegiatan lain (mis. traktor) tetap mendahulukan blok yang paling dekat jadwal tanamnya.
   const pos = posisiBlok(c), posAlat = {}, jarak = (p, q) => (p && q ? Math.hypot(p[0] - q[0], p[1] - q[1]) : Infinity);
-  for (const h of [...c.rows('lahan_harian')].filter((x) => x.tanggal && x.tanggal < mulai).sort((x, y) => String(x.tanggal).localeCompare(String(y.tanggal)))) {
+  for (const h of [...c.rows('lahan_harian')].filter((x) => x.tanggal && x.tanggal < mulai&&!String(x.source_key||'').startsWith('baseline:')).sort((x, y) => String(x.tanggal).localeCompare(String(y.tanggal)))) {
     const a = acts.find((z) => z.aktivitas === h.aktivitas); if (a && pos.has(util.key(h.blok))) posAlat[alatOf(a)] = pos.get(util.key(h.blok));
   }
   for (let g = 0; g < 10000; g++) {
