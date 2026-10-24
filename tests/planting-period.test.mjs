@@ -1,0 +1,9 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {plantingPeriod,plantingWeeks} from '../lib/planting-period.js';
+test('work weeks are Monday to Sunday and cross month/year without changing with host timezone',()=>{
+ assert.deepEqual(plantingWeeks('2026-10-25'),[{key:'this',label:'Minggu ini',from:'2026-10-19',to:'2026-10-25'},{key:'next',label:'Minggu depan',from:'2026-10-26',to:'2026-11-01'}]);assert.deepEqual(plantingWeeks('2027-01-01').map(w=>[w.from,w.to]),[['2026-12-28','2027-01-03'],['2027-01-04','2027-01-10']]);
+});
+test('weekly locations include only scheduled or actual work, split plans at the week boundary, and retain completed work',()=>{
+ const progress={blocks:['A','B','C','D'].map(name=>({name,area:1,activity:[{name:'Land Clearing',ha:name==='B'?1:.2}]}))},activities=[{aktivitas:'Land Clearing'}],a={hari_kerja:'Senin-Sabtu'},plans=[{blok:'A',aktivitas:'Land Clearing',luas_ha:.6,mulai:'2026-10-23',selesai:'2026-10-29',a},{blok:'C',aktivitas:'Land Clearing',luas_ha:1,mulai:'2026-11-02',selesai:'2026-11-04',a}],actual=[{blok:'B',aktivitas:'Land Clearing',tanggal:'2026-10-20',hasil_ha:.4},{blok:'D',aktivitas:'Land Clearing',tanggal:'2026-10-20',hasil_ha:1,source_key:'baseline:old'},{blok:'C',aktivitas:'Land Clearing',tanggal:'2026-10-27',hasil_ha:9}],today='2026-10-25';
+ const periods=plantingWeeks(today).map(w=>({...w,activities:plantingPeriod({plans,actual,activities,progress,...w,today})}));const current=periods[0].activities[0],next=periods[1].activities[0];assert.deepEqual(current.locations.map(b=>b.name),['A','B']);assert.deepEqual(next.locations.map(b=>b.name),['A']);assert.equal(current.locations.find(b=>b.name==='B').complete,true);assert.equal(current.actualHa,.4);assert.equal(next.actualHa,null);assert.ok(Math.abs(current.planHa+next.planHa-.6)<1e-9);assert.ok(!JSON.stringify(periods).includes('"name":"D"'));assert.equal(current.locations.find(b=>b.name==='A').remainingHa,.8);
+});
