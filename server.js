@@ -996,6 +996,7 @@ async function api(req, res, url) {
   }
   if (parts[1] === 'tables' && m === 'GET') {
     if (dailyOnly(user)) return send(res, 200, {});
+    if(cloud){const names=Object.keys(TABLES),values=await cloud.snapshot(read=>read(names.map(t=>'SELECT count(*) c,max(updated_at) u FROM '+q(t))));return send(res,200,Object.fromEntries(names.map((t,i)=>[t,values[i][0]])));}
     const counts = {};
     for (const t of Object.keys(TABLES)) {
       if ((!user || dailyOnly(user)) && t.startsWith('daily_')) continue;
@@ -1321,6 +1322,9 @@ function readScope(req,url){
   if(req.method==='POST'&&p==='/api/daily')return [...authTables,'lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
+  if(p==='/api/tables')return authTables;
+  const raw=p.match(/^\/api\/t\/([a-z_]+)$/);if(raw&&TABLES[raw[1]])return [...authTables,raw[1]];
+  const page=p.match(/^\/api\/records\/([a-z_]+)$/);if(page&&TABLES[page[1]]){const dependencies={pisang_blok:['pisang_panen_pkk'],padi_tanam:['padi_panen'],padi_panen:['padi_petak'],infra_proyek:['infra_progress'],lahan_blok:['lahan_harian','lahan_aktivitas']};return [...authTables,page[1],...(dependencies[page[1]]||[])];}
   if(p==='/api/nursery-summary')return [...authTables,'pisang_bibit'];
   if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/overview')return authTables;
