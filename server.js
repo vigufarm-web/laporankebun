@@ -1,6 +1,6 @@
 import {cloudOverview} from './lib/cloud-overview.js';
 import {weeklyLand} from './lib/weekly-targets.js';
-import { importLand, capLandRows, landAreas, landStages, saveDailyLand } from './lib/land-actual.js';
+import { importLand, capLandRows, landAreas, landStages, saveDailyLand, stageForDaily, registerHistoricalDailyCoverage } from './lib/land-actual.js';
 import { kebunSummary } from './lib/kebun-summary.js';
 import { removeDuplicateParcelLayer } from './lib/gis-deduplicate.js';
 import { createParcelLocations } from './lib/gis-ownership.js';
@@ -262,11 +262,9 @@ function dailyPayload(report) {
       const sum = cumulative.get(report.divisi, weekStart, report.tanggal, item.aktivitas, item.blok, item.satuan);
       const planned = plannedById.find((p) => Number(item.plan_item_id) === Number(p.id)) || plannedById.find((p) =>
         util.key(p.aktivitas) === util.key(item.aktivitas) && util.key(p.blok) === util.key(item.blok) && util.key(p.satuan) === util.key(item.satuan));
-      const name=String(item.aktivitas||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-      const aliases={landclearing:'Land Clearing',lc:'Land Clearing',bajak1:'Bajak 1',bajak2:'Bajak 2',dolomite:'Dolomite',dolomit:'Dolomite',stikridger:'Stik Ridger',ridger:'Ridger',installdrip:'Install Drip',stiktanam:'Stik Tanam',ecerpupuk:'Ecer Pupuk',tanam:'Tanam'};
       const normBlock=v=>String(v||'').toLowerCase().replace(/([a-z])0+(?=[1-9])/g,'$1').replace(/\s/g,'');
       const names=String(item.blok||'').split(',').map(normBlock);
-      const landTarget=item.satuan==='ha'&&aliases[name]?dailyLandTargets(report.tanggal).find(x=>x.a===aliases[name])?.bl.filter(x=>names.includes(normBlock(x.blok))).reduce((s,x)=>s+x.ha,0):null;
+      const landTarget=item.satuan==='ha'&&stageForDaily(item.aktivitas)?dailyLandTargets(report.tanggal).find(x=>x.a===stageForDaily(item.aktivitas))?.bl.filter(x=>names.includes(normBlock(x.blok))).reduce((s,x)=>s+x.ha,0):null;
       const targetHK=planned?.hk_rencana ?? plannedHK.get(report.divisi,weekStart,weekBounds(report.tanggal).end,item.aktivitas,item.blok,item.satuan)?.total ?? null;
       const target=planned?.target ?? (item.plan_item_id!=null?item.target:null) ?? (landTarget>0?landTarget:null);
       const outside = item.di_luar_rencana != null ? Number(item.di_luar_rencana) : plan ? Number(!planned) : 0;
@@ -903,8 +901,9 @@ async function api(req, res, url) {
       const selesaiAt = status === 'Selesai' ? now() : old?.selesai_at || null;
       const penginput = user.nama || user.username;
       const values = [b.tanggal, divisi, null, textLimit(b.siklus, 100), status, null, null, numberOrNull(b.apel_hadir), textLimit(b.apel_catatan, 2000), textLimit(b.kendala, 2000), textLimit(b.tindak_lanjut, 2000), selesaiAt, rencanaAt, selesaiAt, penginput];
-      let reportId;
+      let reportId,landResult={adjusted:0};
       tx(() => {
+        registerHistoricalDailyCoverage(db,now);
         if (old) {
           reportId = old.id;
           db.exec('CREATE TABLE IF NOT EXISTS _daily_revisions (id INTEGER PRIMARY KEY, report_id INTEGER, created_at TEXT, actor TEXT, before_json TEXT)');
@@ -924,8 +923,8 @@ async function api(req, res, url) {
           db.prepare('UPDATE daily_item SET realisasi_input=? WHERE id=?').run(historical&&Number(x.realisasi)===Number(historical.realisasi)?historical.realisasi_input??numberOrNull(x.realisasi):numberOrNull(x.realisasi),Number(inserted.lastInsertRowid));
           if(historical) db.prepare('UPDATE daily_item SET block_id=?,block_name_snapshot=? WHERE id=?').run(historical.block_id,historical.block_name_snapshot,Number(inserted.lastInsertRowid));
         }
+        landResult=saveDailyLand(db,reportId,now,insertRow);
       });
-      const landResult=tx(()=>saveDailyLand(db,reportId,now,insertRow));
       blocks.linkTable('daily_item');blocks.linkTable('lahan_harian');
       log(old ? 'ubah' : 'tambah', 'daily_report', reportId, { tanggal: b.tanggal, divisi, status, jumlah_kegiatan: (b.items || []).length });
       return send(res, 200, {...dailyPayload(db.prepare('SELECT * FROM daily_report WHERE id=?').get(reportId)),adjusted_land_items:landResult.adjusted});
@@ -1318,7 +1317,7 @@ function readScope(req,url){
   if(!VERCEL)return null;
   const p=url.pathname;
   if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status'].includes(p)))return authTables;
-  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item'];
+  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
   if(p==='/api/overview')return authTables;
