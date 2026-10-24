@@ -1,0 +1,29 @@
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num=v=>Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2});
+const key=v=>String(v||'').trim().toLowerCase();
+export const mapStages=['Land Clearing','Bajak 1','Dolomite','Bajak 2','Stik Ridger','Ridger','Install Drip','Stik Tanam','Ecer Pupuk','Tanam'];
+export function stageLocations(progress,stage){
+ return progress.blocks.filter(b=>b.area>0).map(b=>{const a=b.activity.find(a=>a.name===stage),done=Math.min(b.area,Math.max(0,Number(a?.ha)||0)),remaining=Math.max(0,b.area-done);return {name:b.name,area:b.area,done,remaining,complete:remaining<=1e-6};}).sort((a,b)=>a.name.localeCompare(b.name,'id',{numeric:true}));
+}
+let leaflet;
+async function loadLeaflet(){
+ if(globalThis.L)return globalThis.L;
+ leaflet??=Promise.all(['/vendor/leaflet.css','/vendor/leaflet.js'].map(src=>new Promise((resolve,reject)=>{const el=src.endsWith('.css')?Object.assign(document.createElement('link'),{rel:'stylesheet',href:src}):Object.assign(document.createElement('script'),{src});el.onload=resolve;el.onerror=()=>reject(new Error('Peta belum dapat dimuat. Silakan coba lagi.'));document.head.append(el);}))).catch(e=>{leaflet=null;throw e;});
+ await leaflet;return globalThis.L;
+}
+export function mountPlantingMap(host,api,progress){
+ host.innerHTML=`<div class="sum-section-head"><div><h2>Peta pekerjaan pisang</h2><p class="small muted">Posisi blok milik kebun · progres kumulatif sampai ${esc(progress.date)}</p></div><label>Tahapan<select id="mapStage">${mapStages.map(s=>`<option>${esc(s)}</option>`).join('')}</select></label></div><div class="plan-map-legend"><span><i style="background:#c53737"></i>Belum selesai</span><span><i style="background:#218450"></i>Selesai</span></div><p class="small muted">Blok merah masih memiliki sisa pekerjaan. Warna mencakup seluruh blok; letak sisa di dalam blok belum dicatat. Peta hanya menampilkan bagian milik kebun.</p><button class="btn" id="loadPlanMap">Tampilkan peta</button><p id="planMapStatus" role="status"></p><div id="planMapCanvas" class="plan-map-canvas" hidden></div><div id="planMapTotals"></div><div id="planMapPending" class="plan-map-pending"></div>`;
+ let stage=mapStages[0],map,layer,geometry,loading,byName=new Map();
+ const stageSelect=host.querySelector('#mapStage'),status=host.querySelector('#planMapStatus'),canvas=host.querySelector('#planMapCanvas'),button=host.querySelector('#loadPlanMap');
+ const draw=()=>{const rows=stageLocations(progress,stage),pending=rows.filter(r=>!r.complete);host.querySelector('#planMapTotals').innerHTML=`<p><b>${esc(stage==='Land Clearing'?'LC Pisang':stage+' Pisang')}</b> · Selesai ${num(rows.reduce((s,r)=>s+r.done,0))} ha · Sisa <b>${num(pending.reduce((s,r)=>s+r.remaining,0))} ha</b> pada ${pending.length} blok</p>`;
+  host.querySelector('#planMapPending').innerHTML=pending.length?pending.map(r=>`<button class="btn sm" data-map-block="${esc(r.name)}">${esc(r.name)} · sisa ${num(r.remaining)} ha</button>`).join(''):'<p>Semua blok pada tahapan ini sudah selesai.</p>';
+  host.querySelectorAll('[data-map-block]').forEach(b=>b.onclick=()=>open(stage,b.dataset.mapBlock));
+  if(!map)return;layer?.remove();byName=new Map();const states=new Map(rows.map(r=>[key(r.name),r]));layer=L.geoJSON(geometry,{filter:f=>states.has(key(f.properties.name)),style:f=>{const r=states.get(key(f.properties.name));return {color:r.complete?'#146237':'#a91e26',fillColor:r.complete?'#218450':'#c53737',fillOpacity:.55,weight:2};},onEachFeature:(f,l)=>{const r=states.get(key(f.properties.name));byName.set(key(r.name),l);l.bindTooltip(esc(r.name),{permanent:!r.complete,direction:'center',className:'plan-block-label'});l.bindPopup(`<strong>${esc(r.name)} · ${esc(stage)}</strong><br>Luas ${num(r.area)} ha<br>Selesai ${num(r.done)} ha<br><b>Sisa ${num(r.remaining)} ha</b>`);}}).addTo(map);
+  const missing=rows.filter(r=>!byName.has(key(r.name)));status.textContent=missing.length?'Batas GIS belum tersedia: '+missing.map(r=>r.name).join(', ')+'. Angka sisa tetap tercantum.':'';
+ };
+ const load=async()=>{if(map)return;if(loading)return loading;button.disabled=true;status.textContent='Memuat peta blok…';loading=(async()=>{try{const [L,fc]=await Promise.all([loadLeaflet(),api.get('/api/kebun-plan/map')]);if(!host.isConnected)return;geometry=fc;canvas.hidden=false;map=L.map(canvas,{scrollWheelZoom:false});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap contributors'}).addTo(map).on('tileerror',()=>{status.textContent='Peta dasar belum termuat. Batas dan progres blok tetap dapat dilihat.';});draw();if(layer.getBounds().isValid())map.fitBounds(layer.getBounds(),{padding:[24,24],maxZoom:17});else{map.setView([-7,110],5);status.textContent='Batas GIS untuk blok laporan belum tersedia.';}button.hidden=true;}catch(e){status.textContent=e.message;}finally{button.disabled=false;loading=null;}})();return loading;};
+ const open=async(s,name)=>{stage=mapStages.includes(s)?s:mapStages[0];stageSelect.value=stage;draw();host.scrollIntoView({behavior:'smooth',block:'start'});await load();if(!host.isConnected)return;draw();const target=byName.get(key(name));if(target){map.fitBounds(target.getBounds(),{padding:[45,45],maxZoom:19});target.openPopup();}};
+ stageSelect.onchange=()=>{stage=stageSelect.value;draw();};button.onclick=load;draw();
+ const observer=new IntersectionObserver(entries=>{if(entries.some(e=>e.isIntersecting)){observer.disconnect();load();}},{rootMargin:'100px'});observer.observe(host);
+ return {open};
+}

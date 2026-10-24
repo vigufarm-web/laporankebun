@@ -1,3 +1,4 @@
+import {ownerLandClearing} from './lib/owner-lc.js';
 import {reportWeek} from './lib/report-week.js';
 import {githubStore,githubDataConfig} from './lib/github-store.js';
 import {kebunPlan} from './lib/kebun-plan.js';
@@ -237,6 +238,8 @@ function ownedDailyLocations() {
 }
 let planningParcelLocations;
 function ownedPlanningLocations(){planningParcelLocations ||= createParcelLocations(db,blocks,{includePartial:true});return planningParcelLocations();}
+let planningMapLocations;
+function ownedPlanningMap(){planningMapLocations ||= createParcelLocations(db,blocks,{includePartial:true,includeGeometry:true});return {type:'FeatureCollection',features:planningMapLocations().filter(b=>b.divisi==='Pisang'&&b.geometry).map(b=>({type:'Feature',geometry:b.geometry,properties:{id:b.id,name:b.nama}}))};}
 
 let dailyTargetCache=new Map();
 function dailyLandTargets(date){
@@ -731,6 +734,7 @@ async function api(req, res, url) {
     if(owner){
       const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),{ownerWeeklyWork,ownerWeeklyNotes,selectOwnerPhotos}=await import('./lib/owner-weekly.js');
       const through=to<today?to:today,completed=reports.filter(r=>r.status==='Selesai'&&r.tanggal<=through),summary=reads.overview({from,to:through,today,blocks:verifiedOverviewBlocks()}),work=ownerWeeklyWork({db,from,to:through,reports:completed,landTargets:dailyLandTargets(from)}),notes=ownerWeeklyNotes(completed),samples=selectOwnerPhotos(completed),sections=ownerSections({db,from,to:through,climate:summary.climate,work});
+      summary.lcByCrop=ownerLandClearing(db,from,through);
       if(parts[2]==='owner-summary')return send(res,200,{from,to,summary,sections,work,notes,reportCount:completed.length,photos:samples.flatMap(r=>r.photos.map(p=>({id:p.id,division:r.divisi,date:r.tanggal,caption:p.caption||p.jenis||'Foto kegiatan',url:p.url,thumbnail_url:p.thumbnail_url})))});
       if(parts[2]==='share')return send(res,200,{text:'LAPORAN MINGGUAN KEBUN VIGU FARM\n'+from+' s.d. '+to+'\n'+work.map(r=>r.division+' / '+r.activity+': '+(r.actual==null?'hasil belum tercatat':r.actual.toLocaleString('id-ID',{maximumFractionDigits:2})+' '+r.unit)+'; target '+(r.target==null?'belum ada':r.target.toLocaleString('id-ID',{maximumFractionDigits:2})+' '+r.unit+(r.targetPartial?' (sebagian)':''))).join('\n')+'\nPDF berisi rekap mingguan dan sampel foto kegiatan.'});
       if(parts[2]!=='owner.pdf')return send(res,404,{error:'Laporan tidak ditemukan'});
@@ -765,6 +769,7 @@ async function api(req, res, url) {
     if(photo.storage==='blob'){const result=await blobGet(photo.lokasi,{access:'private'});if(!result||result.statusCode!==200)return send(res,404,{error:'Foto tidak tersedia.'});res.writeHead(200,{'Content-Type':result.blob.contentType||photo.mime,'Cache-Control':'public, max-age=60','X-Content-Type-Options':'nosniff'});return Readable.fromWeb(result.stream).pipe(res);}
     const file=safeJoin(PHOTO_DIR,photo.lokasi);if(!file||!fs.existsSync(file))return send(res,404,{error:'Foto tidak tersedia.'});return serveFile(res,file);
   }
+  if(url.pathname==='/api/kebun-plan/map'&&m==='GET')return send(res,200,ownedPlanningMap());
   if(parts[1]==='kebun-plan'&&m==='GET')return send(res,200,kebunPlan(db,ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
   if(parts[1]==='summary-periods'&&m==='GET'){const periods=summaryPeriods(new Date(Date.now()+7*3600e3).toISOString().slice(0,10));const values=cloud?await cloudOverviewPeriods(cloud,periods):periods.map(p=>({...p,...reads.overview({...p,blocks:verifiedOverviewBlocks()})}));return send(res,200,{periods:values.map(d=>({key:d.key,label:d.label,from:d.from,to:d.to,pisang:d.pisang,padi:d.padi,infra:d.infra,dailyTotals:d.dailyTotals,climate:{rain:d.climate.rain,observations:d.climate.observations,rainDays:d.climate.rainDays}}))});}
   if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,url.searchParams.get('kom')==='Padi'?ownedDailyLocations():ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10),url.searchParams.get('kom')==='Padi'?'Padi':'Pisang'));
@@ -1376,6 +1381,7 @@ function readScope(req,url){
   if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/summary-periods')return authTables;
   if(p==='/api/kebun-plan')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
+  if(p==='/api/kebun-plan/map')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/overview')return authTables;
   if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/kebun')return [...authTables,...land];

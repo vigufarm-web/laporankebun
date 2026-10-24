@@ -332,3 +332,6 @@ table.mini td.num, table.mini th.num { text-align: right; font-variant-numeric: 
 .crop-pisang{background:#fff2a8;color:#705400;border:1px solid #e7cc53}
 .crop-padi{background:#e1f1db;color:#245c2d;border:1px solid #9dca95}
 .plan-late{display:block;color:#965326;font-weight:600;margin-top:3px}
+
+/* Stage-specific GIS progress; geometry loads only as the map approaches view. */
+.plan-map-canvas{height:450px;width:100%;border:1px solid #d9e1da;border-radius:12px;isolation:isolate}.plan-map-canvas[hidden]{display:none}.plan-map-legend,.plan-map-pending{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.plan-map-legend span{display:inline-flex;align-items:center;gap:6px}.plan-map-legend i{display:inline-block;width:13px;height:13px;border-radius:3px}.plan-block-label{background:#fff!important;color:#183224!important;border:0!important;box-shadow:0 1px 4px #0003!important;font-weight:700;font-size:11px}.plan-location-link{border:1px solid #f0c5c5;background:#fff5f5;color:#9e232b;border-radius:7px;padding:5px 8px;margin:3px;cursor:pointer;white-space:nowrap;font:inherit}.plan-location-link small{display:inline;color:inherit}.plan-location-link:hover{background:#ffe3e3}#plantingMap{scroll-margin-top:80px}@media(max-width:640px){.plan-map-canvas{height:360px}.plan-map-pending .btn{white-space:normal}}
