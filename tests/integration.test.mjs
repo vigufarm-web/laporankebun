@@ -40,6 +40,17 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   // Existing historical locations remain editable, while new unowned locations stay blocked.
   r=await request('/api/daily','POST',{id:reportId,tanggal:report.tanggal,divisi:report.divisi,status:'Selesai',items:report.items});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].realisasi,500);
   r=await request('/api/daily','POST',{tanggal:'2026-10-26',divisi:'Pisang',status:'Draf',items:[{blok:'ANAK-1',aktivitas:'Belum ada hasil',satuan:'ha',hk_realisasi:1}]});assert.equal(r.status,200);assert.equal(r.body.items[0].realisasi,null);assert.equal(r.body.items[0].hasil_sdhi,null);assert.equal(r.body.items[0].target,null);
+  // Explicit historical transfer is previewed, version checked, and idempotent.
+  r=await request('/api/daily?from=2026-10-24&to=2026-10-24');const transferReport=r.body.find(x=>x.id===reportId);
+  const transferBody={reports:[transferReport,{tanggal:'2001-01-01',divisi:'Pisang',status:'Selesai',items:[{aktivitas:'Riwayat lama',blok:'LOKASI-HISTORIS',realisasi:2,satuan:'ha',hk_realisasi:1}]}]};
+  r=await request('/api/daily/transfer','POST',transferBody);assert.equal(r.status,200);assert.equal(r.body.preview.length,2);const transferToken=r.body.token;
+  r=await request('/api/daily/transfer','POST',{...transferBody,mode:'apply',token:'stale'});assert.equal(r.status,409);
+  r=await request('/api/daily/transfer','POST',{...transferBody,mode:'apply',token:transferToken});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.reports.find(x=>x.key==='2026-10-24|Pisang').id,reportId);
+  r=await request('/api/daily/transfer','POST',{...transferBody,mode:'apply',token:transferToken});assert.equal(r.status,200);assert.equal(r.body.already_applied,true);
+  r=await request('/api/daily/locations');assert.ok(!r.body.some(x=>x.nama==='LOKASI-HISTORIS'));
+  r=await request('/api/daily','POST',{tanggal:'2999-01-01',divisi:'Pisang',status:'Draf',items:[{blok:'ANAK-1',aktivitas:'Foto retry',realisasi:1,satuan:'ha',hk_realisasi:1}]});assert.equal(r.status,200);const retryReportId=r.body.id;
+  const uploadFixture=async()=>{const response=await fetch(base+'/api/daily/photo?report='+retryReportId,{method:'POST',headers:{cookie,'Content-Type':'image/webp'},body:Buffer.from('RIFF-test-WEBP')});assert.equal(response.status,200);return response.json();};
+  const firstPhoto=await uploadFixture(),secondPhoto=await uploadFixture();assert.equal(firstPhoto.id,secondPhoto.id,'retry does not duplicate the stored original');
   // Expired originals and thumbnails are removed; text and quantities survive.
   const photoDir=path.join(dir,'data','daily-photos');fs.mkdirSync(photoDir,{recursive:true});
   fs.writeFileSync(path.join(photoDir,'expired.webp'),'test original');fs.writeFileSync(path.join(photoDir,'expired-thumb.webp'),'test thumbnail');
@@ -63,6 +74,7 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   let response=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(response.status,403);
   response=await fetch(base+'/api/reports/daily.pdf?from=2026-10-01&to=2026-10-24&divisi=Padi',{headers:{cookie}});assert.equal(response.status,403);
   response=await fetch(base+'/api/reports/daily.pdf?from=2026-10-01&to=2026-10-24&divisi=Pisang',{headers:{cookie}});assert.equal(response.status,200);
+  r=await request('/api/daily/transfer','POST',{reports:[transferReport]});assert.equal(r.status,403);
   r=await request('/api/reports/share?from=2026-10-24&to=2026-10-24&divisi=Pisang');assert.equal(r.status,200);assert.ok(r.body.text.includes('Pemupukan test'));assert.ok(!r.body.text.includes('/ Padi /'));
   response=await fetch(base+'/api/reports/daily.pdf');assert.equal(response.status,401);
   cookie=adminCookie;
