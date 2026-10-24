@@ -139,6 +139,7 @@ async function gisLayers() {
 }
 
 const emptyBox = (msg) => `<div class="empty"><div class="big">📭</div>${msg}</div>`;
+const fieldMode=/^\/daily\/?$/.test(location.pathname);
 const isDailyOnly = () => !!me && !isAdmin(me) && !(me.peran || []).includes('management') && (me.peran || []).some((r) => r.startsWith('daily_'));
 
 // ================================================================ sidebar & router
@@ -147,7 +148,7 @@ let settings = {};
 
 function renderSidebar(info, route) {
   const nav = (href, ico, label, active, extra = '') => `<a class="nav-item ${active ? 'active' : ''}" href="#/${href}"><span class="ico">${ico}</span>${label}${extra}</a>`;
-  if (isDailyOnly()) { $('#sidebar').innerHTML = nav('daily', '📋', '<b>Input & Laporan Saya</b>', true); return; }
+  if (isDailyOnly()||fieldMode) { $('#sidebar').innerHTML = nav('daily', '📋', '<b>Input & Laporan Saya</b>', true); return; }
   let h = nav('', '🏢', '<b>Ringkasan</b>', route === '');
   h += nav('blocks','▦','Blok & Riwayat GIS',route==='blocks');
   h += nav('hub/infra','🚜','Infra & Lahan',route==='hub/infra');
@@ -211,17 +212,18 @@ function editNote(key, n, r) {
 
 async function route() {
   let r = location.hash ? location.hash.replace(/^#\/?/, '') : /^\/daily\/?$/.test(location.pathname) ? 'daily' : '';
-  if (isDailyOnly() && r !== 'daily') { location.hash = '#/daily'; return; }
+  if ((isDailyOnly()||fieldMode) && r !== 'daily') { location.hash = '#/daily'; return; }
   charts.forEach((c) => c.destroy()); charts = [];
   $('#sidebar').classList.remove('open');
-  document.body.classList.toggle('public-summary-mode',!isAdmin(me)&&!isDailyOnly());
-  const publicView=(!isAdmin(me)&&!isDailyOnly())||!r;
+  document.body.classList.toggle('public-summary-mode',fieldMode||(!isAdmin(me)&&!isDailyOnly()));
+  const safePublic=r==='daily'||r==='hub'||r.startsWith('hub/')||/^k\/(pisang|padi)\/progres$/.test(r);
+  const publicView=(!isAdmin(me)&&!isDailyOnly()&&!safePublic)||!r;
   if(publicView){
     $('#note').hidden=true;renderSidebar({},r);if(!isAdmin(me))$('#sidebar').innerHTML='<a class="nav-item active" href="#/">Ringkasan kebun</a>';
     return import('./public-summary.js').then(m=>m.renderPublicSummary($('#main'),App));
   }
   $('#main').classList.remove('summary-page');
-  if(r==='daily'){renderSidebar({},r);$('#note').hidden=true;return renderDaily($('#main'),App).catch(e=>$('#main').innerHTML='<div class="card">'+esc(e.message)+'</div>');}
+  if(r==='daily'){renderSidebar({},r);$('#note').hidden=true;if(!me)return import('./daily-public.js').then(m=>m.renderPublicDaily($('#main'),App));return renderDaily($('#main'),App).catch(e=>$('#main').innerHTML='<div class="card">'+esc(e.message)+'</div>');}
   if(r==='laporan'||r.startsWith('laporan/')){renderSidebar({},r);$('#note').hidden=true;return import('./weekly-owner.js').then(m=>m.renderWeeklyOwner($('#main'),App));}
   if(r==='pengaturan'){renderSidebar({},r);$('#note').hidden=true;return renderSettings($('#main'));}
   if(r==='hub'||r.startsWith('hub/')){renderSidebar({},r);$('#note').hidden=true;return import('./hub.js').then(m=>m.renderHub($('#main'),App,r.split('/')[1]));}
@@ -651,7 +653,7 @@ function applySettings() {
 }
 
 // ================================================================ start
-export const App = { tables: TABLES, api, cache, ctx, loadTable, openForm, renderTable, excelPanel, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
+export const App = { tables: TABLES, api, cache, ctx, loadTable, openForm, renderTable, excelPanel, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, login:openLogin, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
 // ================================================================ LOGIN & PENGGUNA
 const peranLabel = (u) => (u.peran || []).map((r) => ROLES[r]?.label || r).join(', ') || '—';
 function renderUserChip() {
@@ -703,6 +705,7 @@ async function boot() {
   needSetup = !!r.setup;
   server = { online: !!r.online, vercel: !!r.vercel };
   renderUserChip();
+  if(fieldMode){const brand=document.querySelector('.brand');if(brand)brand.href='/daily';}
   if (isDailyOnly() && location.hash !== '#/daily') location.hash = '#/daily';
   else route();
 }

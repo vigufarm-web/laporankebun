@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
@@ -53,12 +54,20 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   r=await request('/api/daily','POST',{tanggal:'2999-01-01',divisi:'Pisang',status:'Draf',items:[{blok:'ANAK-1',aktivitas:'Foto retry',realisasi:1,satuan:'ha',hk_realisasi:1}]});assert.equal(r.status,200);const retryReportId=r.body.id;
   const uploadFixture=async()=>{const response=await fetch(base+'/api/daily/photo?report='+retryReportId,{method:'POST',headers:{cookie,'Content-Type':'image/webp'},body:Buffer.from('RIFF-test-WEBP')});assert.equal(response.status,200);return response.json();};
   const firstPhoto=await uploadFixture(),secondPhoto=await uploadFixture();assert.equal(firstPhoto.id,secondPhoto.id,'retry does not duplicate the stored original');
+  const publicInfra=await request('/api/daily','POST',{tanggal:'2026-10-22',divisi:'Infra',status:'Selesai',items:[{blok:'ANAK-1',aktivitas:'Pembuatan parit tanpa foto',realisasi:237,satuan:'meter',hk_realisasi:2}]});assert.equal(publicInfra.status,200);
+  const publicRead=await fetch(base+'/api/daily/public?from=2026-10-19&to=2026-10-24');assert.equal(publicRead.status,200);const publicData=await publicRead.json(),infra=publicData.reports.find(x=>x.id===publicInfra.body.id);assert.equal(infra.items[0].realisasi,237);assert.equal(infra.photos.length,0);assert.ok(!JSON.stringify(publicData).includes('lokasi'));assert.ok(!publicData.reports.some(r=>r.id===retryReportId));
+  assert.equal((await fetch(base+'/api/daily/public/photo/'+firstPhoto.id)).status,404,'draft photograph stays private');
+  assert.equal((await fetch(base+'/api/daily/public',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
+  const publicPeriods=await (await fetch(base+'/api/summary-periods')).json();assert.deepEqual(publicPeriods.periods.map(p=>p.key),['week','month','year','all']);
+  assert.equal((await fetch(base+'/api/kebun-plan')).status,200);
   // Expired originals and thumbnails are removed; text and quantities survive.
   const photoDir=path.join(dir,'data','daily-photos');fs.mkdirSync(photoDir,{recursive:true});
   fs.writeFileSync(path.join(photoDir,'expired.webp'),'test original');fs.writeFileSync(path.join(photoDir,'expired-thumb.webp'),'test thumbnail');
   const fixture=new DatabaseSync(path.join(dir,'data','kebun.db'));
+  const publicImage=await sharp({create:{width:20,height:20,channels:3,background:'#24563D'}}).jpeg().toBuffer();fs.writeFileSync(path.join(photoDir,'public.jpg'),publicImage);const publishedPhotoId=Number(fixture.prepare('INSERT INTO daily_photo(report_id,storage,lokasi,mime,expires_at) VALUES(?,?,?,?,?)').run(reportId,'local','public.jpg','image/jpeg','2999-01-01T00:00:00Z').lastInsertRowid);
   const expiredId=Number(fixture.prepare('INSERT INTO daily_photo(created_at,updated_at,report_id,storage,lokasi,thumb_storage,thumb_lokasi,mime,expires_at) VALUES(?,?,?,?,?,?,?,?,?)').run('2000-01-01','2000-01-01',reportId,'local','expired.webp','local','expired-thumb.webp','image/webp','2000-01-08T00:00:00.000Z').lastInsertRowid);fixture.close();
-  assert.equal((await fetch(base+'/api/daily/photo/'+expiredId,{headers:{cookie}})).status,404);
+  const publicPhoto=await fetch(base+'/api/daily/public/photo/'+publishedPhotoId);assert.equal(publicPhoto.status,200);assert.deepEqual(Buffer.from(await publicPhoto.arrayBuffer()),publicImage);
+  assert.equal((await fetch(base+'/api/daily/photo/'+expiredId,{headers:{cookie}})).status,404);assert.equal((await fetch(base+'/api/daily/public/photo/'+expiredId)).status,404);
   r=await request('/api/daily/cleanup');assert.equal(r.status,200);assert.ok(r.body.deleted>=1);
   assert.equal(fs.existsSync(path.join(photoDir,'expired.webp')),false);assert.equal(fs.existsSync(path.join(photoDir,'expired-thumb.webp')),false);
   r=await request('/api/daily?from=2026-10-24&to=2026-10-24');assert.equal(r.body.find(x=>x.id===reportId).items[0].realisasi,500);assert.ok(r.body.find(x=>x.id===reportId).photos.find(x=>x.id===expiredId).deleted_at);

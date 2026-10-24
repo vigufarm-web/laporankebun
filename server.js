@@ -1,5 +1,7 @@
 import {reportWeek} from './lib/report-week.js';
-import {cloudOverview} from './lib/cloud-overview.js';
+import {kebunPlan} from './lib/kebun-plan.js';
+import {summaryPeriods} from './lib/summary-periods.js';
+import {cloudOverview,cloudOverviewPeriods} from './lib/cloud-overview.js';
 import {weeklyLand} from './lib/weekly-targets.js';
 import { importLand, capLandRows, landAreas, landStages, saveDailyLand, stageForDaily, registerHistoricalDailyCoverage } from './lib/land-actual.js';
 import { kebunSummary } from './lib/kebun-summary.js';
@@ -697,7 +699,7 @@ async function api(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length': buf.length });
     return res.end(buf);
   }
-  const publicRead = m === 'GET' && ['settings','overview','kebun-summary'].includes(parts[1]);
+  const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods'].includes(parts[1])||/^\/api\/daily\/public(?:\/photo\/\d+)?$/.test(url.pathname));
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
   if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1]))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
 
@@ -729,6 +731,22 @@ async function api(req, res, url) {
 
   // Lightweight read models and versioned GIS changes.
   if (['overview','records','climate','blocks','gis'].includes(parts[1]) && dailyOnly(user)) return send(res,403,{error:'Akun lapangan hanya dapat mengakses Daily Report.'});
+  if(m==='GET'&&url.pathname==='/api/daily/public'){
+    const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||reportWeek(today).from,to=url.searchParams.get('to')||today;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to||Date.parse(to)-Date.parse(from)>31*86400000)return send(res,400,{error:'Pilih rentang maksimal 31 hari.'});
+    const reports=db.prepare("SELECT * FROM daily_report WHERE status='Selesai' AND tanggal BETWEEN ? AND ? ORDER BY tanggal DESC,divisi,id DESC LIMIT 100").all(from,to<today?to:today).map(dailyPayload);
+    const fields=['blok','aktivitas','realisasi','hasil_sdhi','satuan','hk_realisasi','hk_rencana','target','alat','meter_awal','meter_akhir','ritase','keterangan'];
+    return send(res,200,{from,to,reports:reports.map(r=>({id:r.id,tanggal:r.tanggal,divisi:r.divisi,status:r.status,kendala:r.kendala,tindak_lanjut:r.tindak_lanjut,items:r.items.map(x=>Object.fromEntries(fields.map(k=>[k,x[k]??null]))),photos:r.photos.filter(p=>!p.deleted_at&&p.url).map(p=>({id:p.id,caption:p.caption||p.jenis||'Foto kegiatan',url:'/api/daily/public/photo/'+p.id,thumbnail_url:p.thumbnail_url?'/api/daily/public/photo/'+p.id+'?thumb=1':null}))}))});
+  }
+  if(m==='GET'&&/^\/api\/daily\/public\/photo\/\d+$/.test(url.pathname)){
+    let photo=db.prepare("SELECT p.* FROM daily_photo p JOIN daily_report r ON r.id=p.report_id WHERE p.id=? AND r.status='Selesai' AND r.tanggal<=?").get(Number(parts[4]),new Date(Date.now()+7*3600e3).toISOString().slice(0,10));
+    if(!photo||photo.deleted_at||photoExpired(photo)||!photo.lokasi)return send(res,404,{error:'Foto tidak tersedia.'});
+    if(url.searchParams.get('thumb')==='1'&&photo.thumb_lokasi)photo={...photo,lokasi:photo.thumb_lokasi,storage:photo.thumb_storage,mime:'image/webp'};
+    if(photo.storage==='blob'){const result=await blobGet(photo.lokasi,{access:'private'});if(!result||result.statusCode!==200)return send(res,404,{error:'Foto tidak tersedia.'});res.writeHead(200,{'Content-Type':result.blob.contentType||photo.mime,'Cache-Control':'public, max-age=60','X-Content-Type-Options':'nosniff'});return Readable.fromWeb(result.stream).pipe(res);}
+    const file=safeJoin(PHOTO_DIR,photo.lokasi);if(!file||!fs.existsSync(file))return send(res,404,{error:'Foto tidak tersedia.'});return serveFile(res,file);
+  }
+  if(parts[1]==='kebun-plan'&&m==='GET')return send(res,200,kebunPlan(db,ownedDailyLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
+  if(parts[1]==='summary-periods'&&m==='GET'){const periods=summaryPeriods(new Date(Date.now()+7*3600e3).toISOString().slice(0,10));const values=cloud?await cloudOverviewPeriods(cloud,periods):periods.map(p=>({...p,...reads.overview({...p,blocks:verifiedOverviewBlocks()})}));return send(res,200,{periods:values.map(d=>({key:d.key,label:d.label,from:d.from,to:d.to,pisang:d.pisang,padi:d.padi,infra:d.infra,dailyTotals:d.dailyTotals,climate:{rain:d.climate.rain,observations:d.climate.observations,rainDays:d.climate.rainDays}}))});}
   if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,ownedDailyLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10),url.searchParams.get('kom')==='Padi'?'Padi':'Pisang'));
   if(parts[1]==='kebun'&&m==='GET'){
     const tables=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
@@ -793,7 +811,7 @@ async function api(req, res, url) {
     if(!user || !isAdmin(user))return send(res,403,{error:'Pemindahan laporan khusus admin.'});
     const body=await readBody(req);
     const result=transferDaily({db,tx,blocks,now,actor:user.nama||user.username},body);
-    if(body.mode==='apply'&&!result.already_applied)log('pindahkan laporan','daily_report',null,{jumlah:result.reports.length});
+    if(body.mode==='apply'&&!result.already_applied){tx(()=>registerHistoricalDailyCoverage(db,now,result.reports.map(r=>r.id)));log('pindahkan laporan','daily_report',null,{jumlah:result.reports.length});}
     return send(res,200,result);
   }
   // --- Daily Report (harus login; mandor hanya dapat mengubah divisinya)
@@ -1336,9 +1354,13 @@ function readScope(req,url){
   if(p==='/api/nursery-summary')return [...authTables,'pisang_bibit'];
   if(/^\/api\/blocks\/[^/]+\/history$/.test(p))return [...authTables,'_blocks','_block_links',...Object.keys(TABLES).filter(t=>!['gis_layer','daily_photo','iklim'].includes(t))];
   if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];
+  if(p==='/api/summary-periods')return authTables;
+  if(p==='/api/kebun-plan')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/overview')return authTables;
   if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/kebun')return [...authTables,...land];
+  if(/^\/api\/daily\/public\/photo\/\d+$/.test(p))return [...authTables,'daily_photo','daily_report'];
+  if(p==='/api/daily/public')return [...authTables,...land,'daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_land_week_plan_snapshots'];
   if(p==='/api/daily')return [...authTables,...land,'daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_land_week_plan_snapshots'];
   if(p==='/api/daily/plans')return [...authTables,'daily_week_plan','daily_week_item','_land_week_plan_snapshots'];
   if(p.startsWith('/api/gis/layers'))return [...authTables,'gis_layer'];
@@ -1350,7 +1372,7 @@ async function apiRequest(req, res, url) {
   if (!cloud) return api(req, res, url);
   return serial(async () => {
     const adminRead=/^\/api\/(?:t|tables|records|excel|blocks|gis|kebun|land-prep|padi|nursery-summary|backup|backups|users|log)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/excel/status';
-    const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup';
+    const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup'&&!/^\/api\/daily\/public(?:\/|$)/.test(url.pathname);
     if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});if(adminRead&&!isAdmin(reader))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
     if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
