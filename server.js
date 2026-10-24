@@ -1,3 +1,4 @@
+import { execChanged } from './lib/tracked-sql.js';
 import { copyCloudSnapshot } from './lib/cloud-snapshot.js';
 import { photoExpiresAt, photoExpired } from './lib/photo-retention.js';
 import { createReadModels } from './lib/read-models.js';
@@ -47,16 +48,16 @@ const db = {
   prepare(sql) {
     const st = raw.prepare(sql);
     if (!cloud || !WRITE.test(sql)) return st;
-    return { run: (...a) => { const r = st.run(...a); pend.push({ sql, args: a }); return r; }, get: (...a) => st.get(...a), all: (...a) => st.all(...a) };
+    return { run: (...a) => { const r = st.run(...a); if(r.changes>0)pend.push({ sql, args: a }); return r; }, get: (...a) => st.get(...a), all: (...a) => st.all(...a) };
   },
   exec(sql) {
-    raw.exec(sql);
+    const changed = cloud && WRITE.test(sql) ? execChanged(raw,sql) : (raw.exec(sql), false);
     if (!cloud) return;
     const s = sql.trim().toUpperCase();
     if (s === 'BEGIN') txMark = pend.length;
     else if (s === 'COMMIT') txMark = -1;
     else if (s === 'ROLLBACK') { if (txMark >= 0) pend.length = txMark; txMark = -1; }
-    else if (WRITE.test(sql)) pend.push({ sql });
+    else if (changed) pend.push({ sql });
   },
 };
 const q = (s) => `"${s.replace(/"/g, '')}"`;
