@@ -1341,9 +1341,9 @@ function readScope(req,url){
 async function apiRequest(req, res, url) {
   if (!cloud) return api(req, res, url);
   return serial(async () => {
-    if(VERCEL&&/^\/api\/(?:t|tables|records|excel|blocks|gis|kebun|land-prep|padi)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/excel/status'){
-      await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader||!isAdmin(reader))return send(res,reader?403:401,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
-    }
+    const adminRead=/^\/api\/(?:t|tables|records|excel|blocks|gis|kebun|land-prep|padi|nursery-summary|backup|backups|users|log)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/excel/status';
+    const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup';
+    if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});if(adminRead&&!isAdmin(reader))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
     if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
     const hold = holdResponse(res);
