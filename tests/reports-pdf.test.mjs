@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {TABLES} from '../public/js/schema.js';import {ownerSections} from '../lib/reports-pdf.js';
+test('owner PDF excludes superseded progress and separates GKG internal shipments',()=>{
+ const db=new DatabaseSync(':memory:');for(const [t,T] of Object.entries(TABLES))db.exec(`CREATE TABLE ${t}(id INTEGER PRIMARY KEY,created_at TEXT,updated_at TEXT,${T.f.filter(f=>f.t!=='calc').map(f=>f.k+' '+(f.t==='num'||f.t==='money'?'REAL':f.t==='int'?'INTEGER':'TEXT')).join(',')})`);
+ db.exec("INSERT INTO lahan_harian(tanggal,blok,aktivitas,hasil_ha,diganti_aktual) VALUES('2026-10-23','D04','Bajak 1',0,1),('2026-10-23','D04','Bajak 1',0.2,0);INSERT INTO padi_penjualan(tanggal,petak,jenis,tipe,berat_kg,pembeli) VALUES('2026-10-23','P06a','GKG','Mutasi Internal',91.08,'PH')");
+ const sections=ownerSections({db,from:'2026-10-01',to:'2026-10-24',climate:{days:[]}});assert.equal(sections.find(s=>s.title==='Progres lahan').rows.length,1);assert.equal(sections.find(s=>s.title==='Penjualan padi').rows.length,0);assert.equal(sections.find(s=>s.title==='Mutasi padi internal').rows.length,1);db.close();
+});
