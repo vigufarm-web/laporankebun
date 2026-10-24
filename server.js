@@ -235,6 +235,8 @@ function ownedDailyLocations() {
   parcelLocations ||= createParcelLocations(db,blocks);
   return parcelLocations();
 }
+let planningParcelLocations;
+function ownedPlanningLocations(){planningParcelLocations ||= createParcelLocations(db,blocks,{includePartial:true});return planningParcelLocations();}
 
 let dailyTargetCache=new Map();
 function dailyLandTargets(date){
@@ -705,6 +707,12 @@ async function api(req, res, url) {
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
   if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1]))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
 
+  if(url.pathname==='/api/kebun-plan/reconcile'&&m==='POST'){
+    if(!isAdmin(user))return send(res,403,{error:'Pembaruan target dan jadwal khusus admin.'});
+    const {reconcilePlanting}=await import('./lib/planting-review.js');
+    return send(res,200,reconcilePlanting({db,tx,locations:ownedPlanningLocations(),insertRow,now,log},await readBody(req)));
+  }
+
   if(parts[1]==='reports' && m==='GET') {
     if(!user)return send(res,401,{error:'Silakan login untuk mengunduh laporan.'});
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),divisi=url.searchParams.get('divisi'),reportId=Number(url.searchParams.get('reportId'))||null;let from=url.searchParams.get('from')||today,to=url.searchParams.get('to')||from;
@@ -757,9 +765,9 @@ async function api(req, res, url) {
     if(photo.storage==='blob'){const result=await blobGet(photo.lokasi,{access:'private'});if(!result||result.statusCode!==200)return send(res,404,{error:'Foto tidak tersedia.'});res.writeHead(200,{'Content-Type':result.blob.contentType||photo.mime,'Cache-Control':'public, max-age=60','X-Content-Type-Options':'nosniff'});return Readable.fromWeb(result.stream).pipe(res);}
     const file=safeJoin(PHOTO_DIR,photo.lokasi);if(!file||!fs.existsSync(file))return send(res,404,{error:'Foto tidak tersedia.'});return serveFile(res,file);
   }
-  if(parts[1]==='kebun-plan'&&m==='GET')return send(res,200,kebunPlan(db,ownedDailyLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
+  if(parts[1]==='kebun-plan'&&m==='GET')return send(res,200,kebunPlan(db,ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
   if(parts[1]==='summary-periods'&&m==='GET'){const periods=summaryPeriods(new Date(Date.now()+7*3600e3).toISOString().slice(0,10));const values=cloud?await cloudOverviewPeriods(cloud,periods):periods.map(p=>({...p,...reads.overview({...p,blocks:verifiedOverviewBlocks()})}));return send(res,200,{periods:values.map(d=>({key:d.key,label:d.label,from:d.from,to:d.to,pisang:d.pisang,padi:d.padi,infra:d.infra,dailyTotals:d.dailyTotals,climate:{rain:d.climate.rain,observations:d.climate.observations,rainDays:d.climate.rainDays}}))});}
-  if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,ownedDailyLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10),url.searchParams.get('kom')==='Padi'?'Padi':'Pisang'));
+  if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,url.searchParams.get('kom')==='Padi'?ownedDailyLocations():ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10),url.searchParams.get('kom')==='Padi'?'Padi':'Pisang'));
   if(parts[1]==='kebun'&&m==='GET'){
     const tables=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
     const data=Object.fromEntries(tables.map(t=>[t,db.prepare('SELECT * FROM '+q(t)).all().map(({created_at,updated_at,block_name_snapshot,...r})=>r)]));
