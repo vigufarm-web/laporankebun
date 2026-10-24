@@ -7,7 +7,7 @@ const renderKomoditas=(...args)=>import('./komoditas.js').then(m=>m.renderKomodi
 const renderDaily=(...args)=>import('./daily.js').then(m=>m.renderDaily(...args));
 
 let me = null;                                  // pengguna yang login
-let server = {};                                // info server: online (database Turso) / vercel
+let server = {};                                // info server: penyimpanan online / vercel
 const can = (t) => canEdit(me, t);              // boleh ubah tabel t?
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -611,7 +611,7 @@ async function renderSettings(main) {
         <div style="margin-top:10px"><button class="btn primary" id="sSave">Simpan</button></div>
       </div>
       <div class="card"><h3>Backup data</h3>
-        <p class="small muted">${server.vercel ? 'Versi online: data tersimpan di database online (Turso). Klik "Download backup database" sesekali untuk menyimpan salinan di komputer.' : `Database: <code>${server.online ? 'online (Turso) — salinan cadangan tetap disimpan di komputer ini' : 'data/kebun.db'}</code>. Backup otomatis (terkompres .db.gz) dibuat saat server dinyalakan bila ada perubahan & sebelum setiap sinkron Excel — 10 terakhir disimpan di <code>data/backup</code>.`}</p>
+        <p class="small muted">${server.vercel ? 'Data tersimpan di penyimpanan online. Klik "Download backup database" sesekali untuk menyimpan salinan di komputer.' : `Database: <code>${server.online ? 'online — salinan cadangan tetap disimpan di komputer ini' : 'data/kebun.db'}</code>. Backup otomatis (terkompres .db.gz) dibuat saat server dinyalakan bila ada perubahan & sebelum setiap sinkron Excel — 10 terakhir disimpan di <code>data/backup</code>.`}</p>
         <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn primary" href="/api/backup">⬇ Download backup database</a>${server.vercel ? '' : '<button class="btn" id="bBk">Buat backup sekarang</button>'}<button class="btn" id="bExpAll">⬇ Export semua data (Excel)</button></div>
         ${bk.length ? `<table class="mini" style="margin-top:10px"><tr><th>File backup</th><th class="num">Ukuran</th></tr>${bk.slice(0, 8).map((b) => `<tr><td>${esc(b.file)}</td><td class="num">${fmtNum(b.size / 1024)} KB</td></tr>`).join('')}</table>` : ''}
       </div>
