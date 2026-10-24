@@ -59,13 +59,13 @@ function ownerTable(reports, query = '') {
     const g=grouped.get(key)||{...x,blocks:new Set(),notes:new Set(),realisasi:null,hasil_sdhi:null,target:null,hk_realisasi:null};
     String(x.blok||'').split(/\s*,\s*/).filter(Boolean).forEach(b=>g.blocks.add(b));
     if(x.keterangan)g.notes.add(x.keterangan);
-    for(const k of ['realisasi','hasil_sdhi','target','hk_realisasi'])if(has(x[k]))g[k]=(g[k]??0)+Number(x[k]);
+    for(const k of ['realisasi','hasil_sdhi','target','target_hk_minggu','hk_realisasi'])if(has(x[k]))g[k]=(g[k]??0)+Number(x[k]);
     grouped.set(key,g);
   }
   const rows=[...grouped.values()];
   if (!rows.length) return '<div class="empty">Belum ada hasil kerja pada pilihan ini.</div>';
   const quantity=(v,u='')=>has(v)?'<b>'+fmt(v)+'</b>'+(u&&u!=='lainnya'?' '+safe(u):''):'';
-  const weekly=rows.some(x=>Number(x.target)>0), cumulative=weekly||rows.some(x=>has(x.hasil_sdhi)&&Number(x.hasil_sdhi)!==Number(x.realisasi));
+  const weekly=rows.some(x=>Number(x.target)>0||Number(x.target_hk_minggu)>0), cumulative=weekly||rows.some(x=>has(x.hasil_sdhi)&&Number(x.hasil_sdhi)!==Number(x.realisasi));
   const columns=[
     {label:'Tanggal',show:true,cell:x=>safe(new Date(x.report.tanggal+'T00:00:00').toLocaleDateString('id-ID',{day:'2-digit',month:'short'}))},
     {label:'Divisi',show:new Set(rows.map(x=>x.report.divisi)).size>1,cell:x=>'<span class="dr-div '+x.report.divisi.toLowerCase()+'">'+safe(x.report.divisi)+'</span>'},
@@ -74,7 +74,7 @@ function ownerTable(reports, query = '') {
     {label:'HI — Hasil hari ini',numeric:true,show:rows.some(x=>has(x.realisasi)),cell:x=>quantity(x.realisasi,x.satuan)},
     {label:'SDHI — Hasil minggu ini',numeric:true,show:cumulative,cell:x=>quantity(x.hasil_sdhi,x.satuan)},
     {label:'HK',numeric:true,show:rows.some(x=>has(x.hk_realisasi)),cell:x=>quantity(x.hk_realisasi)},
-    {label:'Target mingguan',numeric:true,show:weekly,cell:x=>Number(x.target)>0?quantity(x.target,x.satuan):''},
+    {label:'Rencana minggu',numeric:true,show:weekly,cell:x=>Number(x.target)>0?quantity(x.target,x.satuan):Number(x.target_hk_minggu)>0?quantity(x.target_hk_minggu,'HK')+'<small class=muted> · tenaga</small>':'<small class=muted>Belum ditetapkan</small>'},
     {label:'Capaian',numeric:true,show:weekly,cell:x=>Number(x.target)>0&&has(x.hasil_sdhi)?'<span class="dr-pct">'+Math.round(Number(x.hasil_sdhi)/Number(x.target)*100)+'%</span>':''},
     {label:'Status',show:rows.some(x=>!isDone(x.report)),cell:x=>'<span class="st '+(isDone(x.report)?'ok':'wait')+'">'+safe(x.report.status)+'</span>'}
   ].filter(c=>c.show);

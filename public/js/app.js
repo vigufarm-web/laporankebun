@@ -214,6 +214,14 @@ async function route() {
   if (isDailyOnly() && r !== 'daily') { location.hash = '#/daily'; return; }
   charts.forEach((c) => c.destroy()); charts = [];
   $('#sidebar').classList.remove('open');
+  document.body.classList.toggle('public-summary-mode',!isAdmin(me)&&!isDailyOnly());
+  const publicView=(!isAdmin(me)&&!isDailyOnly())||!r||r==='hub'||r.startsWith('hub/');
+  if(publicView){
+    $('#note').hidden=true;renderSidebar({},r);if(!isAdmin(me))$('#sidebar').innerHTML='<a class="nav-item active" href="#/">Ringkasan kebun</a>';
+    return import('./public-summary.js').then(m=>m.renderPublicSummary($('#main'),App));
+  }
+  $('#main').classList.remove('summary-page');
+  if(r==='daily'){renderSidebar({},r);$('#note').hidden=true;return renderDaily($('#main'),App).catch(e=>$('#main').innerHTML='<div class="card">'+esc(e.message)+'</div>');}
   let info;
   try { [info] = await Promise.all([syncAll(r), api.get('/api/settings').then((s) => { settings = s; }).catch(() => {})]); } catch (e) { $('#main').innerHTML = `<div class="card">Server tidak bisa dihubungi: ${esc(e.message)}</div>`; return; }
   renderSidebar(info, r);
@@ -655,7 +663,7 @@ function openLogin() {
   const setup = needSetup;
   const md = openModal(`<div class="modal-head"><h2>${setup ? 'Buat akun admin pertama' : '🔐 Login Admin'}</h2><button class="x">×</button></div>
     <form id="authF"><div class="modal-body"><div class="grid" style="gap:10px">
-      <p class="small muted" style="margin:0">${setup ? 'Belum ada pengguna. Akun admin ini dipakai untuk membuat akun bagian penjualan, panen, dll.' : 'Login untuk menambah & mengubah data. Tanpa login, semua data tetap bisa dilihat.'}</p>
+      <p class="small muted" style="margin:0">${setup ? 'Belum ada pengguna. Akun admin ini dipakai untuk membuat akun bagian penjualan, panen, dll.' : 'Login untuk menambah & mengubah data. Tanpa login, ringkasan kebun tetap tersedia. Rincian input hanya untuk admin.'}</p>
       ${setup ? '<div class="fld"><label>Nama lengkap</label><input id="aNama" required></div>' : ''}
       <div class="fld"><label>Username</label><input id="aUser" autocomplete="username" required autocapitalize="none"></div>
       <div class="fld"><label>Password${setup ? ' (min. 6 karakter)' : ''}</label><input id="aPw" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" required></div>

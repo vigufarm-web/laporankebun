@@ -787,7 +787,7 @@ export function pisangTertanam(c) {
 // urutan blok awal (user): Land Clearing pindah ke blok terdekat di peta; kegiatan lain ikut prioritas tanam
 export const ruteDefault = (akt) => (/land\s*clearing/i.test(String(akt || '')) ? 'Blok terdekat' : '');
 // alat awal (user): Bajak 1 & Bajak 2 = 1 traktor bersama; Land Clearing = 1 alat
-export const alatDefault = (akt) => (/bajak/i.test(String(akt || '')) ? 'Traktor Bajak' : /land\s*clearing/i.test(String(akt || '')) ? 'Alat LC' : '');
+export const alatDefault = (akt) => ((/bajak/i.test(String(akt || '')) || /^ridger$/i.test(String(akt || ''))) ? 'Traktor Bajak' : /land\s*clearing/i.test(String(akt || '')) ? 'Alat LC' : '');
 export const liburDefault = (akt) => (/land\s*clearing|bajak/i.test(String(akt || '')) ? 'Sabtu & Minggu' : 'Minggu');
 export function hariKerjaAkt(a) {
   const off = (a?.libur || liburDefault(a?.aktivitas)) === 'Sabtu & Minggu' ? [0, 6] : [0];
