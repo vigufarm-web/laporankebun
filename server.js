@@ -697,7 +697,8 @@ async function api(req, res, url) {
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today,to=url.searchParams.get('to')||from,divisi=url.searchParams.get('divisi'),reportId=Number(url.searchParams.get('reportId'))||null;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)return send(res,400,{error:'Periksa periode laporan.'});
     const owner=parts[2]==='owner.pdf'||url.searchParams.get('owner')==='true';
-    const canOwner=isAdmin(user)||(user.peran||[]).includes('management');
+    if(!isAdmin(user)&&!dailyOnly(user))return send(res,403,{error:'Rincian laporan khusus admin atau mandor sesuai divisinya.'});
+    const canOwner=isAdmin(user);
     if(owner&&!canOwner)return send(res,403,{error:'Laporan gabungan khusus owner/management.'});
     const allowed=dailyOnly(user)?dailyDivisions(user):DAILY_DIVISI;
     if(divisi&&!allowed.includes(divisi))return send(res,403,{error:'Laporan bukan divisi Anda.'});
@@ -786,6 +787,7 @@ async function api(req, res, url) {
   }
   // --- Daily Report (harus login; mandor hanya dapat mengubah divisinya)
   if (parts[1] === 'daily') {
+    if(!isAdmin(user)&&!dailyOnly(user))return send(res,403,{error:'Daily Report hanya untuk admin dan mandor sesuai divisinya.'});
     if (m === 'GET' && parts[2] === 'locations') {
       if (!user) return send(res, 401, { error: 'Silakan login untuk memilih lokasi Daily Report' });
       return send(res,200,ownedDailyLocations());
@@ -1080,11 +1082,12 @@ async function api(req, res, url) {
     }
   }
   if (parts[1] === 'log' && m === 'GET') {
+    if(!isAdmin(user))return send(res,403,{error:'Riwayat rincian input khusus admin.'});
     const lim = Math.min(2000, Number(url.searchParams.get('limit')) || 300);
     return send(res, 200, db.prepare('SELECT * FROM _log ORDER BY id DESC LIMIT ?').all(lim));
   }
   if (parts[1] === 'settings') {
-    if (m === 'GET') return send(res, 200, Object.fromEntries(db.prepare('SELECT k, v FROM _settings').all().map((r) => [r.k, r.v])));
+    if (m === 'GET') return send(res, 200, isAdmin(user)?Object.fromEntries(db.prepare('SELECT k, v FROM _settings').all().map((r) => [r.k, r.v])):{nama:db.prepare("SELECT v FROM _settings WHERE k='nama'").get()?.v||'PT VIGU FARM INDONESIA'});
     if (m === 'PUT' && !isAdmin(user)) return send(res, 403, { error: 'Khusus admin' });
     if (m === 'PUT') {
       const body = await readBody(req);
