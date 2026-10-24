@@ -1,3 +1,4 @@
+import { removeDuplicateParcelLayer } from './lib/gis-deduplicate.js';
 import { createParcelLocations } from './lib/gis-ownership.js';
 import { importPadi } from './lib/padi-import.js';
 import { loadPhotoContext } from './lib/photo-context.js';
@@ -512,6 +513,8 @@ function seed() {
   }
 }
 seed();
+const removedParcelDuplicate=removeDuplicateParcelLayer(db);
+if(removedParcelDuplicate)log('hapus layer persil duplikat','gis_layer',removedParcelDuplicate.removed,removedParcelDuplicate);
 blocks.boot();
 // Existing photo files follow the same report-date retention as new uploads.
 for(const photo of db.prepare('SELECT p.id,p.expires_at,r.tanggal FROM daily_photo p JOIN daily_report r ON r.id=p.report_id WHERE p.lokasi IS NOT NULL OR p.thumb_lokasi IS NOT NULL').all()) {
