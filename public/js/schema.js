@@ -436,6 +436,10 @@ export const TABLES = {
       { k: 'tanggal', l: 'Tanggal', t: 'date', req: true },
       { k: 'aktivitas', l: 'Aktivitas', t: 'ref', ref: 'lahan_aktivitas', req: true },
       { k: 'blok', l: 'Blok', t: 'ref', ref: 'lahan_blok', req: true },
+      { k: 'hasil_input_ha', l: 'Input asli (ha)', t: 'num', sembunyi: true },
+      { k: 'diganti_aktual', l: 'Diganti acuan aktual', t: 'int', sembunyi: true },
+      { k: 'source_key', l: 'Kunci aktual', t: 'text', sembunyi: true },
+      { k: 'daily_report_id', l: 'ID Daily', t: 'int', sembunyi: true },
       { k: 'hasil_ha', l: 'Hasil (ha)', t: 'num', req: true },
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
@@ -582,6 +586,7 @@ export const TABLES = {
       { k: 'aktivitas', l: 'Aktivitas', t: 'text', req: true },
       { k: 'blok', l: 'Blok / Lokasi', t: 'text' },
       { k: 'target', l: 'Rencana', t: 'num' },
+      { k: 'realisasi_input', l: 'Input hasil asli', t: 'num', sembunyi: true },
       { k: 'realisasi', l: 'Hasil Kerja', t: 'num' },
       { k: 'hasil_sdhi', l: 'SDHI', t: 'num' },
       { k: 'satuan', l: 'Satuan', t: 'text' },
@@ -826,7 +831,7 @@ export function susunRencana(c, mulai) {
   const blok = [], ada = new Set();
   for (const t of c.rows('lahan_target')) {
     const k = util.key(t.blok), b = lb.get(k);
-    if (!b || ada.has(k) || tt.has(k)) continue;
+    if (!b || ada.has(k) || (tt.has(k) && n(tt.get(k).gross)>=n(b.luas_ha)-0.000001)) continue;
     ada.add(k);
     const p = lahanProgress(b, c), luas = n(b.luas_ha);
     blok.push({ blok: b.blok, ym: String(t.bulan || '').slice(0, 7), kelas: n(t.prioritas), total: p.total, sisa: acts.map((a) => Math.max(0, (1 - (p.per.find((x) => x.akt === a.aktivitas)?.pct || 0)) * luas)) });
@@ -841,7 +846,7 @@ export function susunRencana(c, mulai) {
   // Kegiatan dengan "Alat" sama memakai 1 alat bergantian (mis. Bajak 1 & Bajak 2 = 1 traktor): alat menyelesaikan
   // pekerjaannya di satu blok dulu baru pindah. Setiap langkah: dari pekerjaan berikutnya tiap blok, ambil yang paling cepat
   // bisa mulai (alat bebas & kegiatan sebelumnya di blok itu selesai); seri → prioritas blok, lalu urutan kegiatan.
-  const alatOf = (a) => (String(a.alat || '').trim() ? 'alat:' + util.key(a.alat) : 'akt:' + a.aktivitas);
+  const alatOf = (a) => {const machine=alatDefault(a.aktivitas)||String(a.alat||'').trim();return machine?'alat:'+util.key(machine):'akt:'+a.aktivitas;};
   const info = acts.map((a) => ({ a, kerja: hariKerjaAkt(a), dph: dphTim(c, a), alat: alatOf(a) }));
   const bebas = {}, siap = blok.map(() => 0), lanjut = blok.map((b) => b.sisa.findIndex((h) => h > 0.005)), rows = [];
   // rotasi alat (user): kegiatan dengan Urutan Blok "Blok terdekat" (default Land Clearing) pindah ke blok TERDEKAT di peta di antara
@@ -919,7 +924,7 @@ export function statusRencana(c) {
   for (const list of grup.values()) {
     const r0 = list[0], k = util.key(r0.blok), b = lb.get(k);
     if (!prog.has(k)) prog.set(k, b ? lahanProgress(b, c) : null);
-    const pc = tt.has(k) ? 1 : prog.get(k)?.per.find((x) => x.akt === r0.aktivitas)?.pct || 0;
+    const pc = (tt.has(k)&&b&&n(tt.get(k).gross)>=n(b.luas_ha)-0.000001) ? 1 : prog.get(k)?.per.find((x) => x.akt === r0.aktivitas)?.pct || 0;
     const total = list.reduce((s, r) => s + n(r.luas_ha), 0), sisa = Math.max(0, (1 - pc) * n(b?.luas_ha));
     let ada = Math.min(total, Math.max(0, total - sisa));
     for (const r of [...list].sort((x, y) => String(x.mulai).localeCompare(String(y.mulai)) || String(x.selesai).localeCompare(String(y.selesai)))) {

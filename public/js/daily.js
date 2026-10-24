@@ -50,16 +50,19 @@ function ownerRows(reports) {
   return reports.flatMap((r) => r.items.map((x) => ({ ...x, report: r })));
 }
 
-function ownerTable(reports, query = '') {
+export function ownerTable(reports, query = '') {
   const has = v => v !== null && v !== undefined && v !== '';
   const grouped = new Map();
   for (const x of ownerRows(reports).filter(x=>!query || [x.aktivitas,x.blok,x.report.tanggal,x.report.divisi].join(' ').toLowerCase().includes(query.toLowerCase()))) {
     if (!has(x.realisasi) && !has(x.hk_realisasi)) continue;
-    const key=[x.report.tanggal,x.report.divisi,String(x.aktivitas).toLowerCase(),String(x.satuan||'').toLowerCase()].join('|');
-    const g=grouped.get(key)||{...x,blocks:new Set(),notes:new Set(),realisasi:null,hasil_sdhi:null,target:null,hk_realisasi:null};
+    const key=[x.report.tanggal,x.report.divisi,String(x.aktivitas).toLowerCase().replace(/\s/g,''),String(x.satuan||'').toLowerCase()].join('|');
+    const g=grouped.get(key)||{...x,blocks:new Set(),notes:new Set(),realisasi:null,hasil_sdhi:null,target:null,target_hk_minggu:null,hk_realisasi:null,cumulative:{hasil_sdhi:new Map(),target:new Map(),target_hk_minggu:new Map()}};
     String(x.blok||'').split(/\s*,\s*/).filter(Boolean).forEach(b=>g.blocks.add(b));
     if(x.keterangan)g.notes.add(x.keterangan);
-    for(const k of ['realisasi','hasil_sdhi','target','target_hk_minggu','hk_realisasi'])if(has(x[k]))g[k]=(g[k]??0)+Number(x[k]);
+    for(const k of ['realisasi','hk_realisasi'])if(has(x[k]))g[k]=(g[k]??0)+Number(x[k]);
+    const blockKey=String(x.blok||'').split(',').map(v=>v.trim().toLowerCase()).sort().join(',');
+    for(const k of ['hasil_sdhi','target','target_hk_minggu'])if(has(x[k])){const prior=g.cumulative[k].get(blockKey)||0,value=Math.max(prior,Number(x[k]));g[k]=(g[k]??0)+value-prior;g.cumulative[k].set(blockKey,value);}
+
     grouped.set(key,g);
   }
   const rows=[...grouped.values()];

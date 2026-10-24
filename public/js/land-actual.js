@@ -1,0 +1,7 @@
+const $=id=>document.getElementById(id);let payload,preview;
+const say=x=>$('message').textContent=x;
+async function request(body){const r=await fetch('/api/land-prep/import-actual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw new Error(d.error||'Permintaan gagal');return d;}
+function resultText(r){return `${r.sourceRows} baris aktual; ${r.added} tambahan, ${r.updated} penyesuaian, ${r.unchanged} sudah sesuai, ${r.superseded} catatan lama diganti acuan aktual.`;}
+$('file').onchange=async()=>{try{$('apply').disabled=true;say('Memeriksa aktual…');payload=JSON.parse(await $('file').files[0].text());preview=await request({payload});if(preview.already_applied){say('Aktual sudah diterapkan. '+resultText(preview));return;}say(resultText(preview.result));$('preview').replaceChildren();for(const x of preview.preview){const p=document.createElement('p');p.textContent=`${x.tanggal} · ${x.blok} · ${x.aktivitas} · ${x.hasil_ha} ha · ${x.action}`;$('preview').append(p);}$('apply').disabled=false;}catch(e){say(e.message);}};
+$('apply').onclick=async()=>{try{$('apply').disabled=true;say('Menerapkan aktual…');const d=await request({payload,mode:'apply',token:preview.token});say('Tersimpan. '+resultText(d));}catch(e){say(e.message);}};
+try{const r=await fetch('/api/me'),d=await r.json();if(d.user?.peran?.includes('admin')){$('file').disabled=false;say('Pilih paket aktual untuk diperiksa.');}else say('Login admin terlebih dahulu.');}catch(e){say(e.message);}
