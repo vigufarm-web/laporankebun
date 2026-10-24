@@ -11,7 +11,8 @@
   "dependencies": {
     "@vercel/blob": "2.4.0",
     "pdfkit": "^0.20.2",
-    "polygon-clipping": "^0.15.7"
+    "polygon-clipping": "^0.15.7",
+    "sharp": "^0.35.5"
   },
   "engines": {
     "node": ">=22.13"
