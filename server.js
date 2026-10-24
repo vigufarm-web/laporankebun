@@ -247,12 +247,12 @@ function dailyPayload(report) {
   const cumulative = db.prepare(`SELECT SUM(di.realisasi) total, MAX(NULLIF(di.target,0)) weekly_target
     FROM daily_item di JOIN daily_report dr ON dr.id=di.report_id
     WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ?
-      AND lower(trim(di.aktivitas))=lower(trim(?))
-      AND lower(trim(COALESCE(di.blok,'')))=lower(trim(COALESCE(?,'')))
+      AND lower(replace(di.aktivitas,' ',''))=lower(replace(?,' ',''))
+      AND lower(replace(COALESCE(di.blok,''),' ',''))=lower(replace(COALESCE(?,''),' ',''))
       AND lower(trim(COALESCE(di.satuan,'')))=lower(trim(COALESCE(?,'')))`);
   const plannedHK=db.prepare(`SELECT SUM(di.hk_rencana) total FROM daily_item di JOIN daily_report dr ON dr.id=di.report_id
-    WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ? AND lower(trim(di.aktivitas))=lower(trim(?))
-    AND lower(trim(COALESCE(di.blok,'')))=lower(trim(COALESCE(?,''))) AND lower(trim(COALESCE(di.satuan,'')))=lower(trim(COALESCE(?,'')))`);
+    WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ? AND lower(replace(di.aktivitas,' ',''))=lower(replace(?,' ',''))
+    AND lower(replace(COALESCE(di.blok,''),' ',''))=lower(replace(COALESCE(?,''),' ','')) AND lower(trim(COALESCE(di.satuan,'')))=lower(trim(COALESCE(?,'')))`);
   const items = db.prepare('SELECT * FROM daily_item WHERE report_id=? ORDER BY urutan, id').all(report.id)
     .map((item) => {
       const sum = cumulative.get(report.divisi, weekStart, report.tanggal, item.aktivitas, item.blok, item.satuan);
