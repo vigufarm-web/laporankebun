@@ -450,6 +450,7 @@ export const TABLES = {
     f: [
       { k: 'blok', l: 'Blok', t: 'ref', ref: 'lahan_blok', req: true },
       { k: 'bulan', l: 'Target Bulan Tanam', t: 'date', req: true, hint: 'Isi tanggal berapa saja di bulan target (mis. 1/11/2026) — yang dipakai bulannya.' },
+        { k: 'mulai_persiapan', l: 'Mulai Persiapan Paling Awal', t: 'date', hint: 'Sisa pekerjaan tidak dijadwalkan sebelum tanggal ini. Hasil yang sudah tercatat tetap disimpan.' },
       { k: 'prioritas', l: 'Prioritas', t: 'int', hint: 'Kosong = biasa. Angka lebih besar = dikerjakan belakangan (mis. 9 = paling akhir): alat/tim baru mengerjakan blok ini setelah blok lain selesai di kegiatan itu.' },
       { k: 'keterangan', l: 'Keterangan', t: 'text' },
     ],
@@ -834,7 +835,7 @@ export function susunRencana(c, mulai) {
     if (!b || ada.has(k) || (tt.has(k) && n(tt.get(k).gross)>=n(b.luas_ha)-0.000001)) continue;
     ada.add(k);
     const p = lahanProgress(b, c), luas = n(b.luas_ha);
-    blok.push({ blok: b.blok, ym: String(t.bulan || '').slice(0, 7), kelas: n(t.prioritas), total: p.total, sisa: acts.map((a) => Math.max(0, (1 - (p.per.find((x) => x.akt === a.aktivitas)?.pct || 0)) * luas)) });
+    blok.push({ blok: b.blok, ym: String(t.bulan || '').slice(0, 7), earliest:t.mulai_persiapan||null, kelas: n(t.prioritas), total: p.total, sisa: acts.map((a) => Math.max(0, (1 - (p.per.find((x) => x.akt === a.aktivitas)?.pct || 0)) * luas)) });
   }
   blok.sort((x, y) => x.kelas - y.kelas || x.ym.localeCompare(y.ym) || y.total - x.total || String(x.blok).localeCompare(String(y.blok), 'id', { numeric: true }));
   const t0 = util.d(mulai), hari = (i) => { const d = new Date(t0); d.setDate(d.getDate() + i); return d; };
@@ -848,7 +849,7 @@ export function susunRencana(c, mulai) {
   // bisa mulai (alat bebas & kegiatan sebelumnya di blok itu selesai); seri → prioritas blok, lalu urutan kegiatan.
   const alatOf = (a) => {const machine=alatDefault(a.aktivitas)||String(a.alat||'').trim();return machine?'alat:'+util.key(machine):'akt:'+a.aktivitas;};
   const info = acts.map((a) => ({ a, kerja: hariKerjaAkt(a), dph: dphTim(c, a), alat: alatOf(a) }));
-  const bebas = {}, siap = blok.map(() => 0), lanjut = blok.map((b) => b.sisa.findIndex((h) => h > 0.005)), rows = [];
+  const bebas = {}, siap = blok.map(b=>b.earliest?Math.max(0,Math.round((util.d(b.earliest)-t0)/86400000)):0), lanjut = blok.map((b) => b.sisa.findIndex((h) => h > 0.005)), rows = [];
   // rotasi alat (user): kegiatan dengan Urutan Blok "Blok terdekat" (default Land Clearing) pindah ke blok TERDEKAT di peta di antara
   // blok yang sama-sama siap (Prioritas blok sama; bulan target diabaikan). Posisi awal = blok terakhir yang dikerjakan di Progres Harian.
   // Kegiatan lain (mis. traktor) tetap mendahulukan blok yang paling dekat jadwal tanamnya.
