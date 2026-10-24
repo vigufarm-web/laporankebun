@@ -325,3 +325,5 @@ table.mini td.num, table.mini th.num { text-align: right; font-variant-numeric: 
 .period-mobile{display:none}.public-daily-card .data small{display:block;margin-top:5px}.summary-page .table-wrap{max-width:100%;overflow:auto}@media(max-width:640px){.period-desktop{display:none}.period-mobile{display:grid;grid-template-columns:1fr 1fr;gap:10px}.period-mobile article{border:1px solid #dce6d5;border-radius:10px;padding:12px;background:#f8faf5}.period-mobile h3{font-size:14px;color:#24543a;margin:0 0 14px}.period-mobile dl{margin:0}.period-mobile dl div{padding:8px 0;border-top:1px solid #e8eee1}.period-mobile dt{font-size:10px;color:#70816b}.period-mobile dd{margin:5px 0 0;font-size:13px;font-weight:600;overflow-wrap:anywhere}}
 
 #sumFigures{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:900px){#sumFigures{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.summary-page .table-wrap{max-height:none}

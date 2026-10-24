@@ -730,7 +730,7 @@ async function api(req, res, url) {
   }
 
   // Lightweight read models and versioned GIS changes.
-  if (['overview','records','climate','blocks','gis'].includes(parts[1]) && dailyOnly(user)) return send(res,403,{error:'Akun lapangan hanya dapat mengakses Daily Report.'});
+  if (['records','climate','blocks','gis'].includes(parts[1]) && dailyOnly(user)) return send(res,403,{error:'Akun lapangan hanya dapat mengakses Daily Report.'});
   if(m==='GET'&&url.pathname==='/api/daily/public'){
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||reportWeek(today).from,to=url.searchParams.get('to')||today;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to||Date.parse(to)-Date.parse(from)>31*86400000)return send(res,400,{error:'Pilih rentang maksimal 31 hari.'});

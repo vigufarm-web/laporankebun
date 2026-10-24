@@ -212,11 +212,11 @@ function editNote(key, n, r) {
 
 async function route() {
   let r = location.hash ? location.hash.replace(/^#\/?/, '') : /^\/daily\/?$/.test(location.pathname) ? 'daily' : '';
-  if ((isDailyOnly()||fieldMode) && r !== 'daily') { location.hash = '#/daily'; return; }
+  const safePublic=!r||r==='daily'||r==='hub'||r.startsWith('hub/')||/^k\/(pisang|padi)\/progres$/.test(r);
+  if ((fieldMode&&r!=='daily')||(isDailyOnly()&&!safePublic)) { location.hash = '#/daily'; return; }
   charts.forEach((c) => c.destroy()); charts = [];
   $('#sidebar').classList.remove('open');
-  document.body.classList.toggle('public-summary-mode',fieldMode||(!isAdmin(me)&&!isDailyOnly()));
-  const safePublic=r==='daily'||r==='hub'||r.startsWith('hub/')||/^k\/(pisang|padi)\/progres$/.test(r);
+  document.body.classList.toggle('public-summary-mode',fieldMode||!isAdmin(me));
   const publicView=(!isAdmin(me)&&!isDailyOnly()&&!safePublic)||!r;
   if(publicView){
     $('#note').hidden=true;renderSidebar({},r);if(!isAdmin(me))$('#sidebar').innerHTML='<a class="nav-item active" href="#/">Ringkasan kebun</a>';
@@ -660,7 +660,7 @@ function renderUserChip() {
   const el = $('.top-right');
   el.innerHTML = me ? `<span class="user-chip" title="${esc(peranLabel(me))}">👤 ${esc(me.nama || me.username)} <span class="small">· ${esc(peranLabel(me))}</span></span>
     <button class="btn sm" id="uPw" style="margin-left:8px">Ganti password</button><button class="btn sm" id="uOut" style="margin-left:4px">Keluar</button>`
-    : `<button class="btn sm login-btn" id="uIn">🔐 ${needSetup ? 'Buat Admin' : 'Login Admin'}</button>`;
+    : `<button class="btn sm login-btn" id="uIn">🔐 ${needSetup ? 'Buat Admin' : fieldMode?'Login mandor':'Login'}</button>`;
   $('#uOut')?.addEventListener('click', async () => { await api.post('/api/logout'); me = null; renderUserChip(); route(); toast('Anda keluar — mode lihat saja'); });
   $('#uPw')?.addEventListener('click', changePassword);
   $('#uIn')?.addEventListener('click', openLogin);
@@ -669,9 +669,9 @@ let needSetup = false;
 function openLogin() {
   if (!$('#modal').hidden && $('#authF')) return;
   const setup = needSetup;
-  const md = openModal(`<div class="modal-head"><h2>${setup ? 'Buat akun admin pertama' : '🔐 Login Admin'}</h2><button class="x">×</button></div>
+  const md = openModal(`<div class="modal-head"><h2>${setup ? 'Buat akun admin pertama' : fieldMode?'🔐 Login mandor':'🔐 Login'}</h2><button class="x">×</button></div>
     <form id="authF"><div class="modal-body"><div class="grid" style="gap:10px">
-      <p class="small muted" style="margin:0">${setup ? 'Belum ada pengguna. Akun admin ini dipakai untuk membuat akun bagian penjualan, panen, dll.' : 'Login untuk menambah & mengubah data. Tanpa login, ringkasan kebun tetap tersedia. Rincian input hanya untuk admin.'}</p>
+      <p class="small muted" style="margin:0">${setup ? 'Belum ada pengguna. Akun admin ini dipakai untuk membuat akun bagian penjualan, panen, dll.' : 'Login untuk mengisi atau mengubah laporan sesuai hak akun. Ringkasan, Daily selesai dan foto kegiatan dapat dilihat tanpa login.'}</p>
       ${setup ? '<div class="fld"><label>Nama lengkap</label><input id="aNama" required></div>' : ''}
       <div class="fld"><label>Username</label><input id="aUser" autocomplete="username" required autocapitalize="none"></div>
       <div class="fld"><label>Password${setup ? ' (min. 6 karakter)' : ''}</label><input id="aPw" type="password" autocomplete="${setup ? 'new-password' : 'current-password'}" required></div>
@@ -706,7 +706,7 @@ async function boot() {
   server = { online: !!r.online, vercel: !!r.vercel };
   renderUserChip();
   if(fieldMode){const brand=document.querySelector('.brand');if(brand)brand.href='/daily';}
-  if (isDailyOnly() && location.hash !== '#/daily') location.hash = '#/daily';
+  if (fieldMode && location.hash !== '#/daily') location.hash = '#/daily';
   else route();
 }
 function changePassword() {
