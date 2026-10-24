@@ -1,3 +1,4 @@
+import { loadPhotoContext } from './lib/photo-context.js';
 import { transferDaily } from './lib/daily-transfer.js';
 import { execChanged } from './lib/tracked-sql.js';
 import { copyCloudSnapshot } from './lib/cloud-snapshot.js';
@@ -42,7 +43,7 @@ const cloud = ONLINE ? turso(ONLINE.url, ONLINE.token) : null;
 
 // Mode online: data dibaca dari salinan di memori (cepat), setiap perubahan dikirim ke database online sebagai satu transaksi.
 // Nomor versi (_ver) mencegah dua tempat menimpa perubahan satu sama lain.
-let raw = null, ver = 0, txMark = -1;
+let raw = null, ver = 0, txMark = -1, completeSnapshot = true, photoContextId = null;
 const pend = [];
 const WRITE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP)\b/i;
 const db = {
@@ -64,7 +65,7 @@ const db = {
 const q = (s) => `"${s.replace(/"/g, '')}"`;
 async function loadCloud() {
   const snapshot=await copyCloudSnapshot(cloud);
-  const old=raw;raw=snapshot.db;ver=snapshot.version;old?.close();
+  const old=raw;raw=snapshot.db;ver=snapshot.version;completeSnapshot=true;photoContextId=null;old?.close();
 }
 // kirim perubahan yang tertunda ke database online (dipecah bila sangat besar, mis. pulihkan database)
 async function flush() {
@@ -78,10 +79,14 @@ async function flush() {
   } catch (e) { await loadCloud(); throw e; } // salinan di memori disamakan lagi dengan isi online
 }
 // ada perubahan dari tempat lain (perangkat/instance lain)? → muat ulang salinan
-async function syncCloud() {
+async function syncCloud(photoReportId = null) {
   if (!cloud) return false;
   const [[r]] = await cloud.query(['SELECT MAX(v) v FROM _ver']);
-  if (Number(r.v || 0) === ver) return false;
+  if (Number(r.v || 0) === ver && (completeSnapshot || (photoReportId && photoContextId===photoReportId))) return false;
+  if(photoReportId){
+    try{ver=await loadPhotoContext(cloud,raw,photoReportId);completeSnapshot=false;photoContextId=photoReportId;return true;}
+    catch(error){console.warn('Konteks foto dimuat ulang melalui snapshot lengkap:',error.message);}
+  }
   await loadCloud(); return true;
 }
 // satu permintaan pada satu waktu dalam mode online (urutan perubahan & nomor versi tetap rapi)
@@ -1244,7 +1249,8 @@ function holdResponse(res) {
 async function apiRequest(req, res, url) {
   if (!cloud) return api(req, res, url);
   return serial(async () => {
-    if (await syncCloud() && !VERCEL) scheduleExcelWrite(1000);
+    const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
+    if (await syncCloud(photoReportId) && !VERCEL) scheduleExcelWrite(1000);
     const hold = holdResponse(res);
     try { await api(req, res, url); await flush(); hold.release(); }
     catch (e) {
