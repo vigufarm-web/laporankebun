@@ -19,7 +19,7 @@ const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'O
 // ================================================================ API & cache
 const api = {
   async req(method, url, body) {
-    const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, signal: /\/api\/(login|setup)$/.test(url) ? AbortSignal.timeout(30000) : undefined });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 && !/\/api\/(login|me|setup)$/.test(url)) { me = null; renderUserChip(); openLogin(); }
     if(!r.ok && j.gisRevision && body && /\/api\/t\/gis_layer/.test(url)) {const {reviewGIS}=await import('./block-ui.js');const result=await reviewGIS(App,{layerId:Number(url.split('/').at(-1))||null,layer:body});return result;}
@@ -668,13 +668,16 @@ function openLogin() {
   $('#authF', md).onsubmit = async (e) => {
     e.preventDefault();
     const err = (m) => ($('#aErr', md).textContent = m);
+    const submit = md.querySelector('button.primary');
+    if(submit.disabled)return;
+    const label=submit.textContent;submit.disabled=true;submit.textContent='Menghubungkan…';err('Menunggu jawaban server…');
     try {
       if (setup) {
         if ($('#aPw', md).value !== $('#aPw2', md).value) return err('Password tidak sama');
         await api.post('/api/setup', { nama: $('#aNama', md).value, username: $('#aUser', md).value, password: $('#aPw', md).value });
       } else await api.post('/api/login', { username: $('#aUser', md).value, password: $('#aPw', md).value });
       closeModal(); await boot(); toast('Login berhasil — sekarang bisa menambah & mengubah data');
-    } catch (x) { err(x.message); }
+    } catch (x) { err(x.name==='TimeoutError'?'Server belum merespons dalam 30 detik. Isian Anda tetap ada; coba lagi setelah koneksi pulih.':x.message); } finally {submit.disabled=false;submit.textContent=label;}
   };
 }
 async function boot() {
