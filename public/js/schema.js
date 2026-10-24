@@ -331,10 +331,12 @@ export const TABLES = {
     ],
   },
   padi_panen: {
-    title: 'Panen Padi', div: 'padi', sort: 'petak',
-    desc: 'Satu baris per blok: total karung & berat gabah blok itu (semua tahap panen dijumlah).',
+    title: 'Panen Padi', div: 'padi', date: 'tanggal', sort: '-tanggal',
+    desc: 'Catatan panen per petak. Arsip lama tanpa tanggal tetap disimpan dan ditampilkan terpisah dari hasil periode.',
     f: [
-      { k: 'petak', l: 'Petak / Blok', t: 'ref', ref: 'padi_petak', req: true },
+
+      { k: 'tanggal', l: 'Tanggal Panen', t: 'date', hint: 'Isi untuk panen baru; arsip lama tanpa tanggal tidak masuk angka periode.' },
+      { k: 'musim_tanam', l: 'Petak · Musim', t: 'ref', ref: 'padi_tanam' },     { k: 'petak', l: 'Petak / Blok', t: 'ref', ref: 'padi_petak', req: true },
       { k: 'luas_blok', l: 'Luas Blok (ha)', t: 'calc', fmt: 'num2', fn: (r, c) => luasPetak(c, r.petak) },
       { k: 'jumlah_karung', l: 'Jumlah Karung', t: 'int' },
       { k: 'gkp_kg', l: 'Berat Gabah / GKP (kg)', t: 'num', req: true },
@@ -412,6 +414,7 @@ export const TABLES = {
     desc: 'Blok yang akan dibuka / disiapkan. Progres tiap aktivitas dihitung dari Progres Harian.',
     f: [
       { k: 'blok', l: 'Blok', t: 'text', req: true },
+      { k: 'kepemilikan', l: 'Kepemilikan terverifikasi', t: 'select', opt: ['Sudah milik kebun', 'Belum milik kebun', 'Belum diverifikasi'], hint: 'Daily Report hanya menampilkan blok yang sudah milik kebun.' },
       { k: 'luas_ha', l: 'Luas (ha)', t: 'num', req: true },
       { k: 'peruntukan', l: 'Peruntukan', t: 'select', opt: ['Pisang', 'Padi', 'Lainnya'] },
       { k: 'tahap', l: 'Tahap', t: 'select', opt: ['Tahap I', 'Tahap II', 'Tahap III', 'Tahap IV'] },
@@ -596,6 +599,8 @@ export const TABLES = {
       { k: 'caption', l: 'Keterangan', t: 'text' },
       { k: 'storage', l: 'Penyimpanan', t: 'text' },
       { k: 'lokasi', l: 'Lokasi File', t: 'text' },
+      { k: 'thumb_lokasi', l: 'File Thumbnail', t: 'text' },
+      { k: 'thumb_storage', l: 'Penyimpanan Thumbnail', t: 'text' },
       { k: 'mime', l: 'Tipe File', t: 'text' },
       { k: 'ukuran', l: 'Ukuran (byte)', t: 'int' },
       { k: 'expires_at', l: 'Kedaluwarsa', t: 'text' },

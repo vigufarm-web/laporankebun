@@ -1,0 +1,55 @@
+import { uploadPhoto } from './photos.js';
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dateNow = () => new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Jakarta'});
+export async function quickDaily(host, A, report = null, afterSave = () => {}) {
+  host.innerHTML = '<div class="card">Menyiapkan laporan…</div>';
+  const divisions = A.isAdmin() ? ['Pisang','Padi','Infra'] : ['Pisang','Padi','Infra'].filter(d => (A.me()?.peran || []).includes('daily_'+d.toLowerCase()));
+  let date = report?.tanggal || dateNow(), div = report?.divisi || divisions[0], items = [], locations = [], base = report, generation = 0, photoQueue = [];
+  const draftKey = () => `daily-quick:${A.me()?.id || A.me()?.username}:${date}:${div}`;
+  async function load() {
+    const ticket = ++generation; photoQueue=[];
+    host.innerHTML = '<div class="card">Memuat pekerjaan dan blok milik kebun…</div>';
+    try {
+      const [locs, plans, reports] = await Promise.all([A.api.get('/api/daily/locations'), A.api.get(`/api/daily/plans?week=${date}&divisi=${div}`), A.api.get(`/api/daily?from=${date}&to=${date}&divisi=${div}`)]);
+      if (ticket !== generation) return;
+      locations = locs; base = reports.find(r=>r.divisi===div) || (report?.tanggal===date && report?.divisi===div ? report : null);
+      items = base ? base.items.map(x=>({...x, selected:true})) : (plans[0]?.items || []).filter(x=>locations.some(l=>l.nama===x.blok)).map(x=>({...x,plan_item_id:x.id,di_luar_rencana:0,realisasi:'',hk_realisasi:'',selected:false}));
+      draw();
+      let draft; try { draft = JSON.parse(localStorage.getItem(draftKey())); } catch {}
+      if (draft) {
+        const banner = host.querySelector('#qRestore'); banner.hidden=false;
+        banner.querySelector('button').onclick=()=>{items=draft.items;draw(); for(const k of ['kendala','tindak_lanjut']) host.querySelector(`[name="${k}"]`).value=draft[k] || ''; update();};
+      }
+    } catch(e) { host.innerHTML=`<div class="card">${esc(e.message)} <button class="btn" id="qRetry">Coba lagi</button></div>`; host.querySelector('#qRetry').onclick=load; }
+  }
+  function draw() {
+    host.innerHTML=`<form id="quickForm" class="quick-daily"><div class="qd-heading"><div><div class="qd-eyebrow">OPERASIONAL KEBUN / DAILY REPORT</div><h1>Catat kerja hari ini.</h1><p>Pilih pekerjaan yang dilakukan, isi hasilnya, lalu simpan.</p></div><span class="qd-badge">● ${A.preview?'Pratinjau · data contoh':'Input lapangan'}</span></div>
+      <div class="qd-context"><label>Tanggal<input type="date" id="qDate" required value="${date}"></label><label>Divisi<select id="qDiv">${divisions.map(d=>`<option ${d===div?'selected':''}>${d}</option>`).join('')}</select></label><div><small>Penginput</small><b>${esc(A.me()?.nama)}</b><span>Terisi dari akun</span></div></div>
+      <div class="qd-notice" id="qRestore" hidden>Draf perangkat tersedia. <button type="button" class="btn sm">Pulihkan draf</button></div>
+      <div class="qd-columns"><section><div class="qd-section"><div><h2>Pekerjaan hari ini</h2><p>Pekerjaan dari rencana mingguan. Centang yang dikerjakan.</p></div><span id="qCount" class="qd-badge"></span></div>
+      <div id="qItems">${items.map((x,i)=>`<article class="qd-job ${x.selected?'is-selected':''}"><label class="qd-job-head"><input type="checkbox" data-pick="${i}" ${x.selected?'checked':''}><span><b>${esc(x.aktivitas)}</b><small>${esc(x.blok)} · ${x.di_luar_rencana?'Kegiatan tambahan':'Rencana mingguan'}</small></span><span class="qd-target">Target minggu<b>${esc(x.target ?? '—')} ${esc(x.satuan)}</b></span></label><div class="qd-job-fields" ${x.selected?'':'hidden'}><label>Hasil hari ini <span>${esc(x.satuan)}</span><input type="number" inputmode="decimal" min="0" step="any" data-row="${i}" data-key="realisasi" value="${esc(x.realisasi)}" placeholder="Belum diisi"></label><label>HK aktual<input type="number" inputmode="decimal" min="0" step="0.5" data-row="${i}" data-key="hk_realisasi" value="${esc(x.hk_realisasi)}" placeholder="0"></label><label class="qd-job-note">Catatan kegiatan · opsional<input data-row="${i}" data-key="keterangan" value="${esc(x.keterangan)}" placeholder="Tambahkan keterangan bila perlu"></label>${div==='Infra'?['alat','meter_awal','meter_akhir','ritase'].map(k=>`<label>${({alat:'Alat / kendaraan',meter_awal:'HM/KM awal',meter_akhir:'HM/KM akhir',ritase:'Ritase'})[k]}<input data-row="${i}" data-key="${k}" ${k==='alat'?'':'type="number" min="0" step="any"'} value="${esc(x[k])}"></label>`).join(''):''}</div></article>`).join('') || '<div class="qd-empty">Belum ada rencana untuk tanggal ini.<br>Tambahkan kegiatan pada blok milik kebun di bawah.</div>'}</div>
+      <details class="qd-add"><summary>＋ Tambah kegiatan di luar rencana</summary><label>Blok milik kebun<select id="qBlock"><option value="">Pilih blok terverifikasi…</option>${locations.map(l=>`<option>${esc(l.nama)}</option>`).join('')}</select></label><label>Nama kegiatan<input id="qActivity" placeholder="Contoh: Pemupukan KCl"></label><label>Satuan<select id="qUnit">${['ha','pokok','kg','tandan','box','meter','rit','unit','HM','KM','HK'].map(u=>`<option>${u}</option>`).join('')}</select></label><button type="button" class="btn" id="qAdd">Tambahkan kegiatan</button>${locations.length?'':'<p>Belum ada blok dengan kepemilikan terverifikasi. Admin perlu menetapkan status di Rencana Blok Lahan.</p>'}</details>
+      <div class="qd-extras"><h2>Catatan lapangan</h2><label>Kendala · opsional<textarea name="kendala" rows="2" placeholder="Kosongkan jika tidak ada kendala">${esc(base?.kendala)}</textarea></label><label>Tindak lanjut · opsional<textarea name="tindak_lanjut" rows="2" placeholder="Apa yang perlu ditindaklanjuti?">${esc(base?.tindak_lanjut)}</textarea></label><label>Foto kegiatan · opsional<input id="qPhotos" type="file" accept="image/jpeg,image/png,image/webp" multiple></label><small id="qPhotoState">${photoQueue.length} foto dipilih</small><p class="small muted">Teks disimpan lebih dahulu. Foto dikompres dan diberi thumbnail. Jika unggahan gagal, coba simpan kembali pada halaman ini; teks tetap tersimpan. Pilihan foto perlu diulang setelah halaman ditutup.</p></div></section>
+      <aside class="qd-summary"><div class="qd-eyebrow">RINGKASAN HARI INI</div><h2>Siap dicatat.</h2><div class="qd-stat"><span>Pekerjaan dipilih</span><b id="qJobs">0</b></div><div class="qd-stat"><span>Blok aktif</span><b id="qBlocks">0</b></div><div class="qd-stat"><span>Total HK aktual</span><b id="qHK">0</b></div><p>HK adalah alokasi hari kerja. Satu orang yang membagi waktunya ke dua kegiatan dapat dicatat masing-masing 0,5 HK.</p><div class="qd-safe">✓ Pilihan blok hanya lahan milik kebun</div><small id="qDraft" aria-live="polite">Draf belum disimpan</small><button class="btn" type="submit" value="Draf">Simpan draf ke server</button><button class="btn primary" type="submit" value="Selesai">Selesaikan laporan →</button><p id="qMessage" role="status"></p></aside></div></form>`;
+    host.querySelector('#qDate').onchange=e=>{if(!e.target.value)return;date=e.target.value;load();};host.querySelector('#qDiv').onchange=e=>{div=e.target.value;load();};
+    host.querySelectorAll('[data-pick]').forEach(el=>el.onchange=()=>{items[el.dataset.pick].selected=el.checked;const card=el.closest('article');card.classList.toggle('is-selected',el.checked);card.querySelector('.qd-job-fields').hidden=!el.checked;update();});
+    host.querySelectorAll('[data-row]').forEach(el=>el.oninput=()=>{items[el.dataset.row][el.dataset.key]=el.value;update();});
+    host.querySelector('#qPhotos').onchange=e=>{photoQueue=[...e.target.files].map(file=>({file,photoId:null,done:false}));host.querySelector('#qPhotoState').textContent=photoQueue.length+' foto dipilih';};
+    host.querySelectorAll('textarea').forEach(el=>el.oninput=update);
+    host.querySelector('#qAdd').onclick=()=>{const blok=host.querySelector('#qBlock').value,aktivitas=host.querySelector('#qActivity').value.trim();if(!blok||!aktivitas)return A.toast('Pilih blok dan isi nama kegiatan',true);const notes=Object.fromEntries(new FormData(host.querySelector('form')));items.push({blok,aktivitas,satuan:host.querySelector('#qUnit').value,selected:true,di_luar_rencana:1,realisasi:'',hk_realisasi:''});draw();for(const k of ['kendala','tindak_lanjut'])host.querySelector(`[name="${k}"]`).value=notes[k]||'';update();};
+    host.querySelector('form').onsubmit=save; update(false);
+  }
+  function update(persist=true) {
+    const selected=items.filter(x=>x.selected);host.querySelector('#qCount').textContent=`${selected.length} dipilih`;host.querySelector('#qJobs').textContent=selected.length;host.querySelector('#qBlocks').textContent=new Set(selected.map(x=>x.blok)).size;host.querySelector('#qHK').textContent=selected.reduce((s,x)=>s+Number(x.hk_realisasi||0),0).toLocaleString('id-ID');
+    if(persist)try {localStorage.setItem(draftKey(),JSON.stringify({items,kendala:host.querySelector('[name=kendala]').value,tindak_lanjut:host.querySelector('[name=tindak_lanjut]').value}));host.querySelector('#qDraft').textContent='✓ Draf tersimpan di perangkat ini';}catch {host.querySelector('#qDraft').textContent='Penyimpanan perangkat tidak tersedia';}
+  }
+  async function save(e) {
+    e.preventDefault(); const selected=items.filter(x=>x.selected),status=e.submitter?.value||'Draf',message=host.querySelector('#qMessage');
+    if(!selected.length)return A.toast('Pilih minimal satu pekerjaan',true);
+    if(selected.some(x=>!locations.some(l=>l.nama===x.blok) && !(base?.items||[]).some(old=>old.id===x.id && old.blok===x.blok)))return A.toast('Kegiatan baru perlu blok GIS milik kebun. Blok historis yang sama tetap dapat dilengkapi.',true);
+    if(status==='Selesai'&&selected.some(x=>x.realisasi==null||x.realisasi===''||x.hk_realisasi==null||x.hk_realisasi===''))return A.toast('Isi hasil hari ini dan HK aktual pada setiap pekerjaan yang dipilih.',true);
+    host.querySelectorAll('button,input,select,textarea').forEach(el=>el.disabled=true);
+    try {const notes={kendala:host.querySelector('[name="kendala"]').value,tindak_lanjut:host.querySelector('[name="tindak_lanjut"]').value};const saved=await A.api.post('/api/daily',{...base,...notes,id:base?.id,tanggal:date,divisi:div,status,items:selected});base=saved;if(!A.preview)for(const entry of photoQueue.filter(x=>!x.done)){try{entry.photoId=await uploadPhoto(entry.file,saved.id,text=>message.textContent='Teks tersimpan. '+text,entry.photoId);entry.done=true;}catch(e){entry.photoId=e.photoId;throw new Error('Teks sudah tersimpan. '+e.message+' Klik simpan untuk mencoba unggah foto lagi.');}}try{localStorage.removeItem(draftKey());}catch{} message.textContent=A.preview?'✓ Simulasi berhasil. Data contoh tidak dikirim ke server.':'✓ Laporan tersimpan di server.';host.querySelector('#qDraft').textContent='✓ Tersimpan';await afterSave(saved);}catch(err){message.textContent=err.message;}finally{host.querySelectorAll('button,input,select,textarea').forEach(el=>el.disabled=false);}
+  }
+  await load();
+}

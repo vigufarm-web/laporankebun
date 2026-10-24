@@ -1,9 +1,10 @@
 import { DIVISIONS, TABLES, ROLES, util, displayOf, canEdit, isAdmin, EXCEL_SHEETS } from './schema.js';
-import { renderGIS } from './gis.js';
-import { renderOwner } from './owner.js';
-import { renderLaporan } from './laporan.js';
-import { renderKomoditas, KOM } from './komoditas.js';
-import { renderDaily } from './daily.js';
+import { KOM, RECORD_ROUTES } from './navigation.js';
+const renderGIS=(...args)=>import('./gis.js').then(m=>m.renderGIS(...args));
+const renderOwner=(...args)=>import('./owner.js').then(m=>m.renderOwner(...args));
+const renderLaporan=(...args)=>import('./laporan.js').then(m=>m.renderLaporan(...args));
+const renderKomoditas=(...args)=>import('./komoditas.js').then(m=>m.renderKomoditas(...args));
+const renderDaily=(...args)=>import('./daily.js').then(m=>m.renderDaily(...args));
 
 let me = null;                                  // pengguna yang login
 let server = {};                                // info server: online (database Turso) / vercel
@@ -21,6 +22,7 @@ const api = {
     const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401 && !/\/api\/(login|me|setup)$/.test(url)) { me = null; renderUserChip(); openLogin(); }
+    if(!r.ok && j.gisRevision && body && /\/api\/t\/gis_layer/.test(url)) {const {reviewGIS}=await import('./block-ui.js');const result=await reviewGIS(App,{layerId:Number(url.split('/').at(-1))||null,layer:body});return result;}
     if (!r.ok) { const e = new Error(j.error || r.statusText); e.status = r.status; e.data = j; throw e; }
     return j;
   },
@@ -29,10 +31,20 @@ const api = {
 const cache = {};      // tabel -> rows
 const stamp = {};      // tabel -> "count|max(updated_at)"
 async function loadTable(t) { cache[t] = await api.get(`/api/t/${t}`); }
-async function syncAll() {
+function neededTables(route) {
+  if(!route || ['hub','records','blocks','daily','pengguna','riwayat','excel','pengaturan'].includes(route.split('/')[0]))return [];
+  if(route.startsWith('k/pisang'))return Object.keys(TABLES).filter(t=>t.startsWith('pisang_')||t.startsWith('lahan_'));
+  if(route.startsWith('k/padi'))return Object.keys(TABLES).filter(t=>t.startsWith('padi_')||t.startsWith('lahan_'));
+  if(route.startsWith('k/iklim'))return ['iklim'];
+  if(route==='gis')return ['pisang_blok','padi_petak','padi_tanam','lahan_blok','lahan_harian','lahan_aktivitas','lahan_rencana'];
+  return Object.keys(TABLES).filter(t=>!t.startsWith('daily_'));
+}
+async function syncAll(route=location.hash.replace(/^#\/?/,'')) {
   const info = await api.get('/api/tables');
   const jobs = [];
+  const needed = new Set(neededTables(route));
   for (const [t, v] of Object.entries(info)) {
+    if(t!=='gis_layer' && !needed.has(t))continue;
     if (t === 'gis_layer') { stamp[t] = `${v.c}|${v.u}`; continue; }
     const s = `${v.c}|${v.u}`;
     if (stamp[t] !== s || !cache[t]) { stamp[t] = s; jobs.push(loadTable(t)); }
@@ -137,13 +149,15 @@ function renderSidebar(info, route) {
   const nav = (href, ico, label, active, extra = '') => `<a class="nav-item ${active ? 'active' : ''}" href="#/${href}"><span class="ico">${ico}</span>${label}${extra}</a>`;
   if (isDailyOnly()) { $('#sidebar').innerHTML = nav('daily', '📋', '<b>Input & Laporan Saya</b>', true); return; }
   let h = nav('', '🏢', '<b>Ringkasan</b>', route === '');
+  h += nav('blocks','▦','Blok & Riwayat GIS',route==='blocks');
+  h += nav('hub/infra','🚜','Infra & Lahan',route==='hub/infra');
   if (isAdmin(me)) h += nav('laporan', '📄', 'Laporan Owner', route === 'laporan'); // khusus admin
   if (me) h += nav('daily', '📋', '<b>Daily Report</b>', route === 'daily');
   for (const [k, K] of Object.entries(KOM)) {
     const on = route.startsWith('k/' + k);
     const tabs = K.tabs.filter((t) => !t.admin || isAdmin(me)); // tab khusus admin tidak tampil di menu pengunjung
-    h += `<div class="nav-sec">${nav('k/' + k, K.icon, K.nama, on && tabs.length === 1)}`;
-    if (tabs.length > 1) h += `<div class="nav-sub">${tabs.map((t) => nav(`k/${k}/${t.k}`, '', t.l, route === `k/${k}/${t.k}` || route.startsWith(`k/${k}/${t.k}/`) || (route === 'k/' + k && t === K.tabs[0]))).join('')}</div>`;
+    h += `<div class="nav-sec">${nav('hub/' + k, K.icon, K.nama, route==='hub/'+k)}`;
+    if (tabs.length > 1) h += `<div class="nav-sub">${tabs.map((t) => nav(RECORD_ROUTES[k]?.[t.k] ? 'records/'+RECORD_ROUTES[k][t.k] : `k/${k}/${t.k}`, '', t.l, route === `k/${k}/${t.k}` || route.startsWith(`k/${k}/${t.k}/`))).join('')}</div>`;
     h += '</div>';
   }
   h += nav('gis', '🗺️', 'Peta & Lahan', route === 'gis');
@@ -201,14 +215,17 @@ async function route() {
   charts.forEach((c) => c.destroy()); charts = [];
   $('#sidebar').classList.remove('open');
   let info;
-  try { [info] = await Promise.all([syncAll(), api.get('/api/settings').then((s) => { settings = s; }).catch(() => {})]); } catch (e) { $('#main').innerHTML = `<div class="card">Server tidak bisa dihubungi: ${esc(e.message)}</div>`; return; }
+  try { [info] = await Promise.all([syncAll(r), api.get('/api/settings').then((s) => { settings = s; }).catch(() => {})]); } catch (e) { $('#main').innerHTML = `<div class="card">Server tidak bisa dihubungi: ${esc(e.message)}</div>`; return; }
   renderSidebar(info, r);
   renderNote(r);
   const main = $('#main');
   main.innerHTML = '';
   window.scrollTo(0, 0);
   const [a, b, c, d] = r.split('/');
-  if (!a) return renderOwner(main, App);
+  if (!a || a==='hub') return import('./hub.js').then(m=>m.renderHub(main,App,b));
+  if(a==='detail')return renderOwner(main,App);
+  if(a==='records' && TABLES[b])return import('./hub.js').then(m=>m.renderRecords(main,App,b));
+  if(a==='blocks')return import('./block-ui.js').then(m=>m.renderBlocks(main,App));
   if (a === 'owner') { location.hash = '#/'; return; }
   if (a === 'laporan') return isAdmin(me) ? renderLaporan(main, App) : (main.innerHTML = emptyBox('Laporan Owner khusus admin — silakan login sebagai admin.'));
   if (a === 'daily') { if (!me) { main.innerHTML = emptyBox('Daily Report hanya untuk pengguna yang sudah login.'); openLogin(); return; } return renderDaily(main, App).catch((e) => { main.innerHTML = `<div class="card">Daily Report gagal dimuat: ${esc(e.message)}</div>`; }); }
@@ -229,7 +246,7 @@ $('#menuBtn').onclick = () => $('#sidebar').classList.toggle('open');
 function renderTable(main, table, opts = {}) {
   const T = TABLES[table];
   const d = DIVISIONS.find((x) => x.key === T.div);
-  const S = (state.tbl[table] ??= { q: '', from: '', to: '', ref: '', sort: T.sort || '-id', limit: 300, sel: new Set() });
+  const S = (state.tbl[table] ??= { q: '', from: '', to: '', ref: '', sort: T.sort || '-id', limit: 50, sel: new Set() });
   const refF = T.f.find((f) => f.t === 'ref');
   const TC = T.f.filter((f) => !f.sembunyi); // kolom yang tampil di tabel
   const base = () => ctx.rows(table).filter((r) => !opts.filter || opts.filter(r));
@@ -276,8 +293,8 @@ function renderTable(main, table, opts = {}) {
       ${rows.length && TC.some(isSumField) ? `<tfoot><tr><td class="chk"></td>${TC.map((f, i) => `<td class="${isNumField(f) ? 'num' : ''}">${isSumField(f) ? esc(fmtField(f.t === 'calc' ? f : { ...f, t: f.t === 'num' ? 'num2' : f.t }, rows.reduce((a, x) => a + n(x.v[f.k]), 0))) : i === 0 ? 'Total' : ''}</td>`).join('')}</tr></tfoot>` : ''}`;
     if (!rows.length) tbl.innerHTML += `<tbody><tr><td colspan="${TC.length + 1}">${emptyBox(base().length ? 'Tidak ada data yang cocok dengan filter.' : 'Belum ada data.')}</td></tr></tbody>`;
     $('#info').textContent = `${fmtNum(rows.length)} baris${rows.length > shown.length ? ` (tampil ${shown.length})` : ''}`;
-    $('#more').innerHTML = rows.length > shown.length ? `<button class="btn sm" id="bMore">Tampilkan semua ${fmtNum(rows.length)} baris</button>` : '';
-    $('#bMore')?.addEventListener('click', () => { S.limit = 1e9; draw(); });
+    $('#more').innerHTML = rows.length > shown.length ? `<button class="btn sm" id="bMore">Tampilkan 50 berikutnya</button>` : '';
+    $('#bMore')?.addEventListener('click', () => { S.limit += 50; draw(); });
     $('#bDelSel').hidden = !S.sel.size;
     $('#bDelSel').textContent = `🗑 Hapus ${S.sel.size} terpilih`;
     $$('thead th[data-k]', tbl).forEach((th) => (th.onclick = () => { S.sort = S.sort === th.dataset.k ? '-' + th.dataset.k : th.dataset.k; draw(); }));
@@ -325,15 +342,22 @@ async function delLinked(plain, cascade) {
 }
 
 // ================================================================ FORM
-function refOptions(f) { return [...new Set(ctx.rows(f.ref).map((r) => displayOf(f.ref, r)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id', { numeric: true })); }
+function refOptions(f) { if(['lahan_blok','pisang_blok','padi_petak'].includes(f.ref)&&App.blockOptions)return App.blockOptions.filter(b=>f.ref==='pisang_blok'?b.divisi==='Pisang':f.ref==='padi_petak'?b.divisi==='Padi':true).map(b=>b.nama); return [...new Set(ctx.rows(f.ref).map((r) => displayOf(f.ref, r)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id', { numeric: true })); }
 
-export function openForm(table, row, { onSaved, prefill } = {}) {
+export async function openForm(table, row, { onSaved, prefill } = {}) {
+  const group=TABLES[table].div;
+  const needed=new Set([table,...neededTables(group==='pisang'?'k/pisang':group==='padi'?'k/padi':group==='lahan'?'gis':'')]);
+  for(const t of [...needed])for(const f of TABLES[t]?.f || [])if(f.t==='ref')needed.add(f.ref);
+  await Promise.all([...needed].filter(t=>!t.startsWith('daily_')).map(loadTable));
+  const registry=await api.get('/api/blocks');
+  App.blockOptions=registry.filter(b=>b.active&&b.layer_id&&b.ownership==='Sudah milik kebun');
   const T = TABLES[table];
   const isNew = !row;
   const ro = !can(table);
   if (ro && isNew) return me ? toast('Akun Anda tidak bisa menambah data di sini', true) : openLogin();
   const data = { ...(row || {}) };
   if (isNew) {
+    if(T.date)data[T.date]=util.iso(util.today());
     for (const f of T.f) {
       if (f.t === 'date' && f.req) data[f.k] = util.iso(util.today());
       if (f.k === 'tahun') data[f.k] = util.today().getFullYear();
@@ -452,8 +476,8 @@ function excelReportTable(rep) {
   if (rep.gagal) return `<div style="color:var(--danger)">Sinkron gagal: ${esc(rep.gagal)}</div>`;
   const color = (s) => (s.startsWith('diperbarui') || s.startsWith('akan') ? 'var(--ok)' : s.startsWith('ada kesalahan') ? 'var(--danger)' : s.startsWith('tidak berubah') ? 'var(--muted)' : 'var(--warn)');
   return `${(rep.peringatan || []).map((p) => `<div class="card" style="background:#fff7e6;border-color:#f3d6a6;margin-bottom:8px">⚠ ${esc(p)}</div>`).join('')}
-    <table class="mini"><tr><th>Sheet</th><th>Status</th><th class="num">Baris di Excel</th><th class="num">Baris baru / berubah</th><th class="num">Baris dihapus / berubah</th></tr>
-    ${rep.sheets.map((s) => `<tr><td><b>${esc(s.sheet)}</b></td><td style="color:${color(s.status)}">${esc(s.status)}</td><td class="num">${fmtNum(s.baris)}</td><td class="num">${s.tambah ? '+' + fmtNum(s.tambah) : ''}</td><td class="num">${s.hapus ? '−' + fmtNum(s.hapus) : ''}</td></tr>
+    <table class="mini"><tr><th>Sheet</th><th>Status</th><th class="num">Baris di Excel</th><th class="num">Baris baru</th><th class="num">Baris direvisi</th></tr>
+    ${rep.sheets.map((s) => `<tr><td><b>${esc(s.sheet)}</b></td><td style="color:${color(s.status)}">${esc(s.status)}</td><td class="num">${fmtNum(s.baris)}</td><td class="num">${s.tambah ? '+' + fmtNum(s.tambah) : ''}</td><td class="num">${s.ubah ? fmtNum(s.ubah) : ''}</td></tr>
       ${s.koreksi?.length ? `<tr><td></td><td colspan="4" class="small" style="color:var(--ok)">✔ Dibetulkan otomatis (beda huruf besar/kecil atau spasi): ${s.koreksi.map(esc).join('; ')}</td></tr>` : ''}
       ${s.peringatan?.length ? `<tr><td></td><td colspan="4" class="small" style="color:var(--warn)">⚠ ${s.peringatan.map(esc).join('<br>⚠ ')}</td></tr>` : ''}
       ${s.jumlahError ? `<tr><td></td><td colspan="4" class="small" style="color:var(--danger)">${s.errors.map((e) => `Baris ${e.row}: ${esc(e.msg)}`).join('<br>')}${s.jumlahError > s.errors.length ? `<br>… dan ${s.jumlahError - s.errors.length} kesalahan lain` : ''}</td></tr>` : ''}`).join('')}
@@ -612,7 +636,7 @@ function applySettings() {
 }
 
 // ================================================================ start
-export const App = { api, cache, ctx, loadTable, openForm, renderTable, excelPanel, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
+export const App = { tables: TABLES, api, cache, ctx, loadTable, openForm, renderTable, excelPanel, chart, loadLib, downloadXlsx, gisLayers, openModal, closeModal, toast, esc, fmtNum, fmtField, fmtDate, fmtPct, val, can, me: () => me, isAdmin: () => isAdmin(me), settings: () => settings, saveSettings: (o) => { Object.assign(settings, o); return isAdmin(me) ? api.put('/api/settings', o) : Promise.resolve(); } };
 // ================================================================ LOGIN & PENGGUNA
 const peranLabel = (u) => (u.peran || []).map((r) => ROLES[r]?.label || r).join(', ') || '—';
 function renderUserChip() {

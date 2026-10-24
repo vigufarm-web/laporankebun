@@ -107,7 +107,7 @@ export async function renderGIS(main, A) {
     </div>
     <div class="card" id="gSum" style="margin-top:14px"></div></div>`;
 
-  const map = L.map('map', { zoomControl: true, maxZoom: 22 }).setView([-7.09, 109.08], 15);
+  const map = L.map('map', { zoomControl: true, maxZoom: 22, preferCanvas: true }).setView([-7.09, 109.08], 15);
   const bases = {
     sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 18, maxZoom: 22, attribution: 'Esri World Imagery' }),
     osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxNativeZoom: 19, maxZoom: 22, attribution: '© OpenStreetMap' }),
@@ -128,7 +128,8 @@ export async function renderGIS(main, A) {
   const pointsLyr = L.layerGroup().addTo(map);
 
   async function loadLayers() {
-    const rows = await A.api.get('/api/t/gis_layer');
+    const metadata = await A.api.get('/api/gis/layers');
+    const rows = await Promise.all(metadata.map(async rec => Number(rec.tampil??1)!==0 ? A.api.get('/api/gis/layers/'+rec.id) : rec));
     layers.forEach((x) => { map.removeLayer(x.lyr); x.labels && map.removeLayer(x.labels); });
     layers = rows.sort((a, b) => n(a.urutan) - n(b.urutan)).map((rec) => {
       let gj = { type: 'FeatureCollection', features: [] };
@@ -136,7 +137,7 @@ export async function renderGIS(main, A) {
       let gaya = {}; try { gaya = JSON.parse(rec.gaya || '{}'); } catch {}
       const props = {};
       for (const f of gj.features) for (const [k, v] of Object.entries(f.properties || {})) if (!HIDE_PROPS.test(k)) (props[k] ??= new Set()).add(v ?? '');
-      return { rec, gj, gaya, props };
+      return { rec, gj, gaya, props, loaded: !!rec.geojson };
     });
     layers.forEach(build);
     drawSide(); drawLegend(); fillSearch(); renderSummary();
@@ -279,7 +280,7 @@ export async function renderGIS(main, A) {
 
   function editAttr(L0, f) {
     const p = f.properties || (f.properties = {});
-    const keys = Object.keys(p).filter((k) => !HIDE_PROPS.test(k));
+    const keys = Object.keys(p).filter((k) => !HIDE_PROPS.test(k) && !['blok_id','block_id','parent_ids'].includes(k));
     const md = A.openModal(`<div class="modal-head"><h2>Ubah atribut peta · ${esc(p[L0.rec.field_nama] ?? '')}</h2><button class="x">×</button></div>
       <div class="modal-body"><p class="small muted">Mengubah atribut poligon di layer <b>${esc(L0.rec.nama)}</b>. Pilihan diambil dari nilai yang sudah ada di layer ini (boleh diketik baru).</p>
       <div class="form-grid">${keys.map((k) => `<div class="fld"><label>${esc(k)}</label><input data-k="${esc(k)}" list="al_${esc(k)}" value="${esc(p[k] ?? '')}"><datalist id="al_${esc(k)}">${[...(L0.props[k] || [])].slice(0, 60).map((v) => `<option value="${esc(v)}">`).join('')}</datalist></div>`).join('')}</div></div>
@@ -323,6 +324,7 @@ export async function renderGIS(main, A) {
       el.onchange = async (e) => {
         const a = e.target.dataset.a;
         if (a === 'vis') {
+          if(e.target.checked && !L0.loaded) {try{const full=await A.api.get('/api/gis/layers/'+L0.rec.id);L0.rec={...full,tampil:1};L0.gj=JSON.parse(full.geojson);L0.loaded=true;L0.props={};for(const f of L0.gj.features)for(const [k,v] of Object.entries(f.properties||{}))if(!HIDE_PROPS.test(k))(L0.props[k]??=new Set()).add(v??'');map.removeLayer(L0.lyr);build(L0);drawSide();fillSearch();renderSummary();}catch(err){A.toast(err.message,true);e.target.checked=false;return;}}
           if (e.target.checked) L0.lyr.addTo(map); else map.removeLayer(L0.lyr);
           updLabels(L0); drawLegend();
           L0.rec.tampil = e.target.checked ? 1 : 0;
@@ -579,7 +581,7 @@ export async function renderGIS(main, A) {
           <div class="fld"><label>Simpan sebagai</label><select data-i="${i}" data-k="target"><option value="new">Layer baru</option><option value="skip">Lewati</option>${layers.map((L0) => `<option value="${L0.rec.id}" ${same === L0 ? 'selected' : ''}>Ganti: ${esc(L0.rec.nama)}</option>`).join('')}</select></div>
           <div class="fld"><label>Nama layer (jika baru)</label><input data-i="${i}" data-k="nama" value="${esc(p.name.replace(/\(.*?\)/g, '').replace(/_/g, ' ').trim())}"></div>
           <div class="fld"><label>Kolom nama blok</label><select data-i="${i}" data-k="field">${Object.keys(p.fc.features[0]?.properties || {}).map((k) => `<option ${k === guess(p.fc) ? 'selected' : ''}>${esc(k)}</option>`).join('')}</select></div>
-          <div class="fld"><label>Warna</label><input type="color" data-i="${i}" data-k="warna" value="${PAL[i % PAL.length]}"></div>
+          <div class="fld"><label>Jenis layer</label><select data-i="${i}" data-k="jenis"><option value="">Layer referensi</option><option value="Blok Tanam">Blok Kebun · sumber identitas blok</option></select></div><div class="fld"><label>Warna</label><input type="color" data-i="${i}" data-k="warna" value="${PAL[i % PAL.length]}"></div>
         </div></div>`;
       }).join('');
       $('#uS', md).disabled = !parsed.length;
@@ -587,16 +589,17 @@ export async function renderGIS(main, A) {
     $('#uS', md).onclick = async () => {
       const get = (i, k) => $(`[data-i="${i}"][data-k="${k}"]`, md).value;
       $('#uS', md).disabled = true;
-      for (const [i, p] of parsed.entries()) {
+      try { for (const [i, p] of parsed.entries()) {
         const target = get(i, 'target');
         if (target === 'skip') continue;
         const body = { geojson: JSON.stringify(p.fc), field_nama: get(i, 'field') };
-        if (target === 'new') await A.api.post('/api/t/gis_layer', { ...body, nama: get(i, 'nama'), warna: get(i, 'warna'), link_tabel: 'auto', tampil: 1, urutan: layers.length + i + 1, gaya: '{}' });
+        if (target === 'new') await A.api.post('/api/t/gis_layer', { ...body, nama: get(i, 'nama'), jenis: get(i,'jenis'), warna: get(i, 'warna'), link_tabel: 'auto', tampil: 1, urutan: layers.length + i + 1, gaya: '{}' });
         else await A.api.put(`/api/t/gis_layer/${target}`, body);
       }
       A.closeModal(); A.toast('Layer tersimpan'); await loadLayers();
       const all = L.featureGroup(layers.filter((x) => map.hasLayer(x.lyr)).map((x) => x.lyr));
       all.getBounds().isValid() && map.fitBounds(all.getBounds());
+      } catch(err) { A.toast(err.message,true);if($('#uS',md))$('#uS',md).disabled=false; }
     };
   };
 

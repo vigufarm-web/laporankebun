@@ -1,105 +1,76 @@
-# Monitoring Kebun — PT VIGU FARM INDONESIA
+# Monitoring Kebun - PT VIGU FARM INDONESIA
 
-Aplikasi web untuk memantau kebun **Pisang**, **Padi**, dan **Infra**: stok bibit/benih, blok tertanam, progres tanam, panen, Daily Report, iklim, dan peta lahan (GIS).
-
-- Halaman owner bisa dilihat tanpa login. Akun mandor hanya melihat input dan riwayat Daily Report divisinya sendiri.
-- **Login Admin** (pojok kanan atas) untuk menambah, mengubah, dan menghapus data.
-- Data bisa diisi lewat aplikasi **atau** lewat file Excel `Input Data Kebun.xlsx` (tersinkron dua arah).
-- Ringan dan tanpa framework. Database SQLite bawaan Node.js; paket resmi Vercel Blob dipakai khusus untuk foto online.
+Aplikasi Pisang, Padi, Infra, Daily Report, iklim, penjualan, dan GIS. Node.js + SQLite lokal; Turso dan Vercel Blob untuk versi online.
 
 ## Menjalankan
 
-1. Pasang **Node.js versi 22.13 atau lebih baru** (disarankan versi 24 LTS) dari https://nodejs.org
-2. Download repo ini (tombol hijau **Code → Download ZIP**, lalu ekstrak) atau `git clone`.
-3. Klik dua kali **`Jalankan.bat`** (Windows) — komponen foto disiapkan otomatis lalu browser terbuka di http://localhost:3000
-   Atau lewat terminal: `npm start` (sama dengan `node server.js`).
-4. Pertama kali dibuka: klik **Login Admin → Buat Admin** untuk membuat akun admin pertama.
+1. Gunakan Node.js 22.13 atau lebih baru (Node.js 24 direkomendasikan).
+2. Jalankan `npm ci`, lalu `npm start`, atau klik `Jalankan.bat`.
+3. Buka `http://localhost:3000`. Instalasi baru menyediakan pembuatan admin pertama.
+4. Komputer/HP di WiFi yang sama dapat memakai alamat jaringan yang dicetak oleh server.
 
-HP/komputer lain di WiFi yang sama: buka alamat "Jaringan/HP" yang tampil di jendela server.
+## Pembaruan 1.1
 
-## Versi online (Vercel + Turso)
+- Ringkasan owner dan modul memakai respons ringkas. Transaksi ditampilkan 50 baris per halaman, dengan filter tanggal dan pencarian dari server.
+- Kode halaman dimuat ketika menunya dibuka. Layer GIS yang tersembunyi tidak diunduh sampai diaktifkan. Analisis lama tetap tersedia lewat Analisis lengkap & peta.
+- Daily menyediakan pilihan kegiatan, isian hasil dan HK, draf perangkat, foto terkompres, thumbnail, serta retry unggahan tanpa mengulang foto yang sudah berhasil.
+- Mandor dapat mengunduh PDF Daily dan membagikan PDF/ringkasan melalui pilihan berbagi perangkat. Browser tanpa dukungan berbagi berkas mengunduh PDF dan membuka WhatsApp; pengguna melampirkan PDF secara manual.
+- Owner/management dapat mengunduh PDF gabungan sesuai periode. Mandor tidak dapat mengunduh divisi di luar izinnya atau PDF owner.
+- Blok mengikuti GIS melalui ID permanen. Nama diperbarui tanpa menghapus hasil atau status pekerjaan yang sudah selesai.
+- Impor Excel memperbarui berdasarkan ID dan versi baris, menambah baris baru, dan mempertahankan baris lama yang tidak terdapat di file. Menghapus baris Excel bukan perintah menghapus data aplikasi.
 
-Repo ini bisa langsung di-deploy ke Vercel. Data online disimpan di database **Turso** (gratis).
+## GIS sebagai sumber blok
 
-1. Vercel → **Create New → Project → Import** repo ini → Framework Preset **Other** → **Deploy**.
-2. Di proyek Vercel: **Storage → Create Database → Turso** → hubungkan (**Connect**) ke proyek ini.
-   Variabel `TURSO_DATABASE_URL` dan `TURSO_AUTH_TOKEN` otomatis terisi.
-3. **Storage → Create Database → Blob → Private**, lalu hubungkan ke proyek. Variabel `BLOB_READ_WRITE_TOKEN` otomatis terisi.
-4. Tambahkan Environment Variable `CRON_SECRET` dengan teks acak panjang.
-5. **Deployments → ⋯ → Redeploy** supaya semua variabel baru terbaca.
-6. Buka link proyek → **Login Admin → Buat Admin**.
-7. Memindahkan data dari komputer: di aplikasi komputer **Pengaturan & Backup → Download backup database**,
-   lalu di versi online **Pengaturan & Backup → Pindahkan / pulihkan database** → pilih file tersebut.
+Menu **Blok & Riwayat GIS** menampilkan ID, nama sekarang, nama lama, luas GIS saat ini, kepemilikan, status aktif, dan riwayat.
 
-Di versi online: input Excel lewat **Download → isi → Upload** (tidak ada file Excel yang dipantau), backup lewat **Download backup database**.
+1. Download GeoJSON dengan ID dari menu tersebut.
+2. Pertahankan kolom `blok_id` saat mengganti nama atau batas poligon di perangkat GIS.
+3. Upload kembali ke layer yang sama, periksa pratinjau, lalu terapkan.
+4. Pilih **Sudah milik kebun** hanya untuk lahan yang sudah terverifikasi. Blok aktif yang belum diverifikasi atau bukan milik kebun tidak masuk pilihan operasional.
+5. Jika `blok_id` hilang, aplikasi mencocokkan nama yang dikenal. Bentuk identik dengan nama baru menghasilkan permintaan pencocokan; aplikasi tidak menebak berdasarkan kesamaan luas.
+6. Blok hilang dari revisi dinonaktifkan, bukan dihapus.
+7. Pecah/gabung memakai ID baru dan `parent_ids` berisi ID asal. Riwayat induk dapat ditelusuri tanpa menggandakan transaksi atau membagi hasil lama secara otomatis.
 
-**Komputer kantor memakai data yang sama dengan versi online (opsional):** buat file `data/online.json` berisi
-`{"url": "<TURSO_DATABASE_URL>", "token": "<TURSO_AUTH_TOKEN>"}` lalu jalankan ulang `Jalankan.bat`.
-File Excel di komputer tetap tersinkron dua arah, dan perubahan dari online masuk ke file Excel dalam ±1 menit.
-File `data/` tidak pernah ikut ke GitHub.
+Nama pada kolom lama tetap diperbarui untuk kompatibilitas laporan/Excel. ID dan nama saat pencatatan juga disimpan. Nama atau rentang blok lama yang ambigu tetap dipertahankan untuk pemeriksaan; tidak otomatis dianggap milik kebun.
 
-## Menu
+## Data dan pembaruan
 
-| Menu | Isi |
-|---|---|
-| Ringkasan | Lahan serah terima, tertanam, progres minggu ini + peta, tanggal tanam per blok, panen |
-| Daily Report | Dashboard owner seluruh divisi, filter harian/7 hari/14 hari/bulanan/siklus, HI, SDHI, target, capaian, HK, kendala, alat dan foto |
-| Pisang | Stok Bibit · Tertanam · Progres Tanam · Panen |
-| Padi | Stok Benih · Tertanam · Progres Tanam · Panen |
-| Iklim | Curah hujan, hari hujan, suhu, kelembapan per bulan |
-| Peta & Lahan | Layer shapefile/GeoJSON, warna per status, ringkasan luas, catatan peta |
-| Input Excel | Status sinkron, download & upload file Excel input |
-| Sistem (setelah login) | Riwayat Perubahan · Pengguna & Akses · Pengaturan & Backup |
+Baca [panduan pembaruan aman](docs/UPGRADE.md) sebelum memperbarui instalasi yang berisi data.
 
-Admin bisa menambah **catatan mengambang** (📌) di setiap halaman, mis. kendala di lapangan. Catatan kosong tidak tampil.
+Folder `data/` menyimpan database, akun, foto lokal, dan backup. Folder ini tidak masuk GitHub. Perubahan schema menambah tabel/kolom tanpa menghapus tabel atau transaksi lama. Gunakan database yang sama saat mengganti kode aplikasi.
 
-## Data
+Data panen padi lama yang belum bertanggal ditampilkan sebagai arsip terpisah. Data ini tidak dimasukkan ke hasil periode sampai tanggal panennya diverifikasi. Luas GIS saat ini dipisahkan dari luas operasional dan angka historis; revisi peta tidak menulis ulang hasil atau target pekerjaan lama.
 
-Folder **`data/` tidak ikut di repo** (berisi database, akun login, dan cadangan). Saat pertama dijalankan aplikasi membuat:
+## Excel
 
-- `data/kebun.db` — database aplikasi. Pada pemasangan baru, data awal dari Excel dan peta persil dalam paket otomatis dimasukkan.
-- `data/backup/` — cadangan otomatis terkompres `.db.gz`, 10 terakhir
-- `Input Data Kebun.xlsx` — file Excel input
+Download template terbaru pada modul terkait. Pertahankan **ID baris (jangan diubah)** dan **Versi baris (jangan diubah)** untuk revisi. File yang versinya tertinggal ditolak agar perubahan aplikasi tidak tertimpa. Baris baru diketik dengan ID dan versi kosong.
 
-**Memindahkan data ke komputer lain:** matikan server, salin folder `data/` (dan `Input Data Kebun.xlsx`) dari komputer lama ke folder aplikasi di komputer baru.
-**Memulihkan cadangan:** ekstrak `.db.gz` (mis. dengan 7-Zip) → ganti `data/kebun.db` saat server mati.
+File lama tanpa ID masih dapat memasukkan data baru dan melewati baris yang identik. Koreksi data induk yang sudah ada memerlukan template baru. Jangan memakai penghilangan baris atau `KOSONG` untuk menghapus data; keduanya tidak menghapus data lama.
 
-⚠️ Jangan upload folder `data/` ke GitHub karena berisi akun dan database aktif. File Excel contoh dalam paket boleh tetap ada sebagai data awal; untuk pembaruan online gunakan menu upload/backup di aplikasi.
+Sinkronisasi file lokal dijalankan terpisah setelah perubahan. Versi online memakai download/upload, bukan pemantauan file lokal.
 
-## Input lewat Excel
+## PDF dan WhatsApp
 
-Ubah/tambah/hapus baris di `Input Data Kebun.xlsx` lalu simpan → aplikasi otomatis ter-update (server harus menyala). Setiap sheet = isi lengkap satu tabel; sheet yang ada kesalahan dilewati dan dilaporkan di menu **Input Excel**. Perubahan lewat aplikasi juga ditulis balik ke file Excel (menunggu file ditutup bila sedang dibuka di Excel).
+- Daily: buka daftar/detail laporan, pilih periode, klik **Unduh PDF** atau **Bagikan ke WhatsApp**.
+- Owner: pilih periode di Ringkasan, klik **Unduh PDF** untuk laporan gabungan.
+- Pembagian berkas memerlukan dukungan browser/perangkat dan biasanya HTTPS. Tombol pertama menyiapkan PDF, tombol berikutnya membuka pilihan berbagi. Pengguna memilih penerima dan mengirim sendiri.
+- PDF memuat teks/tabel dan jumlah dokumentasi. Foto ditinjau melalui aplikasi oleh pengguna yang berwenang; foto tidak diunduh otomatis ke setiap PDF agar ukuran tetap ringan.
+- Saldo stok dan pembayaran memakai kondisi tercatat saat PDF dibuat; detail transaksi mengikuti periode. Arsip tanpa tanggal diberi label tersendiri.
 
-## Login & akses
+## Online: Vercel + Turso
 
-- Admin membuat akun lain di **Pengguna & Akses** dan memilih perannya: **Daily Report — Pisang**, **Daily Report — Padi**, atau **Daily Report — Infra**. Nama penginput otomatis diambil dari akun yang sedang login. Setelah login, pengguna lapangan langsung masuk ke halaman khusus dan tidak dapat membuka halaman utama/divisi lain. Management/Owner hanya melihat.
-- Izin dicek di server. Login salah 5× → dikunci 5 menit. Sesi berlaku 30 hari.
-- Setiap perubahan tercatat di **Riwayat Perubahan** beserta nama pengubahnya.
+Import repo ke Vercel dengan Framework Preset Other. Hubungkan database Turso dan Blob Private, lalu tetapkan:
 
-## Pengaturan lanjutan
+- `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`
+- `BLOB_READ_WRITE_TOKEN`
+- `CRON_SECRET` untuk pembersihan foto
 
-Daily Report dapat dibuka langsung di `/daily`. **Rencana Mingguan** dan **Realisasi Harian** dibuat terpisah supaya alurnya sesuai pekerjaan lapangan. Pada rencana, pilih satu tanggal minggu pelaksanaan; sistem otomatis memakai Senin–Minggu sehingga tidak perlu mengetik tanggal awal dan akhir. Jika formulir dibuka Sabtu/Minggu, minggu berikutnya dipilih otomatis. Pilih blok lebih dahulu, lalu tambahkan beberapa kegiatan beserta target, satuan, dan HK rencana.
+Redeploy setelah variabel diatur. Jangan mengganti database Turso saat hanya memperbarui kode. Pengaturan dan akun tetap berasal dari database yang sama. Foto mengikuti kebijakan retensi aplikasi (7 hari berdasarkan tanggal laporan, WIB; foto asli dan thumbnail dihapus otomatis); teks laporan tetap disimpan.
 
-Saat membuat realisasi harian, kegiatan pada rencana minggu tersebut dimuat otomatis. Kegiatan mendadak tetap dapat diinput dan diberi tanda **Tambahan di luar rencana**. HI diisi setiap hari dan SDHI dihitung otomatis dari akumulasi realisasi pada blok, kegiatan, dan minggu yang sama. Daftar blok menempatkan petak Pisang, Padi, dan lokasi berkomoditas di bagian atas; nama yang hanya berupa nomor ditempatkan paling bawah.
+Opsional lokal: `PORT`, `DATA_DIR`, `EXCEL_FILE`, atau `data/online.json` untuk memakai database online dari komputer kantor. Jangan commit kredensial atau folder data.
 
-Owner mendapatkan tiga kartu divisi yang dapat diklik (**Pisang, Padi, Infra**) dan rekap kegiatan berdasarkan **Hari ini, 7 hari, 14 hari, Bulanan, atau Siklus**. Tabel rekap menampilkan tanggal, divisi, blok, pekerjaan, HK, hasil hari ini (**HI**), hasil kumulatif sampai hari ini (**SDHI**), target, capaian, dan status laporan.
+## Pengujian
 
-Di bawah tabel terdapat **galeri foto kegiatan Daily Report** yang otomatis mengikuti divisi dan periode terpilih. Di rekap owner, kegiatan yang sama pada beberapa blok digabung menjadi satu baris; blok aktif tetap dicantumkan dan angka hasil, HK, serta target dijumlahkan. Daftar lokasi diambil dari data kebun dan GIS, termasuk blok Pisang, petak Padi, blok pembukaan lahan, Embung, Packing House, gudang, pompa, pos, dan titik lokasi lainnya. Target lama tetap terbaca sebagai data kompatibilitas; data asli lainnya tidak diubah.
+`npm test` menjalankan server dengan database terpisah di `work/`, lalu memeriksa migrasi, ID blok, rename, pekerjaan selesai, relasi pecah blok, kepemilikan, pagination, Excel aman, PDF, dan pembatasan akses mandor. Tidak menghubungi database operasional atau mengirim pesan WhatsApp.
 
-Data teks tersimpan tanpa batas. Foto yang diunggah langsung melalui aplikasi dikompres di browser, disimpan privat, dan dihapus otomatis setelah 14 hari; metadata bahwa foto pernah ada tetap tersimpan. Paket ini juga menyertakan data laporan awal dua minggu terakhir tanpa menampilkan sumber maupun nama mandor, dan tidak menimpa laporan yang sudah ada.
-
-Variabel lingkungan (opsional): `PORT` (bawaan 3000), `DATA_DIR` (folder database), `EXCEL_FILE` (lokasi file Excel), `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` (database online), `BLOB_READ_WRITE_TOKEN` (foto privat), dan `CRON_SECRET` (pembersihan foto harian).
-
-## Struktur
-
-```
-server.js            server HTTP + API + sinkron Excel (node:http, node:sqlite)
-vercel.json          pengaturan versi online (Vercel menjalankan server.js sebagai satu fungsi)
-lib/turso.js         sambungan ke database online Turso (lewat HTTP, tanpa paket tambahan)
-lib/excel.js         baca/tulis file Excel input
-lib/exceljs.min.cjs  pustaka ExcelJS (file tunggal)
-public/              tampilan web (HTML, CSS, JS modul)
-public/js/schema.js  definisi semua tabel & kolom — tambah kolom di sini, kolom baru dibuat otomatis
-public/vendor/       Leaflet, Chart.js, shpjs (dimuat hanya saat dibutuhkan)
-Jalankan.bat         pintasan menjalankan server di Windows
-```
+Kinerja perangkat lapangan dan integrasi Turso/Blob perlu diverifikasi pada lingkungan staging; pengujian lokal tidak mengukur latensi jaringan produksi.
