@@ -80,9 +80,10 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   // PDF permission checks and production PDF generation.
   await request('/api/settings','PUT',{nama:'VIGU FARM - CONTOH DATA UJI'});
   for(const kind of ['daily','owner']){const response=await fetch(base+'/api/reports/'+kind+'.pdf?'+(kind==='daily'?'from=2026-10-24&to=2026-10-24&divisi=Pisang':'from=2026-10-01&to=2026-10-24'),{headers:{cookie}});assert.equal(response.status,200,response.status!==200?await response.text():'');assert.equal(response.headers.get('content-type'),'application/pdf');const bytes=Buffer.from(await response.arrayBuffer());assert.equal(bytes.subarray(0,5).toString(),'%PDF-');assert.ok(bytes.length>1000);if(process.env.WRITE_PDF_SAMPLES==='1')fs.writeFileSync(path.resolve(root,'..','contoh-laporan-'+kind+'.pdf'),bytes);}
+  r=await request('/api/reports/owner-summary?week=2026-10-24');assert.equal(r.status,200);assert.equal(r.body.from,'2026-10-19');assert.equal(r.body.to,'2026-10-25');assert.ok(r.body.photos.length<=6);assert.ok(r.body.sections.every(s=>!s.headers.includes('Tanggal')));
   const adminCookie=cookie,mandorPass=crypto.randomUUID();r=await request('/api/users','POST',{username:'mandor-test',nama:'Mandor test',password:mandorPass,peran:['daily_pisang']});assert.equal(r.status,200);
   r=await request('/api/login','POST',{username:'mandor-test',password:mandorPass});assert.equal(r.status,200);
-  let response=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(response.status,403);
+  let response=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(response.status,403);assert.equal((await request('/api/reports/owner-summary?week=2026-10-24')).status,403);
   response=await fetch(base+'/api/reports/daily.pdf?from=2026-10-01&to=2026-10-24&divisi=Padi',{headers:{cookie}});assert.equal(response.status,403);
   response=await fetch(base+'/api/reports/daily.pdf?from=2026-10-01&to=2026-10-24&divisi=Pisang',{headers:{cookie}});assert.equal(response.status,200);
   r=await request('/api/overview');assert.equal(r.status,200,'foremen can read the same aggregate summary as public visitors');
