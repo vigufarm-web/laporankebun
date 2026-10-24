@@ -30,9 +30,9 @@ const akhirBulan = (ym) => new Date(+ym.slice(0, 4), +ym.slice(5), 0);
 function tambahHariKerja(a, nHari) { const d = new Date(a); d.setHours(0, 0, 0, 0); let sisa = Math.ceil(nHari); while (sisa > 1) { d.setDate(d.getDate() + 1); if (d.getDay() !== 0) sisa--; } return d; }
 
 async function muat() {
-  const T = ['lahan_blok', 'lahan_harian', 'lahan_aktivitas', 'lahan_target', 'lahan_rencana', 'pisang_blok'];
-  const [rows, set] = await Promise.all([Promise.all(T.map((t) => fetch('/api/t/' + t).then((r) => (r.ok ? r.json() : [])))), fetch('/api/settings').then((r) => r.json()).catch(() => ({}))]);
-  const data = Object.fromEntries(T.map((t, i) => [t, rows[i]]));
+  const response=await fetch('/api/kebun',{signal:AbortSignal.timeout(45000)});
+  const result=await response.json();if(!response.ok)throw new Error(result.error||'Data kebun belum siap');
+  const {data,settings:set}=result;
   if (set.nama) $('#nm').textContent = set.nama;
   render({ rows: (t) => data[t] || [] });
 }
@@ -240,8 +240,7 @@ function render(ctx) {
   isiPilihPeta();
   (async () => {
     try {
-      gisBlok ??= fetch('/api/t/gis_layer?jenis=' + encodeURIComponent('Blok Tanam')).then((r) => (r.ok ? r.json() : []))
-        .then((ls) => { const g = ls.find((x) => /blok tanam/i.test(`${x.jenis} ${x.nama}`)); return g ? JSON.parse(g.geojson) : null; });
+      gisBlok ??= fetch('/api/gis/layers').then(r=>r.ok?r.json():[]).then(async ls=>{const g=ls.find(x=>x.nama==='Blok Tanam');if(!g)return null;const response=await fetch('/api/gis/layers/'+g.id);if(!response.ok)throw new Error('Peta blok belum dapat dimuat');const layer=await response.json();return JSON.parse(layer.geojson);});
       const [fc] = await Promise.all([gisBlok, loadLeaflet()]);
       const box = $('#peta', el); if (!box || !box.isConnected) return;
       if (!fc) { box.outerHTML = '<div class="sub">Layer peta "Blok Tanam" belum ada.</div>'; return; }

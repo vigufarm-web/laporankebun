@@ -45,6 +45,7 @@ for(const chunkSize of [16384,32768])test('cloud snapshot streams geometry and b
     assert.equal(snapshot.db.prepare('SELECT COUNT(*) n FROM records').get().n,251);
     assert.equal(snapshot.db.prepare('SELECT seq FROM sqlite_sequence WHERE name=?').get('gis_layer').seq,1);
     assert.ok(snapshot.db.prepare("SELECT 1 FROM sqlite_master WHERE name='attachment_id'").get());
-    assert.equal(active,false);assert.ok(largest<chunkSize*7);assert.ok(reads>20);assert.ok(requests<40,'bounded requests for a large geometry');
+    const partial=await copyCloudSnapshot(turso('http://127.0.0.1:'+server.address().port,'test-token'),{tables:['_ver','records']});assert.equal(partial.db.prepare('SELECT COUNT(*) n FROM gis_layer').get().n,0);assert.equal(partial.db.prepare('SELECT COUNT(*) n FROM records').get().n,251);partial.db.close();
+    assert.equal(active,false);assert.ok(largest<chunkSize*7);assert.ok(reads>20);assert.ok(requests<60,'bounded requests for full and partial snapshots');
   }finally{snapshot?.db.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));source.close();}
 });

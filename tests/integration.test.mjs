@@ -14,7 +14,8 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
  try{
   let ready=false;for(let i=0;i<240;i++){if(proc.exitCode!=null)throw Error(output);try{const r=await fetch(base+'/api/me');if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,250));}assert.ok(ready,'server starts: '+output);
   const request=async(p,method='GET',body)=>{const r=await fetch(base+p,{method,headers:{cookie,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return {status:r.status,body:await r.json()};};
-  const initial=await request('/api/records/pisang_penjualan?limit=50');assert.equal(initial.status,200);assert.equal(initial.body.rows.length,50);assert.equal(initial.body.total,909);
+  const initial=await request('/api/records/pisang_penjualan?limit=50');assert.equal(initial.status,401);
+  const kebun=await request('/api/kebun');assert.equal(kebun.status,401);const summary=await request('/api/kebun-summary');assert.equal(summary.status,200);assert.ok(!JSON.stringify(summary.body).includes('geojson'));assert.ok(!JSON.stringify(summary.body).includes('pembeli'));
   const overview=await request('/api/overview?from=2026-10-01&to=2026-10-24');assert.equal(overview.status,200);assert.equal(overview.body.climate.observations>0,true);assert.ok(JSON.stringify(overview.body).length<80000,'small overview response');
   let r=await request('/api/setup','POST',{username:'test-admin',nama:'Integration test',password:crypto.randomUUID()});assert.equal(r.status,200);
   const beforeSales=await request('/api/t/pisang_penjualan');const salesIDs=beforeSales.body.map(x=>x.id);

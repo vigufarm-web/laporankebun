@@ -1,3 +1,4 @@
+import { kebunSummary } from './lib/kebun-summary.js';
 import { removeDuplicateParcelLayer } from './lib/gis-deduplicate.js';
 import { createParcelLocations } from './lib/gis-ownership.js';
 import { importPadi } from './lib/padi-import.js';
@@ -32,7 +33,7 @@ const PHOTO_DIR = path.join(DATA_DIR, 'daily-photos');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 fs.mkdirSync(PHOTO_DIR, { recursive: true });
 
-const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, ruteDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util, nominalJual, isJual, iklimHarian } = await import('./public/js/schema.js');
+const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, ruteDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util, nominalJual, isJual, iklimHarian, statusRencana, targetPeriode } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
 const { turso, onlineConfig } = await import('./lib/turso.js');
 
@@ -47,7 +48,7 @@ const cloud = ONLINE ? turso(ONLINE.url, ONLINE.token) : null;
 
 // Mode online: data dibaca dari salinan di memori (cepat), setiap perubahan dikirim ke database online sebagai satu transaksi.
 // Nomor versi (_ver) mencegah dua tempat menimpa perubahan satu sama lain.
-let raw = null, ver = 0, txMark = -1, completeSnapshot = true, photoContextId = null;
+let raw = null, ver = 0, txMark = -1, completeSnapshot = true, photoContextId = null, loadedTables = null;
 const pend = [];
 const WRITE = /^\s*(INSERT|UPDATE|DELETE|REPLACE|CREATE|ALTER|DROP)\b/i;
 const db = {
@@ -67,9 +68,9 @@ const db = {
   },
 };
 const q = (s) => `"${s.replace(/"/g, '')}"`;
-async function loadCloud() {
-  const snapshot=await copyCloudSnapshot(cloud,{chunkSize:32768});
-  const old=raw;raw=snapshot.db;ver=snapshot.version;completeSnapshot=true;photoContextId=null;old?.close();
+async function loadCloud(tables=null) {
+  const snapshot=await copyCloudSnapshot(cloud,{chunkSize:32768,tables});
+  const old=raw;raw=snapshot.db;ver=snapshot.version;completeSnapshot=!tables;loadedTables=tables?new Set(tables):null;photoContextId=null;old?.close();
 }
 // kirim perubahan yang tertunda ke database online (dipecah bila sangat besar, mis. pulihkan database)
 async function flush() {
@@ -83,21 +84,22 @@ async function flush() {
   } catch (e) { await loadCloud(); throw e; } // salinan di memori disamakan lagi dengan isi online
 }
 // ada perubahan dari tempat lain (perangkat/instance lain)? → muat ulang salinan
-async function syncCloud(photoReportId = null) {
+async function syncCloud(photoReportId = null,tables=null) {
   if (!cloud) return false;
   const [[r]] = await cloud.query(['SELECT MAX(v) v FROM _ver']);
-  if (Number(r.v || 0) === ver && (completeSnapshot || (photoReportId && photoContextId===photoReportId))) return false;
+  if (Number(r.v || 0) === ver && (completeSnapshot || (tables&&tables.every(t=>loadedTables?.has(t))) || (photoReportId && photoContextId===photoReportId))) return false;
   if(photoReportId){
-    try{ver=await loadPhotoContext(cloud,raw,photoReportId);completeSnapshot=false;photoContextId=photoReportId;return true;}
+    try{ver=await loadPhotoContext(cloud,raw,photoReportId);completeSnapshot=false;loadedTables=null;photoContextId=photoReportId;return true;}
     catch(error){console.warn('Konteks foto dimuat ulang melalui snapshot lengkap:',error.message);}
   }
-  await loadCloud(); return true;
+  await loadCloud(tables&&loadedTables&&Number(r.v||0)===ver?[...new Set([...loadedTables,...tables])]:tables); return true;
 }
 // satu permintaan pada satu waktu dalam mode online (urutan perubahan & nomor versi tetap rapi)
 let lock = Promise.resolve();
 const serial = (fn) => { const p = lock.then(fn, fn); lock = p.catch(() => {}); return p; };
 
-if (cloud) { await cloud.batch(['CREATE TABLE IF NOT EXISTS _ver (v INTEGER PRIMARY KEY)']); await loadCloud(); }
+const authTables=['_ver','_users','_sessions','_settings'];
+if (cloud) { await cloud.batch(['CREATE TABLE IF NOT EXISTS _ver (v INTEGER PRIMARY KEY)']); await loadCloud(VERCEL?authTables:null); }
 else if (BELUM_ONLINE) raw = new DatabaseSync(':memory:');
 else {
   raw = new DatabaseSync(DB_FILE);
@@ -109,6 +111,7 @@ else {
   setInterval(() => { try { raw.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch {} }, 10 * 60e3).unref();
 }
 
+const existingCloud=cloud&&!!raw.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='daily_report'").get();
 // ---------- migrasi otomatis: buat tabel & tambah kolom baru sesuai schema.js
 const colType = (f) => (f.t === 'int' ? 'INTEGER' : f.t === 'num' || f.t === 'money' ? 'REAL' : 'TEXT');
 function migrate() {
@@ -221,6 +224,14 @@ function ownedDailyLocations() {
   return parcelLocations();
 }
 
+let dailyTargetCache=new Map();
+function dailyLandTargets(date){
+  const bounds=weekBounds(date),key=bounds.start;
+  if(dailyTargetCache.has(key))return dailyTargetCache.get(key);
+  const tables=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'],data=Object.fromEntries(tables.map(t=>[t,db.prepare('SELECT * FROM '+q(t)).all()])),ctx={rows:t=>(data[t]||[]).filter(r=>t==='lahan_harian'?r.tanggal<bounds.start:t==='pisang_blok'?(!r.tanggal_tanam||r.tanggal_tanam<bounds.start):true)};
+  const result=targetPeriode(ctx,statusRencana(ctx),bounds.start,bounds.end,bounds.start);
+  dailyTargetCache.set(key,result);return result;
+}
 function dailyPayload(report) {
   const weekStart = weekBounds(report.tanggal).start;
   const plan = db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(weekStart, report.divisi);
@@ -231,13 +242,23 @@ function dailyPayload(report) {
       AND lower(trim(di.aktivitas))=lower(trim(?))
       AND lower(trim(COALESCE(di.blok,'')))=lower(trim(COALESCE(?,'')))
       AND lower(trim(COALESCE(di.satuan,'')))=lower(trim(COALESCE(?,'')))`);
+  const plannedHK=db.prepare(`SELECT SUM(di.hk_rencana) total FROM daily_item di JOIN daily_report dr ON dr.id=di.report_id
+    WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ? AND lower(trim(di.aktivitas))=lower(trim(?))
+    AND lower(trim(COALESCE(di.blok,'')))=lower(trim(COALESCE(?,''))) AND lower(trim(COALESCE(di.satuan,'')))=lower(trim(COALESCE(?,'')))`);
   const items = db.prepare('SELECT * FROM daily_item WHERE report_id=? ORDER BY urutan, id').all(report.id)
     .map((item) => {
       const sum = cumulative.get(report.divisi, weekStart, report.tanggal, item.aktivitas, item.blok, item.satuan);
       const planned = plannedById.find((p) => Number(item.plan_item_id) === Number(p.id)) || plannedById.find((p) =>
         util.key(p.aktivitas) === util.key(item.aktivitas) && util.key(p.blok) === util.key(item.blok) && util.key(p.satuan) === util.key(item.satuan));
+      const name=String(item.aktivitas||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+      const aliases={landclearing:'Land Clearing',lc:'Land Clearing',bajak1:'Bajak 1',bajak2:'Bajak 2',dolomite:'Dolomite',dolomit:'Dolomite',stikridger:'Stik Ridger',ridger:'Ridger',installdrip:'Install Drip',stiktanam:'Stik Tanam',ecerpupuk:'Ecer Pupuk',tanam:'Tanam'};
+      const normBlock=v=>String(v||'').toLowerCase().replace(/([a-z])0+(?=[1-9])/g,'$1').replace(/\s/g,'');
+      const names=String(item.blok||'').split(',').map(normBlock);
+      const landTarget=item.satuan==='ha'&&aliases[name]?dailyLandTargets(report.tanggal).find(x=>x.a===aliases[name])?.bl.filter(x=>names.includes(normBlock(x.blok))).reduce((s,x)=>s+x.ha,0):null;
+      const targetHK=planned?.hk_rencana ?? plannedHK.get(report.divisi,weekStart,weekBounds(report.tanggal).end,item.aktivitas,item.blok,item.satuan)?.total ?? null;
+      const target=planned?.target ?? (item.plan_item_id!=null?item.target:null) ?? (landTarget>0?landTarget:null);
       const outside = item.di_luar_rencana != null ? Number(item.di_luar_rencana) : plan ? Number(!planned) : 0;
-      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target: planned?.target ?? (item.plan_item_id != null ? item.target : null), hasil_sdhi: item.hasil_sdhi ?? sum.total ?? null };
+      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target, target_hk_minggu:targetHK, target_basis:planned?'Rencana mingguan':landTarget>0?'Rencana land preparation':null, hasil_sdhi: item.hasil_sdhi ?? sum.total ?? null };
     });
   const photos = db.prepare('SELECT * FROM daily_photo WHERE report_id=? ORDER BY id').all(report.id)
     .map((p) => {const expired=photoExpired(p);return { ...p, deleted_at:p.deleted_at || (expired?p.expires_at:null), thumbnail_url: !expired&&!p.deleted_at&&p.thumb_lokasi ? `/api/daily/photo/${p.id}?thumb=1` : null, url: p.deleted_at||expired ? null : `/api/daily/photo/${p.id}` };});
@@ -512,10 +533,9 @@ function seed() {
     tandai('isi:daily_target_realisasi_v1');
   }
 }
-seed();
-const removedParcelDuplicate=removeDuplicateParcelLayer(db);
+if(!existingCloud){seed();blocks.boot();completeSnapshot=true;loadedTables=null;}
+const removedParcelDuplicate=completeSnapshot?removeDuplicateParcelLayer(db):null;
 if(removedParcelDuplicate)log('hapus layer persil duplikat','gis_layer',removedParcelDuplicate.removed,removedParcelDuplicate);
-blocks.boot();
 // Existing photo files follow the same report-date retention as new uploads.
 for(const photo of db.prepare('SELECT p.id,p.expires_at,r.tanggal FROM daily_photo p JOIN daily_report r ON r.id=p.report_id WHERE p.lokasi IS NOT NULL OR p.thumb_lokasi IS NOT NULL').all()) {
   const expiry=photoExpiresAt(photo.tanggal);
@@ -660,8 +680,9 @@ async function api(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length': buf.length });
     return res.end(buf);
   }
-  const publicRead = m === 'GET' && ['tables', 't', 'settings', 'excel', 'overview', 'records', 'climate', 'blocks', 'gis'].includes(parts[1]);
+  const publicRead = m === 'GET' && ['settings','overview','kebun-summary'].includes(parts[1]);
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
+  if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1]))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
 
   if(parts[1]==='reports' && m==='GET') {
     if(!user)return send(res,401,{error:'Silakan login untuk mengunduh laporan.'});
@@ -689,6 +710,12 @@ async function api(req, res, url) {
 
   // Lightweight read models and versioned GIS changes.
   if (['overview','records','climate','blocks','gis'].includes(parts[1]) && dailyOnly(user)) return send(res,403,{error:'Akun lapangan hanya dapat mengakses Daily Report.'});
+  if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,ownedDailyLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
+  if(parts[1]==='kebun'&&m==='GET'){
+    const tables=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
+    const data=Object.fromEntries(tables.map(t=>[t,db.prepare('SELECT * FROM '+q(t)).all().map(({created_at,updated_at,block_name_snapshot,...r})=>r)]));
+    return send(res,200,{data,settings:Object.fromEntries(db.prepare('SELECT * FROM _settings').all().map(r=>[r.k,r.v]))});
+  }
   if (parts[1]==='overview' && m==='GET') {
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today.slice(0,7)+'-01',to=url.searchParams.get('to')||today;
     const summary=reads.overview({from,to,today,blocks:blocks.list()});if(!user)summary.daily=[];return send(res,200,summary);
@@ -1261,11 +1288,27 @@ function holdResponse(res) {
   const restore = () => { res.writeHead = wh; res.end = end; };
   return { release() { restore(); if (a) res.writeHead(...a); if (b) res.end(...b); }, discard() { restore(); res.removeHeader('Set-Cookie'); } };
 }
+function readScope(req,url){
+  if(!VERCEL)return null;
+  const p=url.pathname;
+  if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status'].includes(p)))return authTables;
+  if(req.method!=='GET')return null;
+  const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
+  if(p==='/api/overview')return [...authTables,...Object.keys(TABLES).filter(t=>t!=='gis_layer'),'_blocks'];
+  if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer'];
+  if(p==='/api/kebun')return [...authTables,...land];
+  if(p==='/api/daily')return [...authTables,...land,'daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item'];
+  if(p==='/api/daily/plans')return [...authTables,'daily_week_plan','daily_week_item'];
+  if(p.startsWith('/api/gis/layers'))return [...authTables,'gis_layer'];
+  if(p==='/api/daily/locations')return [...authTables,'_blocks','gis_layer'];
+  if(/^\/api\/daily\/photo\/\d+$/.test(p))return [...authTables,'daily_photo','daily_report'];
+  return null;
+}
 async function apiRequest(req, res, url) {
   if (!cloud) return api(req, res, url);
   return serial(async () => {
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
-    if (await syncCloud(photoReportId) && !VERCEL) scheduleExcelWrite(1000);
+    if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
     const hold = holdResponse(res);
     try { await api(req, res, url); await flush(); hold.release(); }
     catch (e) {
@@ -1283,6 +1326,7 @@ const INDEX_HTML = VERCEL ? fs.readFileSync(new URL('./public/index.html', impor
 const KEBUN_HTML = VERCEL ? fs.readFileSync(new URL('./public/kebun.html', import.meta.url)) : null; // halaman Tim Kebun (/kebun)
 
 async function handler(req, res) {
+  dailyTargetCache=new Map();
   const url = new URL(req.url, 'http://x');
   try {
     if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/daily' || url.pathname === '/daily/')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
