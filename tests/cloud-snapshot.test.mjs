@@ -13,11 +13,11 @@ test('cloud snapshot streams geometry and blobs within one read transaction', as
   source.prepare('INSERT INTO gis_layer(geojson) VALUES(?)').run(geometry);
   source.prepare('INSERT INTO attachments VALUES(1,?)').run(blob);
   for(let i=0;i<251;i++)source.prepare('INSERT INTO records VALUES(?,?)').run(String(i).padStart(4,'0'),'hasil '+i);
-  let active=false,largest=0,reads=0;
+  let active=false,largest=0,reads=0,requests=0;
   const encode=v=>v===null?{type:'null'}:v instanceof Uint8Array?{type:'blob',base64:Buffer.from(v).toString('base64')}:typeof v==='number'?{type:'integer',value:String(v)}:{type:'text',value:v};
   const server=http.createServer(async(req,res)=>{
     try {
-      let body='';for await(const chunk of req)body+=chunk;
+      requests++;let body='';for await(const chunk of req)body+=chunk;
       const payload=JSON.parse(body);
       assert.equal(payload.baton,active?'snapshot-token':null);
       const results=[];
@@ -45,6 +45,6 @@ test('cloud snapshot streams geometry and blobs within one read transaction', as
     assert.equal(snapshot.db.prepare('SELECT COUNT(*) n FROM records').get().n,251);
     assert.equal(snapshot.db.prepare('SELECT seq FROM sqlite_sequence WHERE name=?').get('gis_layer').seq,1);
     assert.ok(snapshot.db.prepare("SELECT 1 FROM sqlite_master WHERE name='attachment_id'").get());
-    assert.equal(active,false);assert.ok(largest<100000);assert.ok(reads>20);
+    assert.equal(active,false);assert.ok(largest<100000);assert.ok(reads>20);assert.ok(requests<40,'bounded requests for a large geometry');
   }finally{snapshot?.db.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));source.close();}
 });
