@@ -1,3 +1,6 @@
+import { photoExpiresAt, photoExpired } from './lib/photo-retention.js';
+import { createReadModels } from './lib/read-models.js';
+import { createBlockRegistry, isBlockLayer } from './lib/blocks.js';
 // Server lokal Monitoring Kebun — Node.js (tanpa dependensi server) + SQLite bawaan Node.
 // Jalankan: node server.js   lalu buka http://localhost:3000
 import http from 'node:http';
@@ -21,7 +24,7 @@ const PHOTO_DIR = path.join(DATA_DIR, 'daily-photos');
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 fs.mkdirSync(PHOTO_DIR, { recursive: true });
 
-const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, ruteDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util } = await import('./public/js/schema.js');
+const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, ruteDefault, susunRencana, ROLES, canEdit, isAdmin, displayOf, EXCEL_SHEETS, util, nominalJual, isJual, iklimHarian } = await import('./public/js/schema.js');
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
 const { turso, onlineConfig } = await import('./lib/turso.js');
 
@@ -59,8 +62,8 @@ const q = (s) => `"${s.replace(/"/g, '')}"`;
 async function loadCloud(coba = 0) {
   // daftar tabel + nomor versi dulu, lalu semua isi dibaca dalam SATU transaksi baca (potret yang konsisten).
   // Kalau ada yang menyimpan di antara keduanya (versi berubah) → ulangi.
-  const [master, [v0]] = await cloud.query(["SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'libsql_%' AND name NOT LIKE '\\_litestream%' ESCAPE '\\'", 'SELECT MAX(v) v FROM _ver']);
-  const tables = master.filter((t) => !t.name.startsWith('sqlite_'));
+  const [master, [v0]] = await cloud.query(["SELECT type, name, sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE 'libsql_%' AND name NOT LIKE '\\_litestream%' ESCAPE '\\'", 'SELECT MAX(v) v FROM _ver']);
+  const tables = master.filter((t) => t.type==='table' && !t.name.startsWith('sqlite_'));
   const hasSeq = master.some((t) => t.name === 'sqlite_sequence'), hasVer = true;
   const res = (await cloud.query(['BEGIN', ...tables.map((t) => `SELECT * FROM ${q(t.name)}`), ...(hasSeq ? ['SELECT name, seq FROM sqlite_sequence'] : []), 'SELECT MAX(v) v FROM _ver', 'COMMIT'])).slice(1, -1);
   if (Number(res[res.length - 1][0]?.v || 0) !== Number(v0?.v || 0)) {
@@ -77,6 +80,7 @@ async function loadCloud(coba = 0) {
     for (const r of rows) st.run(...cols.map((c) => r[c]));
   });
   if (hasSeq) { mem.exec('DELETE FROM sqlite_sequence'); const st = mem.prepare('INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)'); for (const s of res[tables.length]) st.run(s.name, s.seq); }
+  for(const index of master.filter(t=>t.type==='index'&&t.sql))mem.exec(index.sql);
   mem.exec('COMMIT');
   const old = raw; raw = mem; old?.close();
   ver = hasVer ? Number(res[res.length - 1][0]?.v || 0) : 0;
@@ -118,6 +122,7 @@ else {
 // ---------- migrasi otomatis: buat tabel & tambah kolom baru sesuai schema.js
 const colType = (f) => (f.t === 'int' ? 'INTEGER' : f.t === 'num' || f.t === 'money' ? 'REAL' : 'TEXT');
 function migrate() {
+  db.exec('CREATE TABLE IF NOT EXISTS _import_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT,table_name TEXT,row_id INTEGER,before_json TEXT,created_at TEXT)');
   const ada = (n) => !!raw.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(n);
   if (!ada('_log')) db.exec(`CREATE TABLE IF NOT EXISTS _log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, aksi TEXT, tabel TEXT, row_id INTEGER, data TEXT)`);
   if (!ada('_settings')) db.exec(`CREATE TABLE IF NOT EXISTS _settings (k TEXT PRIMARY KEY, v TEXT)`);
@@ -135,6 +140,7 @@ function migrate() {
       }
     }
   }
+  for(const [table,T] of Object.entries(TABLES)) for(const f of T.f.filter(f=>f.t==='ref'||f.k===T.date)) db.exec('CREATE INDEX IF NOT EXISTS '+q('idx_'+table+'_'+f.k)+' ON '+q(table)+'('+q(f.k)+')');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS daily_report_hari_divisi ON daily_report(tanggal, divisi)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS daily_week_plan_minggu_divisi ON daily_week_plan(week_start, divisi)');
   db.exec('CREATE INDEX IF NOT EXISTS daily_week_item_plan ON daily_week_item(plan_id)');
@@ -195,7 +201,7 @@ function log(aksi, tabel, id, data) {
   db.prepare('INSERT INTO _log (ts, aksi, tabel, row_id, data, oleh) VALUES (?,?,?,?,?,?)').run(now(), aksi, tabel, id ?? null, data ? JSON.stringify(data).slice(0, 4000) : null, currentUser ? currentUser.nama || currentUser.username : null);
 }
 
-// ---------- Daily Report: akses mandor per divisi + foto sementara 14 hari
+// ---------- Daily Report: akses mandor per divisi + foto sementara 7 hari
 const DAILY_ROLE = { Pisang: 'daily_pisang', Padi: 'daily_padi', Infra: 'daily_infra' };
 const DAILY_DIVISI = Object.keys(DAILY_ROLE);
 const canDaily = (user, divisi) => !!user && (isAdmin(user) || (user.peran || []).includes(DAILY_ROLE[divisi]));
@@ -219,11 +225,15 @@ function weeklyPlanPayload(plan) {
   return { ...plan, items: db.prepare('SELECT * FROM daily_week_item WHERE plan_id=? ORDER BY urutan, id').all(plan.id) };
 }
 
+function ownedDailyLocations() {
+  return blocks.list().filter(b=>b.active && b.layer_id && b.ownership==='Sudah milik kebun').map(b=>({id:b.id,blok_id:b.id,nama:b.nama,divisi:b.divisi,jenis:'Blok GIS milik kebun',sumber:'GIS',rank:0}));
+}
+
 function dailyPayload(report) {
   const weekStart = weekBounds(report.tanggal).start;
   const plan = db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(weekStart, report.divisi);
   const plannedById = plan ? db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(plan.id) : [];
-  const cumulative = db.prepare(`SELECT SUM(COALESCE(di.realisasi,0)) total, MAX(NULLIF(di.target,0)) weekly_target
+  const cumulative = db.prepare(`SELECT SUM(di.realisasi) total, MAX(NULLIF(di.target,0)) weekly_target
     FROM daily_item di JOIN daily_report dr ON dr.id=di.report_id
     WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ?
       AND lower(trim(di.aktivitas))=lower(trim(?))
@@ -235,10 +245,10 @@ function dailyPayload(report) {
       const planned = plannedById.find((p) => Number(item.plan_item_id) === Number(p.id)) || plannedById.find((p) =>
         util.key(p.aktivitas) === util.key(item.aktivitas) && util.key(p.blok) === util.key(item.blok) && util.key(p.satuan) === util.key(item.satuan));
       const outside = item.di_luar_rencana != null ? Number(item.di_luar_rencana) : plan ? Number(!planned) : 0;
-      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target: planned?.target ?? item.target ?? sum.weekly_target ?? null, hasil_sdhi: sum.total ?? null };
+      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target: planned?.target ?? (item.plan_item_id != null ? item.target : null), hasil_sdhi: item.hasil_sdhi ?? sum.total ?? null };
     });
   const photos = db.prepare('SELECT * FROM daily_photo WHERE report_id=? ORDER BY id').all(report.id)
-    .map((p) => ({ ...p, url: p.deleted_at ? null : `/api/daily/photo/${p.id}` }));
+    .map((p) => {const expired=photoExpired(p);return { ...p, deleted_at:p.deleted_at || (expired?p.expires_at:null), thumbnail_url: !expired&&!p.deleted_at&&p.thumb_lokasi ? `/api/daily/photo/${p.id}?thumb=1` : null, url: p.deleted_at||expired ? null : `/api/daily/photo/${p.id}` };});
   return { ...report, items, photos };
 }
 
@@ -259,6 +269,7 @@ async function storeDailyPhoto(buf, mime, report) {
 }
 
 async function removeStoredPhoto(photo) {
+  if(photo?.thumb_lokasi) await removeStoredPhoto({lokasi:photo.thumb_lokasi,storage:photo.thumb_storage});
   if (!photo?.lokasi) return;
   if (photo.storage === 'blob') await blobDel(photo.lokasi);
   else {
@@ -268,12 +279,12 @@ async function removeStoredPhoto(photo) {
 }
 
 async function cleanupDailyPhotos() {
-  const expired = db.prepare("SELECT * FROM daily_photo WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at<=? ORDER BY id LIMIT 200").all(now());
+  const expired = db.prepare("SELECT * FROM daily_photo WHERE (lokasi IS NOT NULL OR thumb_lokasi IS NOT NULL) AND expires_at IS NOT NULL AND expires_at<=? ORDER BY id LIMIT 200").all(now());
   let deleted = 0;
   for (const photo of expired) {
     try {
       await removeStoredPhoto(photo);
-      db.prepare('UPDATE daily_photo SET deleted_at=?, lokasi=NULL, updated_at=? WHERE id=?').run(now(), now(), photo.id);
+      db.prepare('UPDATE daily_photo SET deleted_at=?, lokasi=NULL, thumb_lokasi=NULL, updated_at=? WHERE id=?').run(now(), now(), photo.id);
       deleted++;
     } catch (e) { console.warn(`Foto Daily Report ${photo.id} belum dapat dihapus:`, e.message); }
   }
@@ -298,10 +309,6 @@ function catatBlok(tabel, lama, baru, extra = {}) {
   } else {
     const L = new Map(lama.filter((r) => r[cfg.k]).map((r) => [k(r), r])), B = new Map(baru.filter((r) => r[cfg.k]).map((r) => [k(r), r]));
     const tambah = [...B].filter(([x]) => !L.has(x)).map(([, r]) => r), hapus = [...L].filter(([x]) => !B.has(x)).map(([, r]) => r);
-    for (const h of [...hapus]) { // blok hilang + blok baru dengan luas sama (±1%) → dianggap ganti nama
-      const i = tambah.findIndex((t) => Number(t.luas_ha) > 0 && Math.abs(Number(t.luas_ha) - Number(h.luas_ha)) <= 0.01 * Number(h.luas_ha));
-      if (i >= 0) { const t = tambah.splice(i, 1)[0]; hapus.splice(hapus.indexOf(h), 1); out.push({ jenis: 'ganti nama', blok: t[cfg.k], lama: h[cfg.k], ubah: beda(h, t) }); }
-    }
     for (const t of tambah) out.push({ jenis: 'tambah', blok: t[cfg.k], nilai: Object.fromEntries(cfg.f.filter((f) => t[f] != null && t[f] !== '').map((f) => [f, t[f]])) });
     for (const h of hapus) out.push({ jenis: 'hapus', blok: h[cfg.k], nilai: Object.fromEntries(cfg.f.filter((f) => h[f] != null && h[f] !== '').map((f) => [f, h[f]])) });
     for (const [x, b] of B) { const l = L.get(x); if (!l) continue; const d = beda(l, b); if (Object.keys(d).length) out.push({ jenis: 'ubah', blok: b[cfg.k], ubah: d }); }
@@ -342,7 +349,9 @@ const userCount = () => db.prepare('SELECT COUNT(*) c FROM _users').get().c;
 const cleanPeran = (p) => JSON.stringify((Array.isArray(p) ? p : []).filter((r) => ROLES[r]));
 const failed = new Map(); // percobaan login gagal per username (cegah tebak password)
 function insertRow(table, row, doLog = true) {
+  row = blocks.canonical(table, row);
   const r = clean(table, TABLES[table].lengkapi ? TABLES[table].lengkapi(row) : row); // mis. Penjualan: isi otomatis Bentuk/Kelas/Kondisi ⇄ Jenis Barang
+  if (row.block_id) { r.block_id = row.block_id; r.block_name_snapshot = row.block_name_snapshot; }
   const cols = Object.keys(r);
   const sql = `INSERT INTO ${q(table)} (created_at, updated_at${cols.map((c) => ', ' + q(c)).join('')}) VALUES (?, ?${cols.map(() => ', ?').join('')})`;
   const t = now();
@@ -385,6 +394,24 @@ function deleteChildren(table, row, depth = 0) {
 function tx(fn) {
   db.exec('BEGIN');
   try { const v = fn(); db.exec('COMMIT'); return v; } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+
+const blocks = createBlockRegistry({db,TABLES,cascadeRename,log,clock:now});
+blocks.migrate();
+db.exec('CREATE TABLE IF NOT EXISTS _import_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT,table_name TEXT,row_id INTEGER,before_json TEXT,created_at TEXT)');
+const reads = createReadModels({db,TABLES,nominalJual,isJual,iklimHarian});
+
+function validateOperationalBlock(table,row,old=null) {
+  const registry=blocks.list(),masterFields={lahan_blok:'blok',pisang_blok:'nama_blok',padi_petak:'nama_petak'};
+  if(masterFields[table]){
+    if(!old){const e=new Error('Blok baru dibuat melalui GIS; gunakan baris induk yang dihasilkan GIS.');e.status=409;throw e;}
+    if(row.kepemilikan!=null&&old.block_id&&row.kepemilikan!==registry.find(b=>b.id===old.block_id)?.ownership){const e=new Error('Kepemilikan mengikuti GIS. Ubah melalui revisi GIS.');e.status=409;throw e;}
+    return;
+  }
+  for(const f of TABLES[table]?.f||[]) {
+    if(f.t!=='ref'||!masterFields[f.ref]||!row[f.k]||old&&row[f.k]===old[f.k])continue;
+    const block=blocks.find(row[f.k]);if(!block||!block.active||!block.layer_id||block.ownership!=='Sudah milik kebun'){const e=new Error('Pilih blok GIS aktif yang sudah terverifikasi milik kebun.');e.status=400;throw e;}
+  }
 }
 
 // data awal untuk tabel yang masih kosong
@@ -489,15 +516,21 @@ function seed() {
   // Target lama yang kosong memakai hasil kumulatif/harian sebagai target sementara.
   // Target mingguan berikutnya diisi mandor langsung pada setiap kegiatan.
   if (!sudah('isi:daily_target_realisasi_v1')) {
-    db.prepare('UPDATE daily_item SET target=COALESCE(hasil_sdhi, realisasi), updated_at=? WHERE target IS NULL AND COALESCE(hasil_sdhi, realisasi) IS NOT NULL').run(now());
+    // Target hanya berasal dari rencana yang diisi; hasil aktual bukan target.
     tandai('isi:daily_target_realisasi_v1');
   }
 }
 seed();
+blocks.boot();
+// Existing photo files follow the same report-date retention as new uploads.
+for(const photo of db.prepare('SELECT p.id,p.expires_at,r.tanggal FROM daily_photo p JOIN daily_report r ON r.id=p.report_id WHERE p.lokasi IS NOT NULL OR p.thumb_lokasi IS NOT NULL').all()) {
+  const expiry=photoExpiresAt(photo.tanggal);
+  if(photo.expires_at!==expiry)db.prepare('UPDATE daily_photo SET expires_at=? WHERE id=?').run(expiry,photo.id);
+}
 // mode online: tabel/kolom baru & data awal ikut dibuat di database online.
 // Dua salinan aplikasi menyala bersamaan → yang kalah memuat ulang isi online lalu cek lagi (tidak berhenti/crash).
 for (let i = 0; ; i++) {
-  try { await flush(); break; } catch (e) { if (!e.conflict || i >= 4) throw e; migrate(); seed(); }
+  try { await flush(); break; } catch (e) { if (!e.conflict || i >= 4) throw e; migrate(); blocks.migrate(); seed(); blocks.boot(); }
 }
 
 // pulihkan / pindahkan seluruh isi database dari file .db (mis. dari komputer kantor ke online)
@@ -520,7 +553,7 @@ function restoreFrom(file, keepUser) {
         for (const r of rows) db.prepare(sql).run(...cols.map((c) => r[c]));
       }
       db.prepare('DELETE FROM _sessions').run();
-      migrate(); seed();
+      migrate(); blocks.migrate(); seed(); blocks.boot();
       // admin yang memulihkan tetap bisa login walau akunnya tidak ada di file (mis. admin sementara di versi online)
       if (keepUser && !db.prepare('SELECT 1 FROM _users WHERE username=?').get(keepUser.username)) {
         db.prepare('INSERT INTO _users (username, nama, peran, salt, hash, aktif, created_at) VALUES (?,?,?,?,?,1,?)').run(keepUser.username, keepUser.nama, keepUser.peran, keepUser.salt, keepUser.hash, keepUser.created_at || now());
@@ -633,24 +666,79 @@ async function api(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length': buf.length });
     return res.end(buf);
   }
-  const publicRead = m === 'GET' && ['tables', 't', 'settings', 'excel'].includes(parts[1]);
+  const publicRead = m === 'GET' && ['tables', 't', 'settings', 'excel', 'overview', 'records', 'climate', 'blocks', 'gis'].includes(parts[1]);
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
+
+  if(parts[1]==='reports' && m==='GET') {
+    if(!user)return send(res,401,{error:'Silakan login untuk mengunduh laporan.'});
+    const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today,to=url.searchParams.get('to')||from,divisi=url.searchParams.get('divisi'),reportId=Number(url.searchParams.get('reportId'))||null;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)return send(res,400,{error:'Periksa periode laporan.'});
+    const owner=parts[2]==='owner.pdf'||url.searchParams.get('owner')==='true';
+    const canOwner=isAdmin(user)||(user.peran||[]).includes('management');
+    if(owner&&!canOwner)return send(res,403,{error:'Laporan gabungan khusus owner/management.'});
+    const allowed=dailyOnly(user)?dailyDivisions(user):DAILY_DIVISI;
+    if(divisi&&!allowed.includes(divisi))return send(res,403,{error:'Laporan bukan divisi Anda.'});
+    const args=[from,to],where=['tanggal BETWEEN ? AND ?'];
+    if(divisi){where.push('divisi=?');args.push(divisi);}else{where.push('divisi IN ('+allowed.map(()=>'?').join(',')+')');args.push(...allowed);}
+    if(reportId){where.push('id=?');args.push(reportId);}
+    if(url.searchParams.get('cycle')){where.push('siklus=?');args.push(url.searchParams.get('cycle'));}
+    const reports=db.prepare('SELECT * FROM daily_report WHERE '+where.join(' AND ')+' ORDER BY tanggal,divisi,id').all(...args).map(dailyPayload);
+    if(parts[2]==='share') {
+      const lines=reports.slice(0,5).map(r=>r.tanggal+' / '+r.divisi+' / '+r.status+'\n'+r.items.slice(0,4).map(x=>'- '+x.blok+': '+x.aktivitas+' '+(x.realisasi??'belum diisi')+' '+(x.satuan||'')+'; HK '+(x.hk_realisasi??'belum diisi')).join('\n'));
+      return send(res,200,{text:'LAPORAN KEBUN VIGU FARM\n'+from+' s.d. '+to+'\n'+(owner?'Laporan gabungan owner.\n':'')+lines.join('\n\n')+'\n\nRincian lengkap terlampir pada PDF.'});
+    }
+    if(!['daily.pdf','owner.pdf'].includes(parts[2]))return send(res,404,{error:'Laporan tidak ditemukan'});
+    const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),summary=owner?reads.overview({from,to,today,blocks:blocks.list()}):null;
+    const pdf=await buildReportPDF({name:db.prepare("SELECT v FROM _settings WHERE k='nama'").get()?.v||'PT VIGU FARM INDONESIA',from,to,reports,summary,sections:owner?ownerSections({db,from,to,climate:summary.climate}):[],owner,createdBy:user.nama||user.username});
+    return send(res,200,pdf,'application/pdf',{'Content-Disposition':'attachment; filename="laporan-'+(owner?'owner':'daily')+'-'+from+'-'+to+'.pdf"'});
+  }
+
+  // Lightweight read models and versioned GIS changes.
+  if (['overview','records','climate','blocks','gis'].includes(parts[1]) && dailyOnly(user)) return send(res,403,{error:'Akun lapangan hanya dapat mengakses Daily Report.'});
+  if (parts[1]==='overview' && m==='GET') {
+    const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today.slice(0,7)+'-01',to=url.searchParams.get('to')||today;
+    const summary=reads.overview({from,to,today,blocks:blocks.list()});if(!user)summary.daily=[];return send(res,200,summary);
+  }
+  if (parts[1]==='climate' && m==='GET') {const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10);return send(res,200,reads.climate(url.searchParams.get('from')||today.slice(0,7)+'-01',url.searchParams.get('to')||today));}
+  if (parts[1]==='records' && m==='GET') {
+    const t=parts[2];if(!TABLES[t]||t.startsWith('daily_')||t==='gis_layer')return send(res,400,{error:'Gunakan endpoint khusus untuk data ini.'});
+    return send(res,200,reads.records(t,url.searchParams));
+  }
+  if(parts[1]==='blocks' && m==='GET') {
+    if(parts[2] && parts[3]==='history') {if(!user)return send(res,401,{error:'Silakan login.'});return send(res,200,blocks.history(parts[2]));}
+    return send(res,200,blocks.list());
+  }
+  if(parts[1]==='gis' && parts[2]==='layers' && m==='GET') {
+    if(parts[3]) {const row=db.prepare('SELECT * FROM gis_layer WHERE id=?').get(Number(parts[3]));return send(res,row?200:404,row||{error:'Layer tidak ditemukan'});}
+    return send(res,200,db.prepare('SELECT id,nama,jenis,field_nama,warna,tampil,urutan,gaya,updated_at FROM gis_layer ORDER BY urutan,id').all());
+  }
+  if(parts[1]==='gis' && parts[2]==='revisions' && m==='GET') {if(!isAdmin(user))return send(res,403,{error:'Khusus admin'});return send(res,200,db.prepare('SELECT id,layer_id,summary,oleh,created_at FROM _gis_revisions ORDER BY id DESC LIMIT 100').all());}
+  if(parts[1]==='gis' && parts[2]==='revision' && m==='POST') {
+    if(!isAdmin(user))return send(res,403,{error:'Khusus admin GIS'});
+    const body=await readBody(req),old=body.layerId?db.prepare('SELECT * FROM gis_layer WHERE id=?').get(Number(body.layerId)):null;
+    if(body.layerId&&!old)return send(res,404,{error:'Layer tidak ditemukan'});
+    const layer={...old,...clean('gis_layer',body.layer||{}),id:old?.id};
+    if(!isBlockLayer(layer))return send(res,400,{error:'Revisi ini khusus layer Blok Tanam / Blok Kebun.'});
+    const preview=blocks.plan(layer,{mappings:body.mappings||{}});
+    if(body.mode!=='apply')return send(res,200,preview);
+    if(!body.token||body.token!==preview.token)return send(res,409,{error:'Pratinjau sudah berubah. Periksa kembali sebelum menerapkan.'});
+    if(preview.errors.length)return send(res,400,{error:preview.errors.join('\n')});
+    const result=tx(()=>{
+      const id=old?.id||insertRow('gis_layer',{...layer,geojson:preview.geojson});
+      // New IDs from this exact reviewed proposal are carried into apply.
+      const applied=blocks.apply({...layer,id,geojson:preview.geojson},{mappings:body.mappings||{}});
+      const values=clean('gis_layer',{...layer,geojson:applied.geojson}),cols=Object.keys(values);db.prepare('UPDATE gis_layer SET updated_at=?'+cols.map(k=>', '+q(k)+'=?').join('')+' WHERE id=?').run(now(),...cols.map(k=>values[k]),id);
+      db.prepare('INSERT INTO _gis_revisions (layer_id,before_json,after_json,summary,oleh,created_at) VALUES (?,?,?,?,?,?)').run(id,old?.geojson||null,applied.geojson,JSON.stringify(preview.changes),user.nama||user.username,now());
+      log('revisi GIS','gis_layer',id,{changes:preview.changes});return {id,changes:preview.changes};
+    });
+    return send(res,200,result);
+  }
 
   // --- Daily Report (harus login; mandor hanya dapat mengubah divisinya)
   if (parts[1] === 'daily') {
     if (m === 'GET' && parts[2] === 'locations') {
       if (!user) return send(res, 401, { error: 'Silakan login untuk memilih lokasi Daily Report' });
-      const found = new Map();
-      const add = (nama, jenis, divisi, sumber, rank = 5) => { nama = textLimit(nama, 150); if (!nama) return; const key = util.key(nama); const purelyNumber = /^\s*\d+(?:[.,-]\d+)*\s*$/.test(nama); const item = { nama, jenis: jenis || 'Lokasi', divisi: divisi || 'Umum', sumber, rank: purelyNumber ? 99 : rank }; if (!found.has(key) || found.get(key).rank > item.rank) found.set(key, item); };
-      for (const r of db.prepare('SELECT nama_blok nama FROM pisang_blok WHERE nama_blok IS NOT NULL').all()) add(r.nama, 'Petak Pisang', 'Pisang', 'Data kebun', 0);
-      for (const r of db.prepare('SELECT nama_petak nama FROM padi_petak WHERE nama_petak IS NOT NULL').all()) add(r.nama, 'Petak Padi', 'Padi', 'Data kebun', 0);
-      for (const r of db.prepare('SELECT blok nama, peruntukan FROM lahan_blok WHERE blok IS NOT NULL').all()) add(r.nama, r.peruntukan ? `Petak ${r.peruntukan}` : 'Blok', r.peruntukan || 'Infra', 'Data lahan', r.peruntukan ? 1 : 7);
-      for (const r of db.prepare('SELECT nama, kategori FROM gis_titik WHERE nama IS NOT NULL').all()) add(r.nama, r.kategori || 'Titik lokasi', 'Umum', 'GIS', 6);
-      for (const layer of db.prepare("SELECT nama, jenis, field_nama, geojson FROM gis_layer WHERE geojson IS NOT NULL AND geojson!=''").all()) {
-        let features = []; try { features = JSON.parse(layer.geojson).features || []; } catch { continue; }
-        for (const f of features) { const p = f.properties || {}, nama = p[layer.field_nama] || p.Nama_Blok || p.nama_blok || p.Blok || p.NAMA_BLOK || p.Nama || p.Name || p.name || p.Lokasi || p.lokasi; const div = p.Lahan || p.Divisi || p.divisi || p.Peruntukan || (/padi/i.test(`${layer.nama} ${layer.jenis}`) ? 'Padi' : /pisang/i.test(`${layer.nama} ${layer.jenis}`) ? 'Pisang' : 'Umum'); add(nama, layer.jenis || 'Lokasi GIS', div, 'GIS', /pisang|padi|komoditas|petak|blok/i.test(`${div} ${layer.nama} ${layer.jenis}`) ? 2 : 8); }
-      }
-      return send(res, 200, [...found.values()].sort((a,b) => a.rank - b.rank || a.divisi.localeCompare(b.divisi) || a.nama.localeCompare(b.nama, 'id', { numeric:true })));
+      return send(res,200,ownedDailyLocations());
     }
     if (m === 'GET' && parts[2] === 'plans') {
       const selected = url.searchParams.get('week') || now().slice(0, 10), bounds = weekBounds(selected);
@@ -662,6 +750,8 @@ async function api(req, res, url) {
     }
     if (m === 'POST' && parts[2] === 'plans') {
       const b = await readBody(req), divisi = String(b.divisi || ''), bounds = weekBounds(b.week_start);
+      const ownedNames = new Set(ownedDailyLocations().map(x=>util.key(x.nama)));
+      if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)))) return send(res,400,{error:'Pilih blok yang sudah terverifikasi milik kebun.'});
       if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
       if (!bounds) return send(res, 400, { error: 'Minggu pelaksanaan wajib diisi' });
       if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah rencana ${divisi}` });
@@ -675,14 +765,16 @@ async function api(req, res, url) {
         const insert = db.prepare('INSERT INTO daily_week_item (created_at, updated_at, plan_id, urutan, blok, aktivitas, target, satuan, hk_rencana, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?)');
         for (const [i, x] of (Array.isArray(b.items) ? b.items : []).slice(0, 200).entries()) { const blok = textLimit(x.blok, 200), aktivitas = textLimit(x.aktivitas, 300); if (!blok || !aktivitas) continue; insert.run(now(), now(), planId, i + 1, blok, aktivitas, numberOrNull(x.target), textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), textLimit(x.keterangan, 1000)); }
       });
+      blocks.linkTable('daily_week_item');
       log(old ? 'ubah' : 'tambah', 'daily_week_plan', planId, { week_start: bounds.start, divisi, status, jumlah_kegiatan: (b.items || []).length });
       return send(res, 200, weeklyPlanPayload(db.prepare('SELECT * FROM daily_week_plan WHERE id=?').get(planId)));
     }
     if (m === 'GET' && parts[2] === 'photo' && parts[3]) {
-      const photo = db.prepare('SELECT * FROM daily_photo WHERE id=?').get(Number(parts[3]));
-      if (!photo || photo.deleted_at || !photo.lokasi) return send(res, 404, { error: 'Foto sudah dihapus atau tidak ditemukan' });
+      let photo = db.prepare('SELECT * FROM daily_photo WHERE id=?').get(Number(parts[3]));
+      if (!photo || photo.deleted_at || photoExpired(photo) || !photo.lokasi) return send(res, 404, { error: 'Foto sudah dihapus atau tidak ditemukan' });
       const photoReport = db.prepare('SELECT * FROM daily_report WHERE id=?').get(photo.report_id);
       if (dailyOnly(user) && (!photoReport || !canDaily(user, photoReport.divisi))) return send(res, 403, { error: 'Foto bukan milik divisi Anda' });
+      if(url.searchParams.get('thumb')==='1' && photo.thumb_lokasi)photo={...photo,lokasi:photo.thumb_lokasi,storage:photo.thumb_storage,mime:'image/webp'};
       if (photo.storage === 'blob') {
         const result = await blobGet(photo.lokasi, { access: 'private' });
         if (!result || result.statusCode !== 200) return send(res, 404, { error: 'Foto tidak ditemukan' });
@@ -711,13 +803,15 @@ async function api(req, res, url) {
       const report = db.prepare('SELECT * FROM daily_report WHERE id=?').get(Number(url.searchParams.get('report')));
       if (!report) return send(res, 404, { error: 'Laporan tidak ditemukan' });
       if (!canDaily(user, report.divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${report.divisi}` });
+      const expires = photoExpiresAt(report.tanggal);
+      if(photoExpired({expires_at:expires})) return send(res,400,{error:'Foto hanya disimpan untuk laporan 7 hari terakhir. Data teks laporan tetap dapat dilengkapi.'});
       const mime = String(req.headers['content-type'] || '').split(';')[0].toLowerCase();
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) return send(res, 400, { error: 'Foto harus JPG, PNG, atau WebP' });
       if (Number(req.headers['content-length'] || 0) > 2.5e6) return send(res, 413, { error: 'Foto maksimal 2,5 MB setelah dikompres' });
       const buf = await readRaw(req);
       if (!buf.length || buf.length > 2.5e6) return send(res, 413, { error: 'Foto kosong atau lebih dari 2,5 MB' });
+      if(parts[3] && parts[4]==='thumbnail') {const photo=db.prepare('SELECT * FROM daily_photo WHERE id=? AND report_id=? AND deleted_at IS NULL').get(Number(parts[3]),report.id);if(!photo)return send(res,404,{error:'Foto tidak ditemukan'});if(buf.length>150000)return send(res,413,{error:'Thumbnail maksimal 150 KB'});const thumb=await storeDailyPhoto(buf,mime,report);if(photo.thumb_lokasi)await removeStoredPhoto({lokasi:photo.thumb_lokasi,storage:photo.thumb_storage});db.prepare('UPDATE daily_photo SET thumb_lokasi=?,thumb_storage=?,updated_at=? WHERE id=?').run(thumb.lokasi,thumb.storage,now(),photo.id);return send(res,200,{id:photo.id});}
       const saved = await storeDailyPhoto(buf, mime, report);
-      const expires = new Date(Date.now() + 14 * 864e5).toISOString();
       const result = db.prepare('INSERT INTO daily_photo (created_at, updated_at, report_id, jenis, caption, storage, lokasi, mime, ukuran, expires_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(now(), now(), report.id, ['Apel', 'Kegiatan', 'Kendala'].includes(url.searchParams.get('jenis')) ? url.searchParams.get('jenis') : 'Kegiatan', textLimit(url.searchParams.get('caption'), 200), saved.storage, saved.lokasi, mime, buf.length, expires);
       const id = Number(result.lastInsertRowid);
@@ -736,11 +830,15 @@ async function api(req, res, url) {
     }
     if (m === 'POST' && !parts[2]) {
       const b = await readBody(req), divisi = String(b.divisi || '');
+      const ownedNames = new Set(ownedDailyLocations().map(x=>util.key(x.nama)));
       if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.tanggal || ''))) return send(res, 400, { error: 'Tanggal wajib diisi' });
       if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${divisi}` });
       let old = b.id ? db.prepare('SELECT * FROM daily_report WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_report WHERE tanggal=? AND divisi=?').get(b.tanggal, divisi);
       if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah laporan ini' });
+      const previousItems = old ? db.prepare('SELECT * FROM daily_item WHERE report_id=?').all(old.id) : [];
+      const sameHistoricalItem = x => old && old.tanggal === b.tanggal && old.divisi === divisi && previousItems.some(p=>Number(p.id)===Number(x.id) && util.key(p.blok)===util.key(x.blok));
+      if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)) && !sameHistoricalItem(x))) return send(res,400,{error:'Kegiatan baru harus memakai blok GIS milik kebun. Lokasi data historis yang sama dapat dilengkapi.'});
       const status = ['Rencana Dikirim', 'Selesai'].includes(b.status) ? b.status : b.status === 'Dikirim' ? 'Selesai' : 'Draf';
       const rencanaAt = status !== 'Draf' ? old?.rencana_at || now() : old?.rencana_at || null;
       const selesaiAt = status === 'Selesai' ? now() : old?.selesai_at || null;
@@ -750,6 +848,8 @@ async function api(req, res, url) {
       tx(() => {
         if (old) {
           reportId = old.id;
+          db.exec('CREATE TABLE IF NOT EXISTS _daily_revisions (id INTEGER PRIMARY KEY, report_id INTEGER, created_at TEXT, actor TEXT, before_json TEXT)');
+          db.prepare('INSERT INTO _daily_revisions(report_id,created_at,actor,before_json) VALUES(?,?,?,?)').run(old.id,now(),penginput,JSON.stringify({report:old,items:previousItems}));
           db.prepare('UPDATE daily_report SET updated_at=?, tanggal=?, divisi=?, mandor=?, siklus=?, status=?, apel_mulai=?, apel_selesai=?, apel_hadir=?, apel_catatan=?, kendala=?, tindak_lanjut=?, dikirim_at=?, rencana_at=?, selesai_at=?, dibuat_oleh=? WHERE id=?').run(now(), ...values, reportId);
           db.prepare('DELETE FROM daily_item WHERE report_id=?').run(reportId);
         } else {
@@ -760,9 +860,12 @@ async function api(req, res, url) {
         const insert = db.prepare('INSERT INTO daily_item (created_at, updated_at, report_id, plan_item_id, di_luar_rencana, urutan, aktivitas, blok, target, realisasi, hasil_sdhi, satuan, hk_rencana, hk_realisasi, alat, meter_awal, meter_akhir, ritase, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
         for (const [i, x] of (Array.isArray(b.items) ? b.items : []).slice(0, 100).entries()) {
           const aktivitas = textLimit(x.aktivitas, 300); if (!aktivitas) continue;
-          insert.run(now(), now(), reportId, numberOrNull(x.plan_item_id), x.di_luar_rencana ? 1 : 0, i + 1, aktivitas, textLimit(x.blok, 200), numberOrNull(x.target), numberOrNull(x.realisasi), null, textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), numberOrNull(x.hk_realisasi), textLimit(x.alat, 200), numberOrNull(x.meter_awal), numberOrNull(x.meter_akhir), numberOrNull(x.ritase), textLimit(x.keterangan, 1000));
+          const inserted = insert.run(now(), now(), reportId, numberOrNull(x.plan_item_id), x.di_luar_rencana ? 1 : 0, i + 1, aktivitas, textLimit(x.blok, 200), numberOrNull(x.target), numberOrNull(x.realisasi), null, textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), numberOrNull(x.hk_realisasi), textLimit(x.alat, 200), numberOrNull(x.meter_awal), numberOrNull(x.meter_akhir), numberOrNull(x.ritase), textLimit(x.keterangan, 1000));
+          const historical = previousItems.find(p=>Number(p.id)===Number(x.id) && util.key(p.blok)===util.key(x.blok));
+          if(historical) db.prepare('UPDATE daily_item SET block_id=?,block_name_snapshot=? WHERE id=?').run(historical.block_id,historical.block_name_snapshot,Number(inserted.lastInsertRowid));
         }
       });
+      blocks.linkTable('daily_item');
       log(old ? 'ubah' : 'tambah', 'daily_report', reportId, { tanggal: b.tanggal, divisi, status, jumlah_kegiatan: (b.items || []).length });
       return send(res, 200, dailyPayload(db.prepare('SELECT * FROM daily_report WHERE id=?').get(reportId)));
     }
@@ -850,6 +953,7 @@ async function api(req, res, url) {
     if (m === 'GET') return send(res, 200, db.prepare(`SELECT * FROM ${q(table)} ORDER BY id`).all());
     if (!canEdit(user, table)) return send(res, 403, { error: `Anda tidak punya izin mengubah "${TABLES[table].title}"` });
     if (m === 'POST' && parts[3] === 'hapus') {
+      if(['lahan_blok','pisang_blok','padi_petak','gis_layer'].includes(table))return send(res,409,{error:'Data induk blok/peta dipertahankan. Nonaktifkan melalui revisi GIS.'});
       const { ids, cascade } = await readBody(req);
       const olds = (ids || []).map((i) => db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(Number(i))).filter(Boolean);
       const refs = mergeRefs(olds.map((o) => childRefs(table, o)));
@@ -862,21 +966,31 @@ async function api(req, res, url) {
     if (m === 'POST') {
       const body = await readBody(req);
       if (Array.isArray(body)) {
+        if(table==='gis_layer')return send(res,400,{error:'Unggah layer melalui pratinjau GIS.'});
+        for(const row of body)validateOperationalBlock(table,row);
         const ids = tx(() => body.map((r) => insertRow(table, r, false)));
         log('import', table, null, { jumlah: ids.length });
+        blocks.linkTable(table);
         return send(res, 200, { ids });
       }
       const blokLama = table === 'gis_layer' && layerBlok(body) ? db.prepare('SELECT * FROM gis_layer ORDER BY id DESC').all().find(layerBlok) : null; // layer Blok Tanam baru menggantikan yang lama
+      if(table==='gis_layer' && isBlockLayer(body)) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
+      validateOperationalBlock(table,body);
       const nid = insertRow(table, body);
       if (blokLama) catatBlok('gis_layer', fiturBlok(blokLama.geojson), fiturBlok(body.geojson), { layer: body.nama });
+      blocks.linkTable(table);
       return send(res, 200, { id: nid });
     }
     if (m === 'PUT' && id) {
       const body = await readBody(req), old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
-      let r = clean(table, body);
+      if(table==='gis_layer' && body.geojson && isBlockLayer({...old,...body})) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
+      if(!old)return send(res,404,{error:'Data tidak ditemukan'});
+      validateOperationalBlock(table,body,old);
+      let r = clean(table, blocks.canonical(table, body));
       if (TABLES[table].lengkapi && old) { const L = clean(table, TABLES[table].lengkapi({ ...old, ...r }, old)); for (const [k, v] of Object.entries(L)) if (k in r || (v ?? null) !== (old[k] ?? null)) r[k] = v; } // hanya kolom yang diubah / terisi otomatis
       const cols = Object.keys(r);
       let related = 0;
+      if(old && ['lahan_blok','pisang_blok','padi_petak'].includes(table) && TABLES[table].display && body[TABLES[table].display] && body[TABLES[table].display]!==old[TABLES[table].display]) return send(res,409,{error:'Ubah nama blok melalui revisi GIS agar ID dan seluruh riwayat tetap terhubung.'});
       tx(() => {
         if (cols.length) db.prepare(`UPDATE ${q(table)} SET updated_at=?${cols.map((c) => `, ${q(c)}=?`).join('')} WHERE id=?`).run(now(), ...cols.map((c) => r[c]), id);
         // nama induk berubah → ikut ganti di semua data yang merujuk (mis. nama blok di panen/progres)
@@ -892,8 +1006,10 @@ async function api(req, res, url) {
         if (table !== 'gis_layer') catatBlok(table, [old], [nu]);
         else if ('geojson' in r && layerBlok(nu)) catatBlok('gis_layer', fiturBlok(old.geojson), fiturBlok(nu.geojson), { layer: nu.nama }); // peta Blok Tanam diganti
       }
+      blocks.linkTable(table);
       return send(res, 200, { ...(db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id) || {}), _related: related });
     }
+    if (m === 'DELETE' && id && ['lahan_blok','pisang_blok','padi_petak','gis_layer'].includes(table)) return send(res,409,{error:'Data induk blok/peta dipertahankan. Nonaktifkan blok melalui revisi GIS.'});
     if (m === 'DELETE' && id) {
       const old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
       const refs = old ? childRefs(table, old) : [];
@@ -1047,48 +1163,47 @@ function cekNamaInduk(parsed) {
     if (p.otomatis) p.koreksi.unshift(`${p.otomatis} baris: kolom kosong diisi otomatis dari Jenis Barang / Bentuk-Kelas-Kondisi`);
   }
 }
-async function syncExcel(buf, { preview = false, oleh = 'Excel', sumber = 'file', panel = null } = {}) {
-  const parsed = await parseWorkbook(buf, { TABLES, SHEETS: panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS });
-  const scopes = Object.fromEntries(parsed.map((p) => [p.cfg.table, panel ? scopeOf(p.cfg.table, panel.kom) : null])); // dihitung sebelum ada yang diganti
+async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=null}={}) {
+  const parsed=await parseWorkbook(buf,{TABLES,SHEETS:panel?EXCEL_SHEETS.filter(s=>panel.tables.includes(s.table)):EXCEL_SHEETS});
   cekNamaInduk(parsed);
-  const rep = { waktu: now(), sumber, preview, oleh, panel: panel?.label || null, sheets: [], backup: null, peringatan: [] };
-  if (xl.stale) rep.peringatan.push(`Ada perubahan dari aplikasi sejak ${new Date(xl.staleSince).toLocaleString('id-ID')} yang belum masuk ke Excel (file sedang dibuka). Isi Excel ini menimpa perubahan tersebut.`);
-  const todo = [];
-  for (const p of parsed) {
-    const { cfg } = p; const all = db.prepare(`SELECT * FROM ${q(cfg.table)}`).all(); const cur = scopes[cfg.table] ? all.filter(scopes[cfg.table]) : all;
-    const s = { sheet: cfg.sheet, tabel: TABLES[cfg.table].title, baris: p.rows.length, sebelum: cur.length, tambah: 0, hapus: 0, status: 'ok', koreksi: p.koreksi || [], peringatan: p.peringatan || [], errors: p.errors.slice(0, 30), jumlahError: p.errors.length, layoutBeda: !!p.layoutBeda };
-    rep.sheets.push(s);
-    if (!p.found) { s.status = 'sheet tidak ada — dilewati'; continue; }
-    if (p.errors.length) { s.status = 'ada kesalahan — tidak diproses'; continue; }
-    if (!p.rows.length && cur.length && !p.kosong) { s.status = 'sheet kosong — dilewati (tulis KOSONG di A2 untuk mengosongkan)'; continue; }
-    // hitung beda (multiset)
-    const count = new Map();
-    for (const r of cur) { const k = sig(cfg.table, cfg, r); count.set(k, (count.get(k) || 0) + 1); }
-    for (const r of p.rows) { const k = sig(cfg.table, cfg, r); if (count.get(k)) count.set(k, count.get(k) - 1); else s.tambah++; }
-    s.hapus = [...count.values()].reduce((a, b) => a + b, 0);
-    if (!s.tambah && !s.hapus) { s.status = 'tidak berubah'; continue; }
-    s.status = preview ? 'akan diperbarui' : 'diperbarui';
-    todo.push({ p, s });
-  }
-  if (preview || !todo.length) { if (!preview) { xl.lastReport = rep; } return rep; }
-  rep.backup = path.basename(backup('excel') || '') || null;
-  const prevUser = currentUser; currentUser = { nama: oleh };
-  const blokSebelum = Object.fromEntries(todo.filter(({ p }) => BLOK_T[p.cfg.table]).map(({ p }) => { const sc = scopes[p.cfg.table]; const all = db.prepare(`SELECT * FROM ${q(p.cfg.table)}`).all(); return [p.cfg.table, sc ? all.filter(sc) : all]; }));
-  try {
-    tx(() => {
-      for (const { p } of todo) {
-        // kolom yang tidak ada di Excel (mis. kolom lama) tetap dipertahankan hanya untuk baris yang identik — sisanya diganti
-        const sc = scopes[p.cfg.table];
-        if (sc) { const del = db.prepare(`DELETE FROM ${q(p.cfg.table)} WHERE id=?`); for (const r of db.prepare(`SELECT * FROM ${q(p.cfg.table)}`).all().filter(sc)) del.run(r.id); } // hanya baris komoditas ini
-        else db.prepare(`DELETE FROM ${q(p.cfg.table)}`).run();
-        for (const r of p.rows) insertRow(p.cfg.table, r, false);
+  const rep={waktu:now(),sumber,preview,oleh,panel:panel?.label||null,sheets:[],backup:null,peringatan:['Mode aman: baris yang hilang dari file tetap disimpan. Gunakan ID dan versi baris untuk merevisi data lama.']},todo=[];
+  for(const p of parsed) {
+    const t=p.cfg.table,all=db.prepare('SELECT * FROM '+q(t)).all(),scope=panel?scopeOf(t,panel.kom):null,cur=scope?all.filter(scope):all;
+    const s={sheet:p.cfg.sheet,tabel:TABLES[t].title,baris:p.rows.length,sebelum:cur.length,tambah:0,ubah:0,hapus:0,status:'tidak berubah',koreksi:p.koreksi||[],peringatan:p.peringatan||[],errors:p.errors.slice(0,30),jumlahError:p.errors.length,layoutBeda:!!p.layoutBeda};rep.sheets.push(s);
+    if(!p.found){s.status='sheet tidak ada — dilewati';continue;}
+    if(p.kosong){s.status='permintaan kosong diabaikan — data lama dipertahankan';continue;}
+    const ops=[],seenIds=new Set(),existing=new Map();
+    for(const row of cur){const sigKey=sig(t,p.cfg,row);existing.set(sigKey,(existing.get(sigKey)||0)+1);}
+    for(const input of p.rows) {
+      const row=blocks.canonical(t,input),cleaned=clean(t,row),id=Number(input._record_id)||null;
+      if(id) {
+        const old=cur.find(x=>x.id===id);
+        if(!old||seenIds.has(id)){s.errors.push({row:input.__baris,msg:'ID baris tidak ditemukan dalam halaman ini atau digunakan dua kali.'});continue;}seenIds.add(id);
+        if(input._row_updated_at && input._row_updated_at!==old.updated_at){s.errors.push({row:input.__baris,msg:'Data sudah berubah sejak file diunduh. Download ulang agar perubahan terbaru tidak tertimpa.'});continue;}
+        if(!input._row_updated_at){s.errors.push({row:input.__baris,msg:'Versi baris wajib untuk merevisi data lama. Download template terbaru.'});continue;}
+        const masterField=({lahan_blok:'blok',pisang_blok:'nama_blok',padi_petak:'nama_petak'})[t];
+        if(masterField&&cleaned[masterField]!==old[masterField]){s.errors.push({row:input.__baris,msg:'Ubah nama blok melalui GIS.'});continue;}
+        if(Object.entries(cleaned).some(([k,v])=>!samaNilai(v,old[k]))) {ops.push({id,old,row:cleaned});s.ubah++;}
+      } else {
+        const sigKey=sig(t,p.cfg,row);if(existing.get(sigKey)){existing.set(sigKey,existing.get(sigKey)-1);continue;}
+        const display=TABLES[t].display;
+        if(typeof display==='string' && cur.some(x=>util.key(x[display])===util.key(cleaned[display]))){s.errors.push({row:input.__baris,msg:'Data induk sudah ada. Download ulang dan gunakan ID baris untuk merevisi.'});continue;}
+        ops.push({row:cleaned});s.tambah++;
       }
-    });
-    for (const { p, s } of todo) log('sinkron Excel', p.cfg.table, null, { sheet: s.sheet, baris: s.baris, tambah_atau_ubah: s.tambah, hapus_atau_ubah: s.hapus, sumber });
-    for (const [t, sebelum] of Object.entries(blokSebelum)) { const sc = scopes[t], all = db.prepare(`SELECT * FROM ${q(t)}`).all(); catatBlok(t, sebelum, sc ? all.filter(sc) : all, { sumber: 'upload Excel' }); }
-  } finally { currentUser = prevUser; }
-  xl.lastReport = rep;
-  db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('excel_laporan', JSON.stringify(rep));
+    }
+    s.jumlahError=s.errors.length;
+    if(s.jumlahError){s.status='ada kesalahan — tidak diproses';s.tambah=s.ubah=0;continue;}
+    if(ops.length){s.status=preview?'akan diperbarui':'diperbarui';todo.push({t,ops});}
+  }
+  if(!preview&&todo.length) {
+    rep.backup=path.basename(backup('excel')||'')||null;
+    const oldUser=currentUser;currentUser={nama:oleh};
+    try{tx(()=>{for(const {t,ops} of todo){for(const op of ops){
+      if(op.id){const cols=Object.keys(op.row);db.prepare('INSERT INTO _import_revisions (table_name,row_id,before_json,created_at) VALUES (?,?,?,?)').run(t,op.id,JSON.stringify(op.old),now());db.prepare('UPDATE '+q(t)+' SET updated_at=?'+cols.map(k=>', '+q(k)+'=?').join('')+' WHERE id=?').run(now(),...cols.map(k=>op.row[k]),op.id);}
+      else insertRow(t,op.row,false);
+    }blocks.linkTable(t);log('sinkron Excel aman',t,null,{jumlah:ops.length,sumber});}});}finally{currentUser=oldUser;}
+  }
+  if(!preview){xl.lastReport=rep;db.prepare('INSERT INTO _settings (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('excel_laporan',JSON.stringify(rep));}
   return rep;
 }
 // pantau file Excel: setiap disimpan → sinkron otomatis
@@ -1174,7 +1289,7 @@ export default async function handler(req, res) {
     return f ? serveFile(res, f) : send(res, 403, 'Forbidden', 'text/plain');
   } catch (e) {
     console.error(e);
-    if (!res.headersSent) send(res, 500, { error: e.message });
+    if (!res.headersSent) send(res, e.status || 500, { error: e.message });
   }
 }
 
@@ -1189,5 +1304,5 @@ if (!VERCEL) http.createServer(handler).listen(PORT, '0.0.0.0', () => {
 // Saat lokal tidak ada Vercel Cron; bersihkan saat start dan setiap 24 jam.
 if (!VERCEL) {
   cleanupDailyPhotos().catch((e) => console.warn('Pembersihan foto gagal:', e.message));
-  setInterval(() => cleanupDailyPhotos().catch((e) => console.warn('Pembersihan foto gagal:', e.message)), 24 * 60 * 60e3).unref();
+  setInterval(() => cleanupDailyPhotos().catch((e) => console.warn('Pembersihan foto gagal:', e.message)), 60 * 60e3).unref();
 }

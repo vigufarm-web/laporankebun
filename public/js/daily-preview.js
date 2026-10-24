@@ -1,0 +1,5 @@
+import { quickDaily } from './daily-quick.js';
+const names={Pisang:[['D08','Pemupukan KCl','pokok',2000],['D09','Deleafing','ha',4],['D08','Panen','tandan',120]],Padi:[['P01','Pemupukan','ha',5],['P02','Pengaturan irigasi','ha',3]],Infra:[['Embung kebun','Pembersihan parit','meter',300]]};
+const locations=Object.entries(names).flatMap(([divisi,rows])=>rows.map(r=>({nama:r[0],divisi}))).filter((x,i,a)=>a.findIndex(y=>y.nama===x.nama)===i);
+const A={preview:true,isAdmin:()=>true,me:()=>({id:'preview',nama:'Mandor contoh',username:'preview'}),toast:msg=>{const el=document.querySelector('#toast');el.textContent=msg;el.hidden=false;setTimeout(()=>el.hidden=true,4000);},api:{get:async url=>{if(url.includes('locations'))return locations;if(url.includes('/plans')){const div=new URL(url,location.origin).searchParams.get('divisi');return [{items:names[div].map(([blok,aktivitas,satuan,target],i)=>({id:i+1,blok,aktivitas,satuan,target}))}];}return [];},post:async(url,data)=>({...data,id:1,photos:[]})}};
+quickDaily(document.querySelector('#preview'),A);
