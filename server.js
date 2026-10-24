@@ -1326,6 +1326,7 @@ function readScope(req,url){
   const raw=p.match(/^\/api\/t\/([a-z_]+)$/);if(raw&&TABLES[raw[1]])return [...authTables,raw[1]];
   const page=p.match(/^\/api\/records\/([a-z_]+)$/);if(page&&TABLES[page[1]]){const dependencies={pisang_blok:['pisang_panen_pkk'],padi_tanam:['padi_panen'],padi_panen:['padi_petak'],infra_proyek:['infra_progress'],lahan_blok:['lahan_harian','lahan_aktivitas']};return [...authTables,page[1],...(dependencies[page[1]]||[])];}
   if(p==='/api/nursery-summary')return [...authTables,'pisang_bibit'];
+  if(/^\/api\/blocks\/[^/]+\/history$/.test(p))return [...authTables,'_blocks','_block_links',...Object.keys(TABLES).filter(t=>!['gis_layer','daily_photo','iklim'].includes(t))];
   if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/overview')return authTables;
   if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
