@@ -535,6 +535,7 @@ export const TABLES = {
   daily_report: {
     title: 'Daily Report', div: 'daily', date: 'tanggal', sort: '-tanggal', hidden: true,
     f: [
+      { k: 'hk_kegiatan', l: 'HK total per kegiatan (sistem)', t: 'text', sembunyi: true },
       { k: 'tanggal', l: 'Tanggal', t: 'date', req: true },
       { k: 'divisi', l: 'Divisi', t: 'select', opt: ['Pisang', 'Padi', 'Infra'], req: true },
       { k: 'mandor', l: 'Mandor (data lama)', t: 'text' },
@@ -555,6 +556,7 @@ export const TABLES = {
   daily_week_plan: {
     title: 'Rencana Mingguan Daily Report', div: 'daily', sort: '-week_start', hidden: true,
     f: [
+      { k: 'hk_kegiatan', l: 'HK total per kegiatan (sistem)', t: 'text', sembunyi: true },
       { k: 'week_start', l: 'Awal Minggu', t: 'date', req: true },
       { k: 'week_end', l: 'Akhir Minggu', t: 'date', req: true },
       { k: 'divisi', l: 'Divisi', t: 'select', opt: ['Pisang', 'Padi', 'Infra'], req: true },

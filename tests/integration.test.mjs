@@ -41,6 +41,14 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   // Unowned geometry is not offered to field users.
   const unowned=feature('BUKAN-MILIK','unowned-block');unowned.properties.kepemilikan='Belum milik kebun';proposal.geojson=JSON.stringify({type:'FeatureCollection',features:[feature('ANAK-1','test-child-1',[old.id]),feature('ANAK-2','test-child-2',[old.id]),unowned]});await apply(layerId,proposal);r=await request('/api/daily/locations');assert.ok(!r.body.some(x=>x.nama==='BUKAN-MILIK'));
   r=await request('/api/daily','POST',{tanggal:'2026-10-25',divisi:'Pisang',items:[{blok:'BUKAN-MILIK',aktivitas:'Test'}]});assert.equal(r.status,400);
+  // New grouped workflow preserves selected work date and one HK total per activity.
+  const wkGroups=[{key:'bud injection|stem',hk:3,mode:'manual',times:1}];
+  r=await request('/api/daily/plans','POST',{workflow_v2:true,week_start:'2002-01-07',divisi:'Pisang',status:'Dikirim',hk_groups:wkGroups,items:[{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-1',target:100},{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-2',target:200}]});
+  assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(JSON.parse(r.body.hk_kegiatan)[0].hk,3);assert.ok(r.body.items.every(i=>i.hk_rencana===null));
+  const groupReport={workflow_v2:true,tanggal:'2002-01-08',divisi:'Pisang',status:'Selesai',apel_hadir:2,hk_groups:[{key:'bud injection|stem',hk:2,manual:false}],items:[{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-1',realisasi:20},{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-2',realisasi:60}]};
+  r=await request('/api/daily','POST',groupReport);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.tanggal,'2002-01-08');assert.deepEqual(r.body.items.map(i=>i.hk_realisasi),[.5,1.5]);assert.equal(JSON.parse(r.body.hk_kegiatan_rencana)[0].hk,3);
+  const groupedId=r.body.id;r=await request('/api/daily','POST',{...groupReport,id:groupedId});assert.equal(r.status,200);assert.equal(r.body.id,groupedId);
+  r=await request('/api/daily','POST',{...groupReport,hk_groups:[{key:'bud injection|stem',hk:-1}]});assert.equal(r.status,400);
   // Existing historical locations remain editable, while new unowned locations stay blocked.
   r=await request('/api/daily','POST',{id:reportId,tanggal:report.tanggal,divisi:report.divisi,status:'Selesai',items:report.items});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].realisasi,500);
   r=await request('/api/daily','POST',{tanggal:'2026-10-26',divisi:'Pisang',status:'Draf',items:[{blok:'ANAK-1',aktivitas:'Belum ada hasil',satuan:'ha',hk_realisasi:1}]});assert.equal(r.status,200);assert.equal(r.body.items[0].realisasi,null);assert.equal(r.body.items[0].hasil_sdhi,null);assert.equal(r.body.items[0].target,null);
