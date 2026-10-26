@@ -1,3 +1,4 @@
+import {dailyHKSummary} from './lib/daily-hk.js';
 import {ownerLandClearing} from './lib/owner-lc.js';
 import {reportWeek} from './lib/report-week.js';
 import {githubStore,githubDataConfig} from './lib/github-store.js';
@@ -706,7 +707,7 @@ async function api(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length': buf.length });
     return res.end(buf);
   }
-  const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods'].includes(parts[1])||/^\/api\/daily\/public(?:\/photo\/\d+)?$/.test(url.pathname));
+  const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods'].includes(parts[1])||/^\/api\/daily\/(?:hk-summary|public(?:\/photo\/\d+)?)$/.test(url.pathname));
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
   if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1]))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
 
@@ -755,6 +756,12 @@ async function api(req, res, url) {
 
   // Lightweight read models and versioned GIS changes.
   if (['records','climate','blocks','gis'].includes(parts[1]) && dailyOnly(user)) return send(res,403,{error:'Akun lapangan hanya dapat mengakses Daily Report.'});
+  if(m==='GET'&&url.pathname==='/api/daily/hk-summary'){
+    const from=url.searchParams.get('from'),to=url.searchParams.get('to');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(from||'')||!/^\d{4}-\d{2}-\d{2}$/.test(to||'')||!Number.isFinite(Date.parse(from))||!Number.isFinite(Date.parse(to))||from>to||Date.parse(to)-Date.parse(from)>31*86400000)return send(res,400,{error:'Pilih rentang tanggal maksimal 31 hari.'});
+    const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin||'')),headers=allowed?{'Access-Control-Allow-Origin':origin}:{};
+    return send(res,200,dailyHKSummary(db,from,to),'application/json; charset=utf-8',headers);
+  }
   if(m==='GET'&&url.pathname==='/api/daily/public'){
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||reportWeek(today).from,to=url.searchParams.get('to')||today;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to||Date.parse(to)-Date.parse(from)>31*86400000)return send(res,400,{error:'Pilih rentang maksimal 31 hari.'});
@@ -951,6 +958,7 @@ async function api(req, res, url) {
       const status = ['Rencana Dikirim', 'Selesai'].includes(b.status) ? b.status : b.status === 'Dikirim' ? 'Selesai' : 'Draf';
       const rencanaAt = status !== 'Draf' ? old?.rencana_at || now() : old?.rencana_at || null;
       const selesaiAt = status === 'Selesai' ? now() : old?.selesai_at || null;
+      if(b.apel_hadir!==''&&b.apel_hadir!=null&&(!Number.isFinite(Number(b.apel_hadir))||Number(b.apel_hadir)<0))return send(res,400,{error:'Total HK mandor harus angka nol atau lebih.'});
       const penginput = user.nama || user.username;
       const values = [b.tanggal, divisi, null, textLimit(b.siklus, 100), status, null, null, numberOrNull(b.apel_hadir), textLimit(b.apel_catatan, 2000), textLimit(b.kendala, 2000), textLimit(b.tindak_lanjut, 2000), selesaiAt, rencanaAt, selesaiAt, penginput];
       let reportId,landResult={adjusted:0};
@@ -1386,6 +1394,7 @@ function readScope(req,url){
   if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/kebun')return [...authTables,...land];
   if(/^\/api\/daily\/public\/photo\/\d+$/.test(p))return [...authTables,'daily_photo','daily_report'];
+  if(p==='/api/daily/hk-summary')return [...authTables,'daily_report','daily_item'];
   if(p==='/api/daily/public')return [...authTables,...land,'daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_land_week_plan_snapshots'];
   if(p==='/api/daily')return [...authTables,...land,'daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_land_week_plan_snapshots'];
   if(p==='/api/daily/plans')return [...authTables,'daily_week_plan','daily_week_item','_land_week_plan_snapshots'];
