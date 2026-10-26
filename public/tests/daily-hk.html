@@ -1,0 +1,6 @@
+<!doctype html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../css/style.css"><title>Uji total HK mandor</title><body><main id="test" style="padding:20px"></main><p id="saved"></p><script type="module">
+import {quickDaily} from '../js/daily-quick.js';
+const r={id:1,tanggal:'2026-10-23',divisi:'Padi',apel_hadir:64,items:[{id:1,blok:'P01',aktivitas:'Panen',satuan:'ha',realisasi:1,hk_realisasi:60}],photos:[]};
+const A={preview:true,isAdmin:()=>true,me:()=>({id:999,nama:'Mandor uji'}),toast:msg=>document.querySelector('#saved').textContent=msg,api:{get:async url=>url.includes('locations')?[{nama:'P01',divisi:'Padi'}]:[],post:async(url,b)=>({...b,id:1})}};
+quickDaily(document.querySelector('#test'),A,r,async b=>{document.querySelector('#saved').textContent='Simulasi: total HK mandor '+b.apel_hadir+' tersimpan di payload.';});
+</script></body></html>

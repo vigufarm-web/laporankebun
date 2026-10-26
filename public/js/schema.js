@@ -542,7 +542,7 @@ export const TABLES = {
       { k: 'status', l: 'Status', t: 'select', opt: ['Draf', 'Rencana Dikirim', 'Selesai'], req: true },
       { k: 'apel_mulai', l: 'Apel Mulai', t: 'text' },
       { k: 'apel_selesai', l: 'Apel Selesai', t: 'text' },
-      { k: 'apel_hadir', l: 'Hadir Apel (HK)', t: 'int' },
+      { k: 'apel_hadir', l: 'Total HK pernyataan mandor', t: 'int' },
       { k: 'apel_catatan', l: 'Catatan Apel', t: 'area' },
       { k: 'kendala', l: 'Kendala', t: 'area' },
       { k: 'tindak_lanjut', l: 'Tindak Lanjut', t: 'area' },
