@@ -22,3 +22,9 @@ test('HK-only days join the measured weekly activity only when its unit is unamb
  let work=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(work.length,1);assert.equal(work[0].actual,20);assert.equal(work[0].hk,3);assert.equal(work[0].unit,'stem');
  reports[1].items.push({blok:'A1',aktivitas:'Bagging',satuan:'pokok',realisasi:5,hk_realisasi:1});work=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(work.length,3);assert.equal(work.find(x=>!x.unit).hk,2);db.close();
 });
+
+test('group HK plan is counted once across repeated daily payloads, not allocated per block',()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE lahan_harian(tanggal TEXT,aktivitas TEXT,hasil_ha REAL,diganti_aktual INTEGER,source_key TEXT)');
+ const reports=[20,21].map(day=>({id:day,tanggal:'2026-10-'+day,divisi:'Pisang',status:'Selesai',hk_kegiatan_rencana:JSON.stringify([{key:'bud injection|stem',hk:6}]),items:[{aktivitas:'Bud injection',blok:'A',satuan:'stem',target:100,realisasi:20,hk_realisasi:1}]}));
+ const rows=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(rows[0].hkPlan,6);assert.equal(rows[0].hk,2);assert.equal(rows[0].target,100);db.close();
+});

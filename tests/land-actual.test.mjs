@@ -37,3 +37,16 @@ test('a worksheet stage already at 100 percent recognizes no extra area from a n
 });
 
 test('a later imported historical Daily can register worksheet coverage after initial migration',()=>{const c=fixture(),{db,insertRow,now}=c;insertRow('lahan_blok',{blok:'E01b',luas_ha:1,peruntukan:'Pisang'});insertRow('lahan_harian',{tanggal:'2026-10-22',blok:'E01b',aktivitas:'Land Clearing',hasil_ha:.1,hasil_input_ha:.1});registerHistoricalDailyCoverage(db,now);const id=insertRow('daily_report',{tanggal:'2026-10-22',divisi:'Infra',status:'Selesai'});insertRow('daily_item',{report_id:id,blok:'E01b',aktivitas:'Land Clearing',satuan:'ha',realisasi:.1});registerHistoricalDailyCoverage(db,now,[id]);saveDailyLand(db,id,now);assert.equal(db.prepare('SELECT sum(hasil_ha) n FROM lahan_harian').get().n,.1);assert.equal(db.prepare('SELECT realisasi FROM daily_item WHERE report_id=?').get(id).realisasi,.1);db.close();});
+
+test('capped and backdated land results keep grouped HK proportional without duplicate land work',()=>{
+ const {db,insertRow,now}=fixture();for(const blok of ['A','B'])insertRow('lahan_blok',{blok,luas_ha:1,peruntukan:'Pisang'});
+ insertRow('lahan_aktivitas',{aktivitas:'Bajak 1',untuk:'Pisang',urutan:1,hari_per_ha:1});
+ insertRow('lahan_harian',{tanggal:'2026-10-22',blok:'A',aktivitas:'Bajak 1',hasil_ha:.98});insertRow('lahan_harian',{tanggal:'2026-10-22',blok:'B',aktivitas:'Bajak 1',hasil_ha:.94});
+ const id=insertRow('daily_report',{tanggal:'2026-10-24',divisi:'Pisang',status:'Selesai',hk_kegiatan:JSON.stringify([{key:'bajak 1|ha',hk:3,manual:false}])});
+ for(const [i,blok] of ['A','B'].entries())insertRow('daily_item',{report_id:id,urutan:i+1,blok,aktivitas:'Bajak 1',realisasi:i?.06:.03,satuan:'ha',hk_realisasi:i?2:1});
+ saveDailyLand(db,id,now,insertRow);assert.deepEqual(db.prepare('SELECT realisasi,hk_realisasi FROM daily_item WHERE report_id=? ORDER BY urutan').all(id).map(r=>[r.realisasi,r.hk_realisasi]),[[.02,.75],[.06,2.25]]);
+ const early=insertRow('daily_report',{tanggal:'2026-10-23',divisi:'Pisang',status:'Selesai'});insertRow('daily_item',{report_id:early,urutan:1,blok:'A',aktivitas:'Bajak 1',realisasi:.01,satuan:'ha',hk_realisasi:1});
+ saveDailyLand(db,early,now,insertRow);const rows=db.prepare('SELECT realisasi,hk_realisasi FROM daily_item WHERE report_id=? ORDER BY urutan').all(id);
+ assert.equal(rows[0].realisasi,.01);assert.equal(rows.reduce((s,r)=>s+r.hk_realisasi,0),3);assert.ok(Math.abs(rows[0].hk_realisasi-3/7)<1e-6);
+ saveDailyLand(db,early,now,insertRow);assert.equal(db.prepare('SELECT count(*) n FROM lahan_harian WHERE daily_report_id=?').get(early).n,1);db.close();
+});

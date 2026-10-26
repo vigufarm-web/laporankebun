@@ -1,3 +1,4 @@
+import {checkWeeklyWorkflow,checkActualWorkflow,reallocateEffectiveHK} from './lib/daily-workflow.js';
 import {isPublicDailyRead} from './lib/daily-public-path.js';
 import {dailyHKSummary} from './lib/daily-hk.js';
 import {ownerLandClearing} from './lib/owner-lc.js';
@@ -284,7 +285,7 @@ function dailyPayload(report) {
     });
   const photos = db.prepare('SELECT * FROM daily_photo WHERE report_id=? ORDER BY id').all(report.id)
     .map((p) => {const expired=photoExpired(p);return { ...p, deleted_at:p.deleted_at || (expired?p.expires_at:null), thumbnail_url: !expired&&!p.deleted_at&&p.thumb_lokasi ? `/api/daily/photo/${p.id}?thumb=1` : null, url: p.deleted_at||expired ? null : `/api/daily/photo/${p.id}` };});
-  return { ...report, items, photos };
+  return { ...report, hk_kegiatan_rencana:plan?.hk_kegiatan||null, items, photos };
 }
 
 async function storeDailyPhoto(buf, mime, report) {
@@ -865,12 +866,13 @@ async function api(req, res, url) {
     if (m === 'POST' && parts[2] === 'plans') {
       const b = await readBody(req), divisi = String(b.divisi || ''), bounds = weekBounds(b.week_start);
       const ownedNames = new Set(ownedDailyLocations().map(x=>util.key(x.nama)));
-      if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)))) return send(res,400,{error:'Pilih blok yang sudah terverifikasi milik kebun.'});
+      if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)))) return send(res,400,{error:'Pilih blok GIS aktif yang tersedia.'});
       if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
       if (!bounds) return send(res, 400, { error: 'Minggu pelaksanaan wajib diisi' });
       if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah rencana ${divisi}` });
       const old = b.id ? db.prepare('SELECT * FROM daily_week_plan WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(bounds.start, divisi);
       if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah rencana ini' });
+      const weeklyGroups=b.workflow_v2?checkWeeklyWorkflow(b,ownedDailyLocations(),old?db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(old.id):[]):null;
       const status = b.status === 'Dikirim' ? 'Dikirim' : 'Draf', penginput = user.nama || user.username;
       let planId;
       tx(() => {
@@ -878,6 +880,7 @@ async function api(req, res, url) {
         else { const r = db.prepare('INSERT INTO daily_week_plan (created_at, updated_at, week_start, week_end, divisi, status, catatan, dikirim_at, dibuat_oleh) VALUES (?,?,?,?,?,?,?,?,?)').run(now(), now(), bounds.start, bounds.end, divisi, status, textLimit(b.catatan, 2000), status === 'Dikirim' ? now() : null, penginput); planId = Number(r.lastInsertRowid); }
         const insert = db.prepare('INSERT INTO daily_week_item (created_at, updated_at, plan_id, urutan, blok, aktivitas, target, satuan, hk_rencana, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?)');
         for (const [i, x] of (Array.isArray(b.items) ? b.items : []).slice(0, 200).entries()) { const blok = textLimit(x.blok, 200), aktivitas = textLimit(x.aktivitas, 300); if (!blok || !aktivitas) continue; insert.run(now(), now(), planId, i + 1, blok, aktivitas, numberOrNull(x.target), textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), textLimit(x.keterangan, 1000)); }
+        db.prepare('UPDATE daily_week_plan SET hk_kegiatan=? WHERE id=?').run(weeklyGroups?JSON.stringify(weeklyGroups):null,planId);
       });
       blocks.linkTable('daily_week_item');
       log(old ? 'ubah' : 'tambah', 'daily_week_plan', planId, { week_start: bounds.start, divisi, status, jumlah_kegiatan: (b.items || []).length });
@@ -954,8 +957,10 @@ async function api(req, res, url) {
       let old = b.id ? db.prepare('SELECT * FROM daily_report WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_report WHERE tanggal=? AND divisi=?').get(b.tanggal, divisi);
       if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah laporan ini' });
       const previousItems = old ? db.prepare('SELECT * FROM daily_item WHERE report_id=?').all(old.id) : [];
+      if(b.workflow_v2&&b.status==='Dikirim')b.status='Selesai';
+      const activityGroups=b.workflow_v2?checkActualWorkflow(b,previousItems):null;
       const sameHistoricalItem = x => old && old.tanggal === b.tanggal && old.divisi === divisi && previousItems.some(p=>Number(p.id)===Number(x.id) && util.key(p.blok)===util.key(x.blok));
-      if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)) && !sameHistoricalItem(x))) return send(res,400,{error:'Kegiatan baru harus memakai blok GIS milik kebun. Lokasi data historis yang sama dapat dilengkapi.'});
+      if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)) && !sameHistoricalItem(x))) return send(res,400,{error:'Kegiatan baru harus memakai blok GIS aktif. Lokasi data historis yang sama dapat dilengkapi.'});
       const status = ['Rencana Dikirim', 'Selesai'].includes(b.status) ? b.status : b.status === 'Dikirim' ? 'Selesai' : 'Draf';
       const rencanaAt = status !== 'Draf' ? old?.rencana_at || now() : old?.rencana_at || null;
       const selesaiAt = status === 'Selesai' ? now() : old?.selesai_at || null;
@@ -984,7 +989,9 @@ async function api(req, res, url) {
           db.prepare('UPDATE daily_item SET realisasi_input=? WHERE id=?').run(historical&&Number(x.realisasi)===Number(historical.realisasi)?historical.realisasi_input??numberOrNull(x.realisasi):numberOrNull(x.realisasi),Number(inserted.lastInsertRowid));
           if(historical) db.prepare('UPDATE daily_item SET block_id=?,block_name_snapshot=? WHERE id=?').run(historical.block_id,historical.block_name_snapshot,Number(inserted.lastInsertRowid));
         }
+        db.prepare('UPDATE daily_report SET hk_kegiatan=? WHERE id=?').run(activityGroups?JSON.stringify(activityGroups):null,reportId);
         landResult=saveDailyLand(db,reportId,now,insertRow);
+        if(activityGroups)reallocateEffectiveHK(db,reportId,activityGroups,status==='Selesai');
       });
       blocks.linkTable('daily_item');blocks.linkTable('lahan_harian');
       log(old ? 'ubah' : 'tambah', 'daily_report', reportId, { tanggal: b.tanggal, divisi, status, jumlah_kegiatan: (b.items || []).length });
