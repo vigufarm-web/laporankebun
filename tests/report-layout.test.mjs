@@ -19,3 +19,11 @@ test('climate graph distinguishes missing days from measured zero and combines t
  assert.match(html,/2026-10-01: 0 mm/);assert.match(html,/2026-10-02: belum tercatat/);
  assert.match(html,/Suhu rata-rata harian/);assert.equal((html.match(/<svg /g)||[]).length,1);assert.match(html,/Hujan \(mm\)/);assert.match(html,/Suhu \(°C\)/);assert.equal((html.match(/<polyline /g)||[]).length,0,'missing middle day must break the temperature line');assert.ok(!html.includes('NaN'));
 });
+
+test('combined climate graph handles no data, rain-only and temperature-only without invented readings',()=>{
+ const make=days=>climateChartMarkup({from:'2026-10-01',to:'2026-10-02',climate:{days}});
+ assert.match(make([]),/Belum ada pengamatan/);
+ for(const days of [[{tanggal:'2026-10-01',hujan:0}],[{tanggal:'2026-10-01',tavg:0}],[{tanggal:'2026-10-01',hujan:'invalid',tavg:28}]]){
+  const html=make(days);assert.ok(!html.includes('NaN'));assert.ok(!html.includes('Infinity'));assert.equal((html.match(/<svg /g)||[]).length,1);assert.match(html,/Belum tercatat/);
+ }
+});
