@@ -342,4 +342,4 @@ table.mini td.num, table.mini th.num { text-align: right; font-variant-numeric: 
 
 .dr-hk-check{display:flex;flex-wrap:wrap;gap:10px 24px;border:1px solid #cbd9c7;border-radius:10px;padding:14px;margin:12px 0;background:#f5f8f1}.dr-hk-check small{flex-basis:100%;color:#566752}
 
-.crop-section-title{margin:32px 0 18px;font-size:1.65rem}.climate-charts svg{display:block;width:100%;height:auto;min-height:150px;color:inherit}.climate-charts article{margin:22px 0}.climate-charts svg text{fill:currentColor}
+.crop-section-title{margin:32px 0 18px;font-size:1.65rem}.climate-plot{overflow-x:auto}.climate-charts svg{display:block;width:100%;min-width:900px;height:auto;min-height:150px;color:inherit}.climate-charts article{margin:22px 0}.climate-charts svg text{fill:currentColor}
