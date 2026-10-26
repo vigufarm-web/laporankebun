@@ -34,3 +34,9 @@ test('HK-only group plans remain visible without inventing a physical result uni
  const reports=[{id:1,tanggal:'2026-10-20',divisi:'Pisang',status:'Selesai',hk_kegiatan_rencana:JSON.stringify([{key:'pengawasan|hk',hk:6}]),items:[{aktivitas:'Pengawasan',blok:'A',satuan:'HK',target:null,realisasi:null,hk_realisasi:3}]}];
  const rows=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(rows[0].hkPlan,6);assert.equal(rows[0].actual,null);assert.equal(rows[0].unit,'');db.close();
 });
+
+test('owner weekly photo cap covers seven days and preserves a sparse day',()=>{
+ let id=1000;const reports=Array.from({length:7},(_,i)=>({id:i,status:'Selesai',tanggal:'2026-10-'+(19+i),divisi:'Pisang',photos:Array.from({length:i===0?1:8},()=>({id:++id,jenis:'Kegiatan'}))}));
+ const selected=selectOwnerPhotos(reports);assert.equal(selected.flatMap(r=>r.photos).length,19);assert.equal(selected[0].photos.length,1);assert.ok(selected.every(r=>r.photos.length<=3));
+ reports[0].photos.push({id:++id,jenis:'Kegiatan'},{id:++id,jenis:'Kegiatan'});assert.equal(selectOwnerPhotos(reports).flatMap(r=>r.photos).length,21);
+});
