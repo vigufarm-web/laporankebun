@@ -28,3 +28,9 @@ test('group HK plan is counted once across repeated daily payloads, not allocate
  const reports=[20,21].map(day=>({id:day,tanggal:'2026-10-'+day,divisi:'Pisang',status:'Selesai',hk_kegiatan_rencana:JSON.stringify([{key:'bud injection|stem',hk:6}]),items:[{aktivitas:'Bud injection',blok:'A',satuan:'stem',target:100,realisasi:20,hk_realisasi:1}]}));
  const rows=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(rows[0].hkPlan,6);assert.equal(rows[0].hk,2);assert.equal(rows[0].target,100);db.close();
 });
+
+test('HK-only group plans remain visible without inventing a physical result unit',()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE lahan_harian(tanggal TEXT,aktivitas TEXT,hasil_ha REAL,diganti_aktual INTEGER,source_key TEXT)');
+ const reports=[{id:1,tanggal:'2026-10-20',divisi:'Pisang',status:'Selesai',hk_kegiatan_rencana:JSON.stringify([{key:'pengawasan|hk',hk:6}]),items:[{aktivitas:'Pengawasan',blok:'A',satuan:'HK',target:null,realisasi:null,hk_realisasi:3}]}];
+ const rows=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(rows[0].hkPlan,6);assert.equal(rows[0].actual,null);assert.equal(rows[0].unit,'');db.close();
+});
