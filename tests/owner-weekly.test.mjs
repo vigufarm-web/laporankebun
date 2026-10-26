@@ -4,7 +4,7 @@ test('owner weekly totals sum daily actuals, deduplicate weekly block targets, s
  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE lahan_harian(tanggal TEXT,aktivitas TEXT,hasil_ha REAL,diganti_aktual INTEGER,source_key TEXT)');
  const item=(blok,realisasi,hasil_sdhi,target=10,satuan='ha')=>({blok,aktivitas:'Irigasi',realisasi,hasil_sdhi,target,satuan,target_hk_minggu:8,hk_realisasi:2});
  const reports=[{id:1,status:'Selesai',tanggal:'2026-10-19',divisi:'Padi',items:[item('P1',2,2)]},{id:2,status:'Selesai',tanggal:'2026-10-20',divisi:'Padi',items:[item('P1',3,5),item('P2',1,1,4),item('P2',20,20,40,'pokok')]},{id:3,status:'Draf',tanggal:'2026-10-21',divisi:'Padi',items:[item('P1',900,905)]}];
- let work=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(work.length,2);let r=work.find(r=>r.unit==='ha');assert.equal(r.actual,6);assert.equal(r.target,14);assert.equal(r.variance,-8);assert.equal(r.hk,6);assert.equal(r.hkPlan,16);assert.equal(r.percent,100*6/14);
+ let work=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});assert.equal(work.length,2);let r=work.find(r=>r.unit==='ha');assert.equal(r.actual,4);assert.equal(r.target,14);assert.equal(r.variance,-10);assert.equal(r.hk,6);assert.equal(r.hkPlan,16);assert.equal(r.percent,100*4/14);
  reports.push({id:4,status:'Selesai',tanggal:'2026-10-21',divisi:'Padi',items:[item('P3',1,1,null)]});work=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports});r=work.find(r=>r.unit==='ha');assert.equal(r.targetPartial,true);assert.equal(r.percent,null);assert.equal(r.variance,null);assert.ok(weeklyWorkSections(work)[0].rows.some(row=>row.some(x=>String(x).includes('sebagian'))));db.close();
 });
 test('owner land totals use capped effective transactions once, not covered Daily or opening balances',()=>{
@@ -39,4 +39,10 @@ test('owner weekly photo cap covers seven days and preserves a sparse day',()=>{
  let id=1000;const reports=Array.from({length:7},(_,i)=>({id:i,status:'Selesai',tanggal:'2026-10-'+(19+i),divisi:'Pisang',photos:Array.from({length:i===0?1:8},()=>({id:++id,jenis:'Kegiatan'}))}));
  const selected=selectOwnerPhotos(reports);assert.equal(selected.flatMap(r=>r.photos).length,19);assert.equal(selected[0].photos.length,1);assert.ok(selected.every(r=>r.photos.length<=3));
  reports[0].photos.push({id:++id,jenis:'Kegiatan'},{id:++id,jenis:'Kegiatan'});assert.equal(selectOwnerPhotos(reports).flatMap(r=>r.photos).length,21);
+});
+
+test('repeated paddy irrigation counts GIS coverage once while retaining all work days and HK',()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE lahan_harian(tanggal TEXT,aktivitas TEXT,hasil_ha REAL,diganti_aktual INTEGER,source_key TEXT)');
+ const reports=[19,20,21].map(day=>({id:day,status:'Selesai',tanggal:'2026-10-'+day,divisi:'Padi',items:[{block_id:1,blok:'P01',aktivitas:'Irigasi tanaman & usir burung',satuan:'ha',realisasi:2,hk_realisasi:1},{block_id:2,blok:'P02',aktivitas:'Irigasi tanaman & usir burung',satuan:'ha',realisasi:3,hk_realisasi:1}]}));
+ const [r]=ownerWeeklyWork({db,from:'2026-10-19',to:'2026-10-25',reports,locations:[{id:1,luas_ha:2},{id:2,luas_ha:3}]});assert.equal(r.actual,5);assert.equal(r.hk,6);assert.equal(r.workDays,3);assert.equal(r.coverage,true);assert.match(weeklyWorkSections([r])[0].rows[0][0],/cakupan; 3 hari/);db.close();
 });
