@@ -1,3 +1,4 @@
+import {isPublicDailyRead} from './lib/daily-public-path.js';
 import {dailyHKSummary} from './lib/daily-hk.js';
 import {ownerLandClearing} from './lib/owner-lc.js';
 import {reportWeek} from './lib/report-week.js';
@@ -707,7 +708,7 @@ async function api(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length': buf.length });
     return res.end(buf);
   }
-  const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods'].includes(parts[1])||/^\/api\/daily\/(?:hk-summary|public(?:\/photo\/\d+)?)$/.test(url.pathname));
+  const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods'].includes(parts[1])||isPublicDailyRead(url.pathname,m));
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
   if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1]))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
 
@@ -1407,7 +1408,7 @@ async function apiRequest(req, res, url) {
   if (!cloud) return api(req, res, url);
   return serial(async () => {
     const adminRead=/^\/api\/(?:t|tables|records|excel|blocks|gis|kebun|land-prep|padi|nursery-summary|backup|backups|users|log)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/excel/status';
-    const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup'&&!/^\/api\/daily\/public(?:\/|$)/.test(url.pathname);
+    const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup'&&!isPublicDailyRead(url.pathname,req.method);
     if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});if(adminRead&&!isAdmin(reader))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
     if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
