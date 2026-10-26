@@ -340,6 +340,7 @@ export const TABLES = {
       { k: 'luas_blok', l: 'Luas Blok (ha)', t: 'calc', fmt: 'num2', fn: (r, c) => luasPetak(c, r.petak) },
       { k: 'jumlah_karung', l: 'Jumlah Karung', t: 'int' },
       { k: 'gkp_kg', l: 'Berat Gabah / GKP (kg)', t: 'num', req: true },
+      { k: 'gkg_kg', l: 'Hasil Panen GKG (kg)', t: 'num', hint: 'Berat setelah pengeringan. Untuk total satu panen yang memiliki beberapa tanggal timbang, isi sekali pada tanggal awal panen; jangan diulang pada setiap rincian. Kosong berarti belum tercatat.' },
       { k: 'kg_karung', l: 'Rata-rata kg/karung', t: 'calc', fmt: 'num2', fn: (r) => (n(r.jumlah_karung) ? n(r.gkp_kg) / n(r.jumlah_karung) : null) },
       { k: 'ton_ha', l: 'Hasil (ton/ha)', t: 'calc', fmt: 'num2', fn: (r, c) => { const l = luasPetak(c, r.petak); return l ? n(r.gkp_kg) / 1000 / l : null; } },
       { k: 'detail_timbang', l: 'Rincian timbang (kg)', t: 'text', hint: 'Pisahkan tiap penimbangan dengan titik koma.' },
