@@ -1,3 +1,5 @@
+import {isPadiCoverage,cappedCoverage} from './lib/coverage-area.js';
+import {activityKey,parseGroups} from './public/js/daily-work.js';
 import {checkWeeklyWorkflow,checkActualWorkflow,reallocateEffectiveHK} from './lib/daily-workflow.js';
 import {isPublicDailyRead} from './lib/daily-public-path.js';
 import {dailyHKSummary} from './lib/daily-hk.js';
@@ -261,7 +263,8 @@ function dailyPayload(report) {
   const weekStart = weekBounds(report.tanggal).start;
   const plan = db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(weekStart, report.divisi);
   const plannedById = plan ? db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(plan.id) : [];
-  const cumulative = db.prepare(`SELECT SUM(di.realisasi) total, MAX(NULLIF(di.target,0)) weekly_target
+  let coverageLocations;
+  const cumulative = db.prepare(`SELECT SUM(di.realisasi) total, MAX(CASE WHEN dr.status='Selesai' THEN di.realisasi END) coverage_total, MAX(NULLIF(di.target,0)) weekly_target
     FROM daily_item di JOIN daily_report dr ON dr.id=di.report_id
     WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ?
       AND lower(replace(di.aktivitas,' ',''))=lower(replace(?,' ',''))
@@ -279,9 +282,12 @@ function dailyPayload(report) {
       const names=String(item.blok||'').split(',').map(normBlock);
       const landTarget=item.satuan==='ha'&&stageForDaily(item.aktivitas)?dailyLandTargets(report.tanggal).find(x=>x.a===stageForDaily(item.aktivitas))?.bl.filter(x=>names.includes(normBlock(x.blok))).reduce((s,x)=>s+x.ha,0):null;
       const targetHK=planned?.hk_rencana ?? plannedHK.get(report.divisi,weekStart,weekBounds(report.tanggal).end,item.aktivitas,item.blok,item.satuan)?.total ?? null;
-      const target=planned?.target ?? (item.plan_item_id!=null?item.target:null) ?? (landTarget>0?landTarget:null);
+      let target=planned?.target ?? (item.plan_item_id!=null?item.target:null) ?? (landTarget>0?landTarget:null);
       const outside = item.di_luar_rencana != null ? Number(item.di_luar_rencana) : plan ? Number(!planned) : 0;
-      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target, target_hk_minggu:targetHK, target_basis:planned?'Rencana mingguan':landTarget>0?'Rencana land preparation':null, hasil_sdhi: item.hasil_sdhi ?? sum.total ?? null };
+      const coverage=isPadiCoverage(report.divisi,item.aktivitas,item.satuan);
+      let coverageSDHI=null;
+      if(coverage){coverageLocations ||= ownedDailyLocations();const location=coverageLocations.find(l=>item.block_id?Number(l.id)===Number(item.block_id):util.key(l.nama)===util.key(item.blok));const times=Number(parseGroups(plan?.hk_kegiatan).find(g=>g.key===activityKey(item.aktivitas,item.satuan))?.times)||1;target=cappedCoverage(target==null?null:target/times,location?.luas_ha);coverageSDHI=cappedCoverage(sum.coverage_total??item.realisasi,location?.luas_ha);}
+      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target, target_hk_minggu:targetHK, target_basis:planned?'Rencana mingguan':landTarget>0?'Rencana land preparation':null, hasil_sdhi: coverage?coverageSDHI:item.hasil_sdhi ?? sum.total ?? null };
     });
   const photos = db.prepare('SELECT * FROM daily_photo WHERE report_id=? ORDER BY id').all(report.id)
     .map((p) => {const expired=photoExpired(p);return { ...p, deleted_at:p.deleted_at || (expired?p.expires_at:null), thumbnail_url: !expired&&!p.deleted_at&&p.thumb_lokasi ? `/api/daily/photo/${p.id}?thumb=1` : null, url: p.deleted_at||expired ? null : `/api/daily/photo/${p.id}` };});
@@ -736,7 +742,7 @@ async function api(req, res, url) {
     const reports=db.prepare('SELECT * FROM daily_report WHERE '+where.join(' AND ')+' ORDER BY tanggal,divisi,id').all(...args).map(dailyPayload).filter(r=>!owner||r.items.some(x=>x.realisasi!=null||x.hk_realisasi!=null||x.keterangan)||r.kendala||r.tindak_lanjut||r.photos.some(p=>!p.deleted_at));
     if(owner){
       const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),{ownerWeeklyWork,ownerWeeklyNotes,selectOwnerPhotos}=await import('./lib/owner-weekly.js');
-      const through=to<today?to:today,completed=reports.filter(r=>r.status==='Selesai'&&r.tanggal<=through),summary=reads.overview({from,to:through,today,blocks:verifiedOverviewBlocks()}),work=ownerWeeklyWork({db,from,to:through,reports:completed,landTargets:dailyLandTargets(from)}),notes=ownerWeeklyNotes(completed),samples=selectOwnerPhotos(completed),sections=ownerSections({db,from,to:through,climate:summary.climate,work});
+      const through=to<today?to:today,completed=reports.filter(r=>r.status==='Selesai'&&r.tanggal<=through),summary=reads.overview({from,to:through,today,blocks:verifiedOverviewBlocks()}),work=ownerWeeklyWork({db,from,to:through,reports:completed,landTargets:dailyLandTargets(from),locations:ownedDailyLocations()}),notes=ownerWeeklyNotes(completed),samples=selectOwnerPhotos(completed),sections=ownerSections({db,from,to:through,climate:summary.climate,work});
       summary.lcByCrop=ownerLandClearing(db,from,through);
       if(parts[2]==='owner-summary')return send(res,200,{from,to,summary,sections,work,notes,reportCount:completed.length,photos:samples.flatMap(r=>r.photos.map(p=>({id:p.id,division:r.divisi,date:r.tanggal,caption:p.caption||p.jenis||'Foto kegiatan',url:p.url,thumbnail_url:p.thumbnail_url})))});
       if(parts[2]==='share')return send(res,200,{text:'LAPORAN MINGGUAN KEBUN VIGU FARM\n'+from+' s.d. '+to+'\n'+work.map(r=>r.division+' / '+r.activity+': '+(r.actual==null?'hasil belum tercatat':r.actual.toLocaleString('id-ID',{maximumFractionDigits:2})+' '+r.unit)+'; target '+(r.target==null?'belum ada':r.target.toLocaleString('id-ID',{maximumFractionDigits:2})+' '+r.unit+(r.targetPartial?' (sebagian)':''))).join('\n')+'\nPDF berisi rekap mingguan dan sampel foto kegiatan.'});
