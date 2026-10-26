@@ -1,4 +1,4 @@
-import {isPadiCoverage,cappedCoverage} from './lib/coverage-area.js';
+import {isRepeatedArea,isDryingWork,isNurseryPopulation,unresolvedCoverage,cappedCoverage} from './lib/coverage-area.js';
 import {activityKey,parseGroups} from './public/js/daily-work.js';
 import {checkWeeklyWorkflow,checkActualWorkflow,reallocateEffectiveHK} from './lib/daily-workflow.js';
 import {isPublicDailyRead} from './lib/daily-public-path.js';
@@ -284,10 +284,10 @@ function dailyPayload(report) {
       const targetHK=planned?.hk_rencana ?? plannedHK.get(report.divisi,weekStart,weekBounds(report.tanggal).end,item.aktivitas,item.blok,item.satuan)?.total ?? null;
       let target=planned?.target ?? (item.plan_item_id!=null?item.target:null) ?? (landTarget>0?landTarget:null);
       const outside = item.di_luar_rencana != null ? Number(item.di_luar_rencana) : plan ? Number(!planned) : 0;
-      const coverage=isPadiCoverage(report.divisi,item.aktivitas,item.satuan);
+      const coverage=isRepeatedArea(report.divisi,item.aktivitas,item.satuan),population=isNurseryPopulation(report.divisi,item.aktivitas,item.satuan),drying=isDryingWork(report.divisi,item.aktivitas);
       let coverageSDHI=null;
-      if(coverage){coverageLocations ||= ownedDailyLocations();const location=coverageLocations.find(l=>item.block_id?Number(l.id)===Number(item.block_id):util.key(l.nama)===util.key(item.blok));const times=Number(parseGroups(plan?.hk_kegiatan).find(g=>g.key===activityKey(item.aktivitas,item.satuan))?.times)||1;target=cappedCoverage(target==null?null:target/times,location?.luas_ha);coverageSDHI=cappedCoverage(sum.coverage_total??item.realisasi,location?.luas_ha);}
-      return { ...item, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target, target_hk_minggu:targetHK, target_basis:planned?'Rencana mingguan':landTarget>0?'Rencana land preparation':null, hasil_sdhi: coverage?coverageSDHI:item.hasil_sdhi ?? sum.total ?? null };
+      if(coverage||population){coverageLocations ||= ownedDailyLocations();const location=coverageLocations.find(l=>item.block_id?Number(l.id)===Number(item.block_id):util.key(l.nama)===util.key(item.blok));const times=Number(parseGroups(plan?.hk_kegiatan).find(g=>g.key===activityKey(item.aktivitas,item.satuan))?.times)||1;target=cappedCoverage(target==null?null:target/times,population?null:location?.luas_ha);coverageSDHI=coverage&&unresolvedCoverage(item)?null:cappedCoverage(sum.coverage_total??item.realisasi,population?null:location?.luas_ha);}
+      return { ...item, satuan:population?'pokok':item.satuan, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target, target_hk_minggu:targetHK, target_basis:planned?'Rencana mingguan':landTarget>0?'Rencana land preparation':null, hasil_sdhi: drying?null:(coverage||population)?coverageSDHI:item.hasil_sdhi ?? sum.total ?? null };
     });
   const photos = db.prepare('SELECT * FROM daily_photo WHERE report_id=? ORDER BY id').all(report.id)
     .map((p) => {const expired=photoExpired(p);return { ...p, deleted_at:p.deleted_at || (expired?p.expires_at:null), thumbnail_url: !expired&&!p.deleted_at&&p.thumb_lokasi ? `/api/daily/photo/${p.id}?thumb=1` : null, url: p.deleted_at||expired ? null : `/api/daily/photo/${p.id}` };});
@@ -749,7 +749,7 @@ async function api(req, res, url) {
       if(parts[2]!=='owner.pdf')return send(res,404,{error:'Laporan tidak ditemukan'});
       await attachReportPhotos(samples);
       const pdf=await buildReportPDF({name:db.prepare("SELECT v FROM _settings WHERE k='nama'").get()?.v||'PT VIGU FARM INDONESIA',from,to,reports:samples,summary,sections,notes,owner:true,createdBy:user.nama||user.username});
-      return send(res,200,pdf,'application/pdf',{'Content-Disposition':'attachment; filename="laporan-owner-'+from+'-'+to+'.pdf"'});
+      return send(res,200,pdf,'application/pdf',{'Content-Disposition':'attachment; filename="weekly-kebun-vigu-'+from+'-'+to+'.pdf"'});
     }
     if(parts[2]==='share') {
       const lines=reports.slice(0,5).map(r=>r.tanggal+' / '+r.divisi+' / '+r.status+'\n'+r.items.slice(0,4).map(x=>'- '+x.blok+': '+x.aktivitas+' '+(x.realisasi??'belum diisi')+' '+(x.satuan||'')+'; HK '+(x.hk_realisasi??'belum diisi')).join('\n'));
