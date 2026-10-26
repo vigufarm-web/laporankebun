@@ -14,8 +14,8 @@ test('harvest plan uses full monthly estimate and submitted weekly box plans, ex
  assert.deepEqual(get('2026-10-26'),{planBoxes:1000,weeklyPlanBoxes:100});
  assert.deepEqual(get('2026-12-01'),{planBoxes:null,weeklyPlanBoxes:null});db.close();
 });
-test('climate graph distinguishes missing days from measured zero and separates temperature',()=>{
+test('climate graph distinguishes missing days from measured zero and combines temperature with a separate scale',()=>{
  const html=climateChartMarkup({from:'2026-10-01',to:'2026-10-03',climate:{days:[{tanggal:'2026-10-01',hujan:0,tavg:28},{tanggal:'2026-10-03',hujan:10,tavg:30}]}});
  assert.match(html,/2026-10-01: 0 mm/);assert.match(html,/2026-10-02: belum tercatat/);
- assert.match(html,/Suhu rata-rata harian/);assert.equal((html.match(/<svg /g)||[]).length,2);
+ assert.match(html,/Suhu rata-rata harian/);assert.equal((html.match(/<svg /g)||[]).length,1);assert.match(html,/Hujan \(mm\)/);assert.match(html,/Suhu \(°C\)/);assert.equal((html.match(/<polyline /g)||[]).length,0,'missing middle day must break the temperature line');assert.ok(!html.includes('NaN'));
 });
