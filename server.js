@@ -235,7 +235,7 @@ function weeklyPlanPayload(plan) {
 
 let parcelLocations;
 function ownedDailyLocations() {
-  parcelLocations ||= createParcelLocations(db,blocks);
+  parcelLocations ||= createParcelLocations(db,blocks,{includePartial:true});
   return parcelLocations();
 }
 let planningParcelLocations;
@@ -253,8 +253,8 @@ function dailyLandTargets(date){
 }
 
 function verifiedOverviewBlocks(){
-  const ids=new Set(ownedDailyLocations().map(x=>x.id)),layer=db.prepare("SELECT id FROM gis_layer WHERE nama='Blok Tanam' ORDER BY id LIMIT 1").get()?.id;
-  return blocks.list().map(b=>ids.has(b.id)?{...b,ownership:'Sudah milik kebun',layer_id:b.layer_id||layer}:b);
+  const owned=new Map(ownedDailyLocations().map(x=>[x.id,x])),layer=db.prepare("SELECT id FROM gis_layer WHERE nama='Blok Tanam' ORDER BY id LIMIT 1").get()?.id;
+  return blocks.list().map(b=>owned.has(b.id)?{...b,luas_ha:owned.get(b.id).luas_ha,ownership:'Sudah milik kebun',layer_id:b.layer_id||layer}:b);
 }
 function dailyPayload(report) {
   const weekStart = weekBounds(report.tanggal).start;

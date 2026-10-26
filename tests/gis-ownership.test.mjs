@@ -18,3 +18,16 @@ test('daily locations refresh after a parcel revision and do not infer target ow
  assert.equal(locations().length,1);assert.equal(locations()[0].id,'fixed');
  db.prepare('UPDATE gis_layer SET updated_at=?,geojson=?').run('v2',fc('Lahan Target1'));assert.equal(locations().length,0);db.close();
 });
+
+test('Daily partial owned blocks remain selectable with owned area only, zero ownership excluded',()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE gis_layer(id INTEGER,nama TEXT,updated_at TEXT,geojson TEXT,field_nama TEXT);CREATE TABLE _blocks(id TEXT,geometry TEXT)');
+ db.prepare('INSERT INTO gis_layer(id,nama,updated_at,geojson) VALUES(1,?,?,?)').run('Persil Lahan 21-10-2026','v1',JSON.stringify({features:[{properties:{Status:'Sudah Bayar'},geometry:rect(0,0,0.99,1)}]}));
+ const rows=[{id:'p1',nama:'P01',active:1,layer_id:2,luas_ha:1,ownership:'Belum diverifikasi'},{id:'p4',nama:'P04',active:1,layer_id:2,luas_ha:1,ownership:'Belum diverifikasi'}];
+ db.prepare('INSERT INTO _blocks VALUES(?,?)').run('p1',JSON.stringify(rect(0,0)));
+ db.prepare('INSERT INTO _blocks VALUES(?,?)').run('p4',JSON.stringify(rect(2,0)));
+ const locations=createParcelLocations(db,{list:()=>rows},{includePartial:true});
+ assert.equal(locations().length,1);assert.equal(locations()[0].nama,'P01');
+ assert.ok(Math.abs(locations()[0].luas_ha-0.99)<1e-8);
+ assert.equal(locations()[0].gisAreaHa,1);
+ db.close();
+});
