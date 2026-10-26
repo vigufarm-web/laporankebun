@@ -210,7 +210,7 @@ function log(aksi, tabel, id, data) {
   db.prepare('INSERT INTO _log (ts, aksi, tabel, row_id, data, oleh) VALUES (?,?,?,?,?,?)').run(now(), aksi, tabel, id ?? null, data ? JSON.stringify(data).slice(0, 4000) : null, currentUser ? currentUser.nama || currentUser.username : null);
 }
 
-// ---------- Daily Report: akses mandor per divisi + foto sementara 7 hari
+// ---------- Daily Report: akses mandor per divisi + foto sementara 14 hari
 const DAILY_ROLE = { Pisang: 'daily_pisang', Padi: 'daily_padi', Infra: 'daily_infra' };
 const DAILY_DIVISI = Object.keys(DAILY_ROLE);
 const canDaily = (user, divisi) => !!user && (isAdmin(user) || (user.peran || []).includes(DAILY_ROLE[divisi]));
@@ -921,7 +921,7 @@ async function api(req, res, url) {
       if (!report) return send(res, 404, { error: 'Laporan tidak ditemukan' });
       if (!canDaily(user, report.divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${report.divisi}` });
       const expires = photoExpiresAt(report.tanggal);
-      if(photoExpired({expires_at:expires})) return send(res,400,{error:'Foto hanya disimpan untuk laporan 7 hari terakhir. Data teks laporan tetap dapat dilengkapi.'});
+      if(photoExpired({expires_at:expires})) return send(res,400,{error:'Foto hanya disimpan untuk laporan 14 hari terakhir. Data teks laporan tetap dapat dilengkapi.'});
       const mime = String(req.headers['content-type'] || '').split(';')[0].toLowerCase();
       if (!['image/jpeg', 'image/png', 'image/webp'].includes(mime)) return send(res, 400, { error: 'Foto harus JPG, PNG, atau WebP' });
       if (Number(req.headers['content-length'] || 0) > 2.5e6) return send(res, 413, { error: 'Foto maksimal 2,5 MB setelah dikompres' });
