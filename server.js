@@ -235,7 +235,7 @@ function weeklyPlanPayload(plan) {
 
 let parcelLocations;
 function ownedDailyLocations() {
-  parcelLocations ||= createParcelLocations(db,blocks);
+  parcelLocations ||= createParcelLocations(db,blocks,{includeGIS:true});
   return parcelLocations();
 }
 let planningParcelLocations;
@@ -253,8 +253,8 @@ function dailyLandTargets(date){
 }
 
 function verifiedOverviewBlocks(){
-  const ids=new Set(ownedDailyLocations().map(x=>x.id)),layer=db.prepare("SELECT id FROM gis_layer WHERE nama='Blok Tanam' ORDER BY id LIMIT 1").get()?.id;
-  return blocks.list().map(b=>ids.has(b.id)?{...b,ownership:'Sudah milik kebun',layer_id:b.layer_id||layer}:b);
+  const owned=new Map(ownedPlanningLocations().map(x=>[x.id,x])),layer=db.prepare("SELECT id FROM gis_layer WHERE nama='Blok Tanam' ORDER BY id LIMIT 1").get()?.id;
+  return blocks.list().map(b=>owned.has(b.id)?{...b,luas_ha:owned.get(b.id).luas_ha,ownership:'Sudah milik kebun',layer_id:b.layer_id||layer}:b);
 }
 function dailyPayload(report) {
   const weekStart = weekBounds(report.tanggal).start;
@@ -451,7 +451,7 @@ function validateOperationalBlock(table,row,old=null) {
   }
   for(const f of TABLES[table]?.f||[]) {
     if(f.t!=='ref'||!masterFields[f.ref]||!row[f.k]||old&&row[f.k]===old[f.k])continue;
-    const block=blocks.find(row[f.k]);if(!block||!block.active||!ownedDailyLocations().some(x=>x.id===block.id)){const e=new Error('Pilih blok GIS aktif yang sudah terverifikasi milik kebun.');e.status=400;throw e;}
+    const block=blocks.find(row[f.k]);if(!block||!block.active||!ownedDailyLocations().some(x=>x.id===block.id)){const e=new Error('Pilih blok GIS aktif yang tersedia pada peta.');e.status=400;throw e;}
   }
 }
 
