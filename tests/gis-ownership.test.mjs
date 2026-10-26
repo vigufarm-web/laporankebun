@@ -31,3 +31,16 @@ test('Daily partial owned blocks remain selectable with owned area only, zero ow
  assert.equal(locations()[0].gisAreaHa,1);
  db.close();
 });
+
+test('Daily GIS selection includes unverified mapped blocks without parcel overlap, excludes explicitly unowned and inactive blocks',()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE gis_layer(id INTEGER,nama TEXT,updated_at TEXT,geojson TEXT,field_nama TEXT);CREATE TABLE _blocks(id TEXT,geometry TEXT)');
+ const rows=[{id:'p1',nama:'P01',active:1,layer_id:2,luas_ha:1,ownership:'Belum diverifikasi'}, {id:'p4',nama:'P04',active:1,layer_id:2,luas_ha:2,ownership:'Belum diverifikasi'}, {id:'target',nama:'Target',active:1,layer_id:2,ownership:'Belum milik kebun'}, {id:'old',nama:'Old',active:0,layer_id:2,ownership:'Belum diverifikasi'}];
+ const features=rows.map(b=>({properties:{Nama_Blok:b.nama},geometry:rect(0,0)}));
+ db.prepare('INSERT INTO gis_layer VALUES(2,?,?,?,?)').run('Blok Tanam','v1',JSON.stringify({features}),'Nama_Blok');
+ const locations=createParcelLocations(db,{list:()=>rows},{includeGIS:true});
+ assert.deepEqual(locations().map(x=>x.nama),['P01','P04']);
+ assert.equal(locations()[1].luas_ha,2);
+ assert.equal(rows[0].ownership,'Belum diverifikasi');
+ assert.equal(createParcelLocations(db,{list:()=>rows})().length,0);
+ db.close();
+});
