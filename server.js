@@ -717,7 +717,7 @@ async function api(req, res, url) {
   }
   const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods'].includes(parts[1])||isPublicDailyRead(url.pathname,m));
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
-  if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1]))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
+  if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1])&&!(parts[1]==='excel'&&editableExcelTables(user).length))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
 
   if(url.pathname==='/api/kebun-plan/reconcile'&&m==='POST'){
     if(!isAdmin(user))return send(res,403,{error:'Pembaruan target dan jadwal khusus admin.'});
@@ -1048,7 +1048,8 @@ async function api(req, res, url) {
   // --- Excel input
   if (parts[1] === 'excel') {
     // Excel per halaman: ?tables=iklim,lahan_blok&kom=Pisang&panel=Iklim → hanya sheet tabel itu (lahan_* hanya baris komoditas itu)
-    const panel = panelOf(url);
+    const panel = panelOf(url) || (!isAdmin(user) ? {tables:editableExcelTables(user),kom:null,label:'Data sesuai akses'} : null);
+    if(panel && !panel.tables.every(t=>canEdit(user,t)))return send(res,403,{error:'Akun Anda tidak punya izin mengakses sheet ini'});
     if (panel && !panel.tables.length) return send(res, 400, { error: 'Tabel tidak dikenal untuk Excel' });
     if (m === 'GET' && parts[2] === 'download') {
       const buf = Buffer.from(await (await makeWorkbook(panel)).xlsx.writeBuffer());
@@ -1056,7 +1057,7 @@ async function api(req, res, url) {
       res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${fname.replace(/[^w .-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fname)}` });
       return res.end(buf);
     }
-    if (m === 'GET' && parts[2] === 'status') return send(res, 200, excelStatus());
+    if (m === 'GET' && parts[2] === 'status') return send(res, 200, isAdmin(user)?excelStatus():{online:true,vercel:VERCEL,laporan:null,tables:editableExcelTables(user)});
     if (m === 'POST' && parts[2] === 'upload') {
       // upload satu halaman: cukup punya izin ubah tabel-tabel halaman itu; upload file lengkap: khusus admin
       const boleh = panel ? panel.tables.every((t) => canEdit(user, t)) : isAdmin(user);
@@ -1229,6 +1230,7 @@ const sortRows = (table, rows) => {
 const rowsOf = (t) => sortRows(t, db.prepare(`SELECT * FROM ${q(t)}`).all());
 const getSetting = (k) => db.prepare('SELECT v FROM _settings WHERE k=?').get(k)?.v;
 // ---- Excel per halaman
+const editableExcelTables = user => [...EXCEL_TABLES].filter(t=>canEdit(user,t));
 function panelOf(url) {
   const tl = url.searchParams.get('tables'); if (!tl) return null;
   const tables = tl.split(',').filter((t) => EXCEL_TABLES.has(t));
@@ -1426,7 +1428,7 @@ async function apiRequest(req, res, url) {
   return serial(async () => {
     const adminRead=/^\/api\/(?:t|tables|records|excel|blocks|gis|kebun|land-prep|padi|nursery-summary|backup|backups|users|log)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/excel/status';
     const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup'&&!isPublicDailyRead(url.pathname,req.method);
-    if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});if(adminRead&&!isAdmin(reader))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
+    if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});if(adminRead&&!isAdmin(reader)&&!(url.pathname.startsWith('/api/excel/')&&editableExcelTables(reader).length))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
     if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
     const hold = holdResponse(res);
