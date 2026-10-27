@@ -6,12 +6,18 @@ import {spawn} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {once} from 'node:events';
+import {createServer} from 'node:net';
 import ExcelJS from '../lib/exceljs.min.cjs';
 const root=path.resolve(import.meta.dirname,'..');
-const port=3210,base=`http://127.0.0.1:${port}`;
+
+// Tests may never inherit credentials or endpoints for a production data store.
+const isolatedEnv={...process.env,DATA_BACKEND:'local'};
+for(const key of Object.keys(isolatedEnv))if(/^(GITHUB_DATA_|TURSO_|LIBSQL_|BLOB_READ_WRITE_TOKEN|CRON_SECRET|VERCEL)/.test(key)||/^libsql:\/\//.test(isolatedEnv[key])||/^https:\/\/[^/]+\.turso\.io/.test(isolatedEnv[key]))delete isolatedEnv[key];
+
 test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {timeout:120000},async()=>{
+ const probe=createServer();await new Promise(resolve=>probe.listen(0,'127.0.0.1',resolve));const port=probe.address().port;await new Promise(resolve=>probe.close(resolve));const base=`http://127.0.0.1:${port}`;
  const dir=path.join(root,'work','tests-'+Date.now());fs.mkdirSync(dir,{recursive:true});
- let proc=spawn(process.execPath,['server.js'],{cwd:root,env:{...process.env,PORT:String(port),DATA_DIR:path.join(dir,'data'),EXCEL_FILE:path.join(dir,'input.xlsx')},stdio:['ignore','pipe','pipe']});let output='';proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b);let cookie='';
+ let proc=spawn(process.execPath,['server.js'],{cwd:root,env:{...isolatedEnv,PORT:String(port),DATA_DIR:path.join(dir,'data'),EXCEL_FILE:path.join(dir,'input.xlsx')},stdio:['ignore','pipe','pipe']});let output='';proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b);let cookie='';
  try{
   let ready=false;for(let i=0;i<240;i++){if(proc.exitCode!=null)throw Error(output);try{const r=await fetch(base+'/api/me');if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,250));}assert.ok(ready,'server starts: '+output);
   const request=async(p,method='GET',body)=>{const r=await fetch(base+p,{method,headers:{cookie,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return {status:r.status,body:await r.json()};};
@@ -47,8 +53,13 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(JSON.parse(r.body.hk_kegiatan)[0].hk,3);assert.ok(r.body.items.every(i=>i.hk_rencana===null));
   const groupReport={workflow_v2:true,tanggal:'2002-01-08',divisi:'Pisang',status:'Selesai',apel_hadir:2,hk_groups:[{key:'bud injection|stem',hk:2,manual:false}],items:[{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-1',realisasi:20},{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-2',realisasi:60}]};
   r=await request('/api/daily','POST',groupReport);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.tanggal,'2002-01-08');assert.deepEqual(r.body.items.map(i=>i.hk_realisasi),[.5,1.5]);assert.equal(JSON.parse(r.body.hk_kegiatan_rencana)[0].hk,3);
-  const groupedId=r.body.id;r=await request('/api/daily','POST',{...groupReport,id:groupedId});assert.equal(r.status,200);assert.equal(r.body.id,groupedId);
-  r=await request('/api/daily','POST',{...groupReport,hk_groups:[{key:'bud injection|stem',hk:-1}]});assert.equal(r.status,400);
+  const groupedId=r.body.id,firstGroupVersion=r.body.updated_at;
+  r=await request('/api/daily','POST',{...groupReport,id:groupedId,updated_at:firstGroupVersion});assert.equal(r.status,200);assert.equal(r.body.id,groupedId);const currentGroup=r.body;
+  r=await request('/api/daily','POST',{...groupReport,id:groupedId,updated_at:'2000-01-01T00:00:00.000Z',items:[{...groupReport.items[0],realisasi:999}]});assert.equal(r.status,409);
+  r=await request('/api/daily','POST',groupReport);assert.equal(r.status,409,'a new form cannot implicitly replace an existing report');
+  r=await request('/api/daily','POST',{...groupReport,id:9999999,updated_at:currentGroup.updated_at});assert.equal(r.status,404);
+  r=await request('/api/daily?from=2002-01-08&to=2002-01-08&divisi=Pisang');assert.deepEqual(r.body.find(x=>x.id===groupedId).items.map(x=>x.realisasi),[20,60],'rejected saves preserve the current report');
+  r=await request('/api/daily','POST',{...groupReport,id:groupedId,updated_at:currentGroup.updated_at,hk_groups:[{key:'bud injection|stem',hk:-1}]});assert.equal(r.status,400);
   // Existing historical locations remain editable, while new unowned locations stay blocked.
   r=await request('/api/daily','POST',{id:reportId,tanggal:report.tanggal,divisi:report.divisi,status:'Selesai',items:report.items});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].realisasi,500);
   r=await request('/api/daily','POST',{tanggal:'2026-10-26',divisi:'Pisang',status:'Draf',items:[{blok:'ANAK-1',aktivitas:'Belum ada hasil',satuan:'ha',hk_realisasi:1}]});assert.equal(r.status,200);assert.equal(r.body.items[0].realisasi,null);assert.equal(r.body.items[0].hasil_sdhi,null);assert.equal(r.body.items[0].target,null);
@@ -103,7 +114,7 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   const weeklyPDF=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(weeklyPDF.status,200);assert.ok(weeklyPDF.headers.get('content-disposition').includes('2026-10-19-2026-10-25'));assert.equal(Buffer.from(await weeklyPDF.arrayBuffer()).subarray(0,4).toString(),'%PDF');
   // A second start reruns migration against existing data without losing IDs or results.
   const exit=once(proc,'exit');proc.kill();await exit;
-  proc=spawn(process.execPath,['server.js'],{cwd:root,env:{...process.env,PORT:String(port),DATA_DIR:path.join(dir,'data'),EXCEL_FILE:path.join(dir,'input.xlsx')},stdio:['ignore','pipe','pipe']});proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b);
+  proc=spawn(process.execPath,['server.js'],{cwd:root,env:{...isolatedEnv,PORT:String(port),DATA_DIR:path.join(dir,'data'),EXCEL_FILE:path.join(dir,'input.xlsx')},stdio:['ignore','pipe','pipe']});proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b);
   let restarted=false;for(let i=0;i<240;i++){if(proc.exitCode!=null)throw Error(output);try{if((await fetch(base+'/api/me')).ok){restarted=true;break;}}catch{}await new Promise(r=>setTimeout(r,250));}assert.ok(restarted);
   r=await request('/api/blocks');assert.equal(r.body.find(x=>x.id===old.id).nama,'A01-REVISI');assert.equal(r.body.find(x=>x.id===old.id).active,0);
   r=await request('/api/daily?from=2026-10-24&to=2026-10-24');assert.equal(r.body.find(x=>x.id===reportId).items[0].realisasi,500);assert.equal(r.body.find(x=>x.id===reportId).items[0].block_name_snapshot,'A01');

@@ -1,3 +1,4 @@
+import {isRepeatedArea,isNurseryPopulation,isDryingWork} from './work-measures.js';
 import {activityKey} from './daily-catalog.js';
 export {activityKey};
 export function parseGroups(value){try{return Array.isArray(value)?value:JSON.parse(value||'[]');}catch{return [];}}
@@ -46,4 +47,15 @@ export function validatePlan(groups,locations){
  }
  if(items.length>200)throw new Error('Maksimal 200 baris blok/kegiatan per minggu.');
  return {items,hk_groups};
+}
+
+// Daily execution targets must not exhaust the same recurring area/population.
+export function dailyWorkTarget({row,division,plan,previousItems=[]}){
+ const repeat=isRepeatedArea(division,row.aktivitas,row.satuan)||isNurseryPopulation(division,row.aktivitas,row.satuan);
+ const planned=plan?.items?.find(p=>row.plan_item_id!=null&&Number(p.id)===Number(row.plan_item_id))||plan?.items?.find(p=>p.blok===row.blok&&activityKey(p.aktivitas,p.satuan)===activityKey(row.aktivitas,row.satuan));
+ const raw=planned?.target??row.target;if(raw==null||raw===''||!Number.isFinite(Number(raw))||isDryingWork(division,row.aktivitas))return {remaining:null,repeat};
+ const target=Number(raw);
+ if(repeat){const group=parseGroups(plan?.hk_kegiatan).find(g=>g.key===activityKey(row.aktivitas,row.satuan)),times=Math.max(1,Number(group?.times)||1);return {remaining:Math.max(0,planned?target/times:target),repeat};}
+ const prior=previousItems.filter(p=>p.blok===row.blok&&activityKey(p.aktivitas,p.satuan)===activityKey(row.aktivitas,row.satuan)).reduce((s,p)=>s+Number(p.realisasi||0),0);
+ return {remaining:Math.max(0,target-prior),repeat};
 }
