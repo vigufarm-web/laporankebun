@@ -1,4 +1,4 @@
-import {renderYearPlan} from './year-plan.js?v=banana-detail-20261027';
+import {renderYearPlan} from './year-plan.js?v=planned-three-months-20261027';
 import {progressMarkup} from './progress-matrix.js';
 export async function renderProgressView(host,A,kom='pisang'){
  host.classList.add('summary-page');host.innerHTML=`<div class="sum-hero"><div><p class="sum-eyebrow">PERKEMBANGAN TANAM</p><h1>Progres ${kom==='padi'?'padi':'pisang'} per blok</h1><p>Realisasi kumulatif mengikuti luas blok GIS.</p></div>${A.me()?'<a class="btn" href="/daily">Input Daily</a>':'<a class="btn" href="/daily">Lihat Daily & foto</a>'}</div><div id="progressPlanSummary"></div><section class="sum-panel"><div class="sum-section-head"><h2>Progres per blok</h2><label>Cari blok<input type="search" id="progressSearch"></label></div><p id="progressMeta" class="muted">Memuat…</p><div id="progressMatrix"></div></section>`;
