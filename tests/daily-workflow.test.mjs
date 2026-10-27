@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
-import {allocateHK,groupWork,prepareActual,validatePlan,activityKey} from '../public/js/daily-work.js';
+import {allocateHK,groupWork,prepareActual,validatePlan,activityKey,dailyWorkTarget} from '../public/js/daily-work.js';
 import {checkWeeklyWorkflow,checkActualWorkflow,reallocateEffectiveHK} from '../lib/daily-workflow.js';
 import {isoWeek,weekMonday} from '../public/js/weekly-work-form.js';
 const item=(blok,realisasi,satuan='ha')=>({blok,aktivitas:'Herbisida spray',satuan,realisasi,selected:true});
@@ -37,4 +37,15 @@ test('week picker maps ISO year boundaries and HK-only activities do not invent 
  const g={key:activityKey('Pengawasan','HK'),aktivitas:'Pengawasan',satuan:'HK',hk:2,manual:false,rows:[{blok:'A',selected:true,target:null,realisasi:'',hk_realisasi:''}]};
  const p=validatePlan([g],[{nama:'A',luas_ha:1}]);assert.equal(p.items[0].target,null);
  const r=prepareActual([g],{complete:true});assert.equal(r.items[0].realisasi,null);assert.equal(r.items[0].hk_realisasi,2);
+});
+
+test('recurring daily targets survive editing on later dates without consuming the same area',()=>{
+ const row={id:9,plan_item_id:1,blok:'P01',aktivitas:'Irigasi tanaman & usir burung',satuan:'ha',target:1},plan={items:[{...row,id:1,target:5}],hk_kegiatan:JSON.stringify([{key:activityKey(row.aktivitas,'ha'),times:5}])};
+ assert.deepEqual(dailyWorkTarget({row,division:'Padi',plan,previousItems:[{...row,realisasi:1},{...row,realisasi:1},{...row,realisasi:1}]}),{remaining:1,repeat:true});
+ assert.deepEqual(dailyWorkTarget({row,division:'Padi',previousItems:[{...row,realisasi:1}]}),{remaining:1,repeat:true});
+});
+test('new output still consumes weekly targets; drying and missing targets never auto-fill zero',()=>{
+ const row={blok:'D04',aktivitas:'Bud injection',satuan:'stem',target:100};assert.equal(dailyWorkTarget({row,division:'Pisang',previousItems:[{...row,realisasi:60}]}).remaining,40);
+ assert.equal(dailyWorkTarget({row:{...row,target:null},division:'Pisang'}).remaining,null);
+ assert.equal(dailyWorkTarget({row:{blok:'P01',aktivitas:'Jemur padi',satuan:'kg',target:108},division:'Padi'}).remaining,null);
 });

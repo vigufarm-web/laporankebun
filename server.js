@@ -962,6 +962,10 @@ async function api(req, res, url) {
       if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${divisi}` });
       let old = b.id ? db.prepare('SELECT * FROM daily_report WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_report WHERE tanggal=? AND divisi=?').get(b.tanggal, divisi);
       if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah laporan ini' });
+      if(b.workflow_v2){
+        if(b.id&&!old)return send(res,404,{error:'Laporan tidak ditemukan. Muat ulang sebelum menyimpan.'});
+        if(old&&(!b.id||old.tanggal!==b.tanggal||old.divisi!==divisi||!b.updated_at||b.updated_at!==old.updated_at))return send(res,409,{error:'Laporan tanggal ini sudah ada atau telah diperbarui. Muat ulang agar laporan terbaru tidak tertimpa.'});
+      }
       const previousItems = old ? db.prepare('SELECT * FROM daily_item WHERE report_id=?').all(old.id) : [];
       if(b.workflow_v2&&b.status==='Dikirim')b.status='Selesai';
       const activityGroups=b.workflow_v2?checkActualWorkflow(b,previousItems):null;
