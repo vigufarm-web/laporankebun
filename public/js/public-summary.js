@@ -3,7 +3,7 @@ import {cropLabel} from './crop-labels.js';
 import {progressMarkup} from './progress-matrix.js';
 import {climateChartMarkup} from './climate-chart.js';
 import {periodSummaryMarkup,harvestSummaryMarkup} from './period-summary.js';
-import {planSummaryMarkup} from './year-plan.js?v=padi-summary-20261027';
+import {planSummaryMarkup} from './year-plan.js?v=simple-plant-plan-20261027';
 import {renderPublicDaily} from './daily-public.js';
 const num=v=>Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2});
 const api={get:async url=>{const r=await fetch(url,{signal:AbortSignal.timeout(60000)}),d=await r.json();if(!r.ok)throw new Error(d.error||'Data belum dapat dimuat');return d;}};
