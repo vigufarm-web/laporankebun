@@ -24,6 +24,7 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   const initial=await request('/api/records/pisang_penjualan?limit=50');assert.equal(initial.status,401);
   const publicSettings=await request('/api/settings');assert.deepEqual(Object.keys(publicSettings.body),['nama']);assert.equal((await request('/api/log')).status,401);
   const kebun=await request('/api/kebun');assert.equal(kebun.status,401);const summary=await request('/api/kebun-summary');assert.equal(summary.status,200);assert.ok(!JSON.stringify(summary.body).includes('geojson'));assert.ok(!JSON.stringify(summary.body).includes('pembeli'));
+  const riceSummary=await request('/api/padi-summary');assert.equal(riceSummary.status,200);assert.ok(Math.abs(riceSummary.body.area-riceSummary.body.plantedHa-riceSummary.body.harvestedHa-riceSummary.body.otherHa)<1e-8);assert.ok(!JSON.stringify(riceSummary.body).includes('geojson'));
   const overview=await request('/api/overview?from=2026-10-01&to=2026-10-24');assert.equal(overview.status,200);assert.equal(overview.body.climate.observations>0,true);assert.ok(JSON.stringify(overview.body).length<80000,'small overview response');
   let r=await request('/api/setup','POST',{username:'test-admin',nama:'Integration test',password:crypto.randomUUID()});assert.equal(r.status,200);
   const beforeSales=await request('/api/t/pisang_penjualan');const salesIDs=beforeSales.body.map(x=>x.id);
