@@ -550,7 +550,7 @@ async function renderExcel(main) {
       <div class="actions"><a class="btn primary" href="/api/excel/download">⬇ Download Excel (data terbaru)</a></div></div>
     ${scopeNote}<div id="inputCrosscheck" class="card" style="margin-bottom:16px">Memuat ringkasan untuk crosscheck…</div><div class="cols-2">
       ${st.online ? `<div class="card"><h3>Isi lewat Excel (versi online)</h3>
-        <ol class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>Klik <b>Download Excel</b> — isinya data terbaru.</li><li>Ubah / tambah baris, lalu simpan.</li><li>Upload file itu di kotak sebelah sesuai akses akun → periksa ringkasan perubahan → <b>Terapkan</b>.</li></ol>
+        <ol class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>Klik <b>Download Excel</b> — isinya data terbaru.</li><li>Isi sel <b>kuning muda</b> saja. Luas blok mengikuti GIS; hasil ha adalah pekerjaan pada tanggal itu. Jadwal, ID dan nilai otomatis tidak perlu diisi ulang.</li><li>Data yang sudah masuk Daily Report tidak diinput lagi. Ubah / tambah baris manual, lalu simpan.</li><li>Upload file itu di kotak sebelah sesuai akses akun → periksa ringkasan perubahan → <b>Terapkan</b>.</li></ol>
       </div>` : `<div class="card"><h3>File Excel input</h3>
         <div class="small muted">Lokasi file (di komputer server):</div>
         <div style="font-family:monospace;font-size:12.5px;background:#f3f6f4;padding:8px;border-radius:6px;margin:4px 0 10px;word-break:break-all">${esc(st.file)}</div>

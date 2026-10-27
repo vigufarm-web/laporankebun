@@ -1,3 +1,4 @@
+import {prepareExcelInput,referenceSheets,capExcelLandChanges} from './lib/excel-input-policy.js';
 import {padiSummary} from './lib/padi-summary.js';
 import {inputRows,inputSummary} from './lib/input-summary.js';
 import {isRepeatedArea,isDryingWork,isNurseryPopulation,unresolvedCoverage,cappedCoverage} from './lib/coverage-area.js';
@@ -1256,7 +1257,7 @@ function scopeOf(table, kom) {
 }
 const makeWorkbook = (panel = null) => {
   const SHEETS = panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS;
-  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)); return f ? rows.filter(f) : rows; };
+  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)).map(r=>{const field=({pisang_blok:'nama_blok',padi_petak:'nama_petak',lahan_blok:'blok'})[t],b=field&&blocks.find(r[field]);return b?{...r,luas_ha:b.luas_ha,...(t==='lahan_blok'?{kepemilikan:b.ownership,peruntukan:b.divisi,target_tanam:rowsOf('lahan_target').find(x=>util.key(x.blok)===util.key(b.nama))?.bulan||r.target_tanam}:{} )}:r;}); return f ? rows.filter(f) : rows; };
   const refNames = (t) => (TABLES[t]?.display ? db.prepare(`SELECT * FROM ${q(t)}`).all().map((r) => displayOf(t, r)) : []);
   return buildWorkbook({ TABLES, SHEETS, rowsOf: scoped, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA', panel: panel?.label, refNames }).then(wb=>{
     const data=inputSummary({tables:SHEETS.map(s=>s.table),rowsOf:scoped,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())});
@@ -1325,11 +1326,15 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
     const t=p.cfg.table,all=db.prepare('SELECT * FROM '+q(t)).all(),scope=panel?scopeOf(t,panel.kom):null,cur=scope?all.filter(scope):all;
     const s={sheet:p.cfg.sheet,tabel:TABLES[t].title,baris:p.rows.length,sebelum:cur.length,tambah:0,ubah:0,hapus:0,status:'tidak berubah',koreksi:p.koreksi||[],peringatan:p.peringatan||[],errors:p.errors.slice(0,30),jumlahError:p.errors.length,layoutBeda:!!p.layoutBeda};rep.sheets.push(s);
     if(!p.found){s.status='sheet tidak ada — dilewati';continue;}
+    if(referenceSheets.has(t)){s.status='referensi otomatis — tidak diinput ulang';s.errors=[];s.jumlahError=0;continue;}
     if(p.kosong){s.status='permintaan kosong diabaikan — data lama dipertahankan';continue;}
     const ops=[],seenIds=new Set(),existing=new Map();
     for(const row of cur){const sigKey=sig(t,p.cfg,row);existing.set(sigKey,(existing.get(sigKey)||0)+1);}
     for(const input of p.rows) {
-      const row=blocks.canonical(t,input),cleaned=clean(t,row),id=Number(input._record_id)||null;
+      const id=Number(input._record_id)||null,previous=id?cur.find(x=>x.id===id):null;
+      if(t==='lahan_harian'&&previous?.daily_report_id){s.peringatan.push('Baris '+input.__baris+': mengikuti Daily Report; revisi melalui Daily, tidak diinput ulang.');continue;}
+      let row;try{row=blocks.canonical(t,prepareExcelInput(t,input,previous,{findBlock:blocks.find,targets:rowsOf('lahan_target')}));}catch(e){s.errors.push({row:input.__baris,msg:e.message});continue;}
+      const cleaned=clean(t,TABLES[t].lengkapi?TABLES[t].lengkapi(row,previous):row);
       if(id) {
         const old=cur.find(x=>x.id===id);
         if(!old||seenIds.has(id)){s.errors.push({row:input.__baris,msg:'ID baris tidak ditemukan dalam halaman ini atau digunakan dua kali.'});continue;}seenIds.add(id);
@@ -1345,6 +1350,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
         ops.push({row:cleaned});s.tambah++;
       }
     }
+    if(t==='lahan_harian'&&ops.length&&!s.errors.length)try{s.peringatan.push(...capExcelLandChanges(ops,all,blocks.find));}catch(e){s.errors.push({row:0,msg:e.message});}
     s.jumlahError=s.errors.length;
     if(s.jumlahError){s.status='ada kesalahan — tidak diproses';s.tambah=s.ubah=0;continue;}
     if(ops.length){s.status=preview?'akan diperbarui':'diperbarui';todo.push({t,ops});}
