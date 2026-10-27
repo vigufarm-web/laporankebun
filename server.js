@@ -1,3 +1,4 @@
+import {padiSummary} from './lib/padi-summary.js';
 import {inputRows,inputSummary} from './lib/input-summary.js';
 import {isRepeatedArea,isDryingWork,isNurseryPopulation,unresolvedCoverage,cappedCoverage} from './lib/coverage-area.js';
 import {activityKey,parseGroups} from './public/js/daily-work.js';
@@ -716,7 +717,7 @@ async function api(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Length': buf.length });
     return res.end(buf);
   }
-  const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods'].includes(parts[1])||isPublicDailyRead(url.pathname,m));
+  const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods','padi-summary'].includes(parts[1])||isPublicDailyRead(url.pathname,m));
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
   if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1])&&!(parts[1]==='excel'&&editableExcelTables(user).length))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
 
@@ -787,6 +788,7 @@ async function api(req, res, url) {
   }
   if(url.pathname==='/api/kebun-plan/map'&&m==='GET')return send(res,200,ownedPlanningMap());
   if(parts[1]==='kebun-plan'&&m==='GET')return send(res,200,kebunPlan(db,ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
+  if(parts[1]==='padi-summary'&&m==='GET')return send(res,200,padiSummary(db,ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10)));
   if(parts[1]==='summary-periods'&&m==='GET'){const periods=summaryPeriods(new Date(Date.now()+7*3600e3).toISOString().slice(0,10));const values=cloud?await cloudOverviewPeriods(cloud,periods):periods.map(p=>({...p,...reads.overview({...p,blocks:verifiedOverviewBlocks()})}));return send(res,200,{periods:values.map(d=>({key:d.key,label:d.label,from:d.from,to:d.to,pisang:d.pisang,padi:d.padi,infra:d.infra,dailyTotals:d.dailyTotals,climate:{rain:d.climate.rain,observations:d.climate.observations,rainDays:d.climate.rainDays,...(d.key==='month'?{days:d.climate.days}:{})}}))});}
   if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,url.searchParams.get('kom')==='Padi'?ownedDailyLocations():ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10),url.searchParams.get('kom')==='Padi'?'Padi':'Pisang'));
   if(parts[1]==='kebun'&&m==='GET'){
@@ -1412,6 +1414,7 @@ function readScope(req,url){
   if(p==='/api/tables')return authTables;
   const raw=p.match(/^\/api\/t\/([a-z_]+)$/);if(raw&&TABLES[raw[1]])return [...authTables,raw[1]];
   const page=p.match(/^\/api\/records\/([a-z_]+)$/);if(page&&TABLES[page[1]]){const dependencies={pisang_blok:['pisang_panen_pkk'],padi_tanam:['padi_panen'],padi_panen:['padi_petak'],infra_proyek:['infra_progress'],lahan_blok:['lahan_harian','lahan_aktivitas']};return [...authTables,page[1],...(dependencies[page[1]]||[])];}
+  if(p==='/api/padi-summary')return [...authTables,'padi_petak','padi_tanam','padi_panen','padi_giling','padi_benih','_blocks','gis_layer'];
   if(p==='/api/nursery-summary')return [...authTables,'pisang_bibit'];
   if(/^\/api\/blocks\/[^/]+\/history$/.test(p))return [...authTables,'_blocks','_block_links',...Object.keys(TABLES).filter(t=>!['gis_layer','daily_photo','iklim'].includes(t))];
   if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];

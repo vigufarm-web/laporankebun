@@ -224,7 +224,7 @@ async function route() {
   const publicView=(!isAdmin(me)&&!isDailyOnly()&&!safePublic&&!excelAuthorized)||!r;
   if(publicView){
     $('#note').hidden=true;renderSidebar({},r);if(!isAdmin(me))$('#sidebar').innerHTML='<a class="nav-item active" href="#/">Ringkasan kebun</a>';
-    return import('./public-summary.js?v=planned-three-months-20261027').then(m=>m.renderPublicSummary($('#main'),App));
+    return import('./public-summary.js?v=padi-summary-20261027').then(m=>m.renderPublicSummary($('#main'),App));
   }
   $('#main').classList.remove('summary-page');
   if(excelAuthorized){renderSidebar({},r);$('#note').hidden=true;return renderExcel($('#main'));}

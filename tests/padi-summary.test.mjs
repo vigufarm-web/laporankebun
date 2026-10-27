@@ -1,0 +1,13 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {TABLES} from '../public/js/schema.js';import {padiSummary} from '../lib/padi-summary.js';import {padiSummaryMarkup} from '../public/js/padi-summary.js';
+test('padi summary separates harvested from standing fields, notes override stale status and old harvest does not close replanted season',()=>{
+ const db=new DatabaseSync(':memory:');for(const [t,T] of Object.entries(TABLES))db.exec(`CREATE TABLE ${t}(id INTEGER PRIMARY KEY,${T.f.filter(f=>f.t!=='calc').map(f=>f.k+' '+(['num','money','int'].includes(f.t)?'REAL':'TEXT')).join(',')})`);
+ db.exec(`INSERT INTO padi_petak(nama_petak,luas_ha,status,keterangan) VALUES('P01',9,'Sudah Tanam','Status di peta (10 Okt 2026): Sudah Panen'),('P02',2,'Sudah Tanam','Status di peta (10 Okt 2026): Olah Lahan'),('P03',3,'Sudah Tanam',''),('P04',4,'Sudah Panen','Status di peta (10 Agu 2026): Sudah Panen'),('P05',5,'Sudah Tanam','Belum panen');
+ INSERT INTO padi_tanam(petak,musim,tahun,tgl_tanam,luas_tanam_ha,varietas) VALUES('P03','MT1',2026,'2026-06-01',3,'G9'),('P04','MT1',2026,'2026-04-01',4,'Ciherang'),('P04','MT2',2026,'2026-09-01',2,'Inpari 32'),('P04','MT3',2027,'2027-01-01',4,'Future');
+ INSERT INTO padi_panen(petak,tanggal,musim_tanam,gkg_kg,gkg_basis) VALUES('P03','2026-10-20','P03 · MT1 2026',100,'Aktual'),('P03','2026-10-21','P03 · MT1 2026',50,'Estimasi'),('P04','2026-08-01','P04 · MT1 2026',200,'Aktual'),('P05','2026-11-01',NULL,999,'Aktual');
+ INSERT INTO padi_benih(tanggal,varietas,jenis,qty_kg) VALUES('2026-09-01','Inpari 32','Masuk',50),('2026-09-02','inpari 32','Pakai',10),('2026-09-03','Inpari 32','Afkir',2),('2026-11-01','Inpari 32','Masuk',999);
+ INSERT INTO padi_giling(tanggal,beras_kg,gabah_kg) VALUES('2026-10-23',80,150);`);
+ const locations=[1,2,3,4,5].map(i=>({nama:'P0'+i,divisi:'Padi',luas_ha:i}));locations.push({nama:'BANANA',divisi:'Pisang',luas_ha:90});
+ const before=db.prepare('SELECT * FROM padi_petak').all(),d=padiSummary(db,locations,'2026-10-27');
+ assert.equal(d.area,15);assert.equal(d.harvestedHa,4);assert.equal(d.plantedHa,7);assert.equal(d.otherHa,4);assert.equal(d.area,d.plantedHa+d.harvestedHa+d.otherHa);assert.equal(d.blocks[1].status,'Olah Lahan');assert.equal(d.blocks[3].variety,'Inpari 32');assert.equal(d.blocks[3].plantedHa,2);assert.equal(d.blocks[3].harvestedHa,0);assert.equal(d.blocks[4].status,'Sudah Tanam');
+ assert.deepEqual(d.months[0],{month:'2026-10',gkg:150,estimated:50,rice:80,milledGabah:150});assert.equal(d.seeds.varieties.length,1);assert.equal(d.seeds.varieties[0].balance,38);assert.deepEqual(db.prepare('SELECT * FROM padi_petak').all(),before);assert.match(padiSummaryMarkup(d),/Masih tertanam/);db.close();
+});
