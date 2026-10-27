@@ -1416,7 +1416,7 @@ function readScope(req,url){
   if(/^\/api\/blocks\/[^/]+\/history$/.test(p))return [...authTables,'_blocks','_block_links',...Object.keys(TABLES).filter(t=>!['gis_layer','daily_photo','iklim'].includes(t))];
   if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/summary-periods')return authTables;
-  if(p==='/api/kebun-plan')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
+  if(p==='/api/kebun-plan')return [...authTables,...land,'pisang_bibit','pisang_box','pisang_estimasi','_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/kebun-plan/map')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/overview')return authTables;
   if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
