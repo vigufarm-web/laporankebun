@@ -1,3 +1,4 @@
+import {inputRows,inputSummary} from './lib/input-summary.js';
 import {isRepeatedArea,isDryingWork,isNurseryPopulation,unresolvedCoverage,cappedCoverage} from './lib/coverage-area.js';
 import {activityKey,parseGroups} from './public/js/daily-work.js';
 import {checkWeeklyWorkflow,checkActualWorkflow,reallocateEffectiveHK} from './lib/daily-workflow.js';
@@ -1051,6 +1052,7 @@ async function api(req, res, url) {
     const panel = panelOf(url) || (!isAdmin(user) ? {tables:editableExcelTables(user),kom:null,label:'Data sesuai akses'} : null);
     if(panel && !panel.tables.every(t=>canEdit(user,t)))return send(res,403,{error:'Akun Anda tidak punya izin mengakses sheet ini'});
     if (panel && !panel.tables.length) return send(res, 400, { error: 'Tabel tidak dikenal untuk Excel' });
+    if(m==='GET'&&parts[2]==='summary')return send(res,200,inputSummary({tables:panel?panel.tables:[...EXCEL_TABLES],rowsOf,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())}));
     if (m === 'GET' && parts[2] === 'download') {
       const buf = Buffer.from(await (await makeWorkbook(panel)).xlsx.writeBuffer());
       const fname = panel ? `Excel ${panel.label} ${now().slice(0, 10)}.xlsx` : path.basename(EXCEL_FILE);
@@ -1252,9 +1254,15 @@ function scopeOf(table, kom) {
 }
 const makeWorkbook = (panel = null) => {
   const SHEETS = panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS;
-  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = rowsOf(t); return f ? rows.filter(f) : rows; };
+  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)); return f ? rows.filter(f) : rows; };
   const refNames = (t) => (TABLES[t]?.display ? db.prepare(`SELECT * FROM ${q(t)}`).all().map((r) => displayOf(t, r)) : []);
-  return buildWorkbook({ TABLES, SHEETS, rowsOf: scoped, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA', panel: panel?.label, refNames });
+  return buildWorkbook({ TABLES, SHEETS, rowsOf: scoped, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA', panel: panel?.label, refNames }).then(wb=>{
+    const data=inputSummary({tables:SHEETS.map(s=>s.table),rowsOf:scoped,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())});
+    const ws=wb.addWorksheet('Ringkasan Input',{views:[{state:'frozen',ySplit:1}]});
+    ws.addRow(['Data','Periode','Baris','SJ unik (tanggal + no.)','Nilai baris (Rp)','Box','Berat (kg)']);
+    for(const t of data.tables)for(const p of [...t.periods,...t.months.map(m=>({...m,label:m.month}))])ws.addRow([t.title,p.label,p.rows,t.sales?p.documents:null,t.sales?p.amount:null,t.table==='pisang_penjualan'?p.box:null,t.sales?p.kg:null]);
+    ws.columns.forEach((c,i)=>{c.width=i===0?32:i===1?20:20;if(i>=2)c.numFmt=i<=3?'#,##0':'#,##0.00';});ws.getRow(1).font={bold:true};return wb;
+  });
 };
 const excelLocked = () => fs.existsSync(path.join(path.dirname(EXCEL_FILE), '~$' + path.basename(EXCEL_FILE)));
 function excelStatus() {

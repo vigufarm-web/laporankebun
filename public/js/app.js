@@ -548,7 +548,7 @@ async function renderExcel(main) {
   main.innerHTML = `<div class="page-head"><div><h1>📥 Input Excel</h1>
       <p class="desc">${st.online ? 'Isi data lewat Excel: download file berisi data terbaru, ubah/tambah baris, lalu upload kembali. Baris lama yang tidak ada di file tetap disimpan.' : 'Isi data lewat Excel: ubah, tambah, atau hapus baris di file Excel lalu <b>simpan</b> — aplikasi otomatis ikut ter-update dalam beberapa detik. Perubahan lewat aplikasi juga otomatis ditulis ke file Excel.'}</p></div>
       <div class="actions"><a class="btn primary" href="/api/excel/download">⬇ Download Excel (data terbaru)</a></div></div>
-    ${scopeNote}<div class="cols-2">
+    ${scopeNote}<div id="inputCrosscheck" class="card" style="margin-bottom:16px">Memuat ringkasan untuk crosscheck…</div><div class="cols-2">
       ${st.online ? `<div class="card"><h3>Isi lewat Excel (versi online)</h3>
         <ol class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>Klik <b>Download Excel</b> — isinya data terbaru.</li><li>Ubah / tambah baris, lalu simpan.</li><li>Upload file itu di kotak sebelah sesuai akses akun → periksa ringkasan perubahan → <b>Terapkan</b>.</li></ol>
       </div>` : `<div class="card"><h3>File Excel input</h3>
@@ -567,6 +567,7 @@ async function renderExcel(main) {
       </div>
     </div>
     <div class="card" style="margin-top:14px"><h3>Hasil sinkron terakhir ${rep?.waktu ? `· ${new Date(rep.waktu).toLocaleString('id-ID')} · ${esc(rep.oleh || '')}` : ''}</h3>${excelReportTable(rep)}</div>`;
+  import('./input-summary-view.js').then(m=>m.renderInputSummary($('#inputCrosscheck'),App));
   const f = $('#xF');
   if (f) f.onchange = async () => {
     const file = f.files[0]; if (!file) return;

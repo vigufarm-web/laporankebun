@@ -112,20 +112,24 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   response=await fetch(base+'/api/reports/daily.pdf');assert.equal(response.status,401);
   cookie=adminCookie;
   const weeklyPDF=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(weeklyPDF.status,200);assert.ok(weeklyPDF.headers.get('content-disposition').includes('2026-10-19-2026-10-25'));assert.equal(Buffer.from(await weeklyPDF.arrayBuffer()).subarray(0,4).toString(),'%PDF');
+  r=await request('/api/t/padi_penjualan','POST',{tanggal:'2026-10-22',pembeli:'PH UJI',tipe:'Mutasi Internal',jenis:'GKG',berat_kg:123.45});assert.equal(r.status,200);const hiddenRiceId=r.body.id;
   // Assigned input roles can import only their sheets, without becoming admins.
   const salesPass=crypto.randomUUID();r=await request('/api/users','POST',{username:'sales-role-test',nama:'Sales role test',password:salesPass,peran:['penjualan']});assert.equal(r.status,200);
   r=await request('/api/login','POST',{username:'sales-role-test',password:salesPass});assert.equal(r.status,200);
   r=await request('/api/excel/status');assert.equal(r.status,200);assert.deepEqual(r.body.tables.sort(),['padi_penjualan','pisang_penjualan']);assert.equal(r.body.laporan,null);assert.equal(r.body.file,undefined);
   let roleDownload=await fetch(base+'/api/excel/download',{headers:{cookie}});assert.equal(roleDownload.status,200);
   const roleBook=new ExcelJS.Workbook();await roleBook.xlsx.load(Buffer.from(await roleDownload.arrayBuffer()));
-  assert.deepEqual(roleBook.worksheets.filter(w=>!['Petunjuk','_daftar'].includes(w.name)).map(w=>w.name).sort(),['Padi - Penjualan Beras','Pisang - Penjualan']);
+  assert.deepEqual(roleBook.worksheets.filter(w=>!['Petunjuk','_daftar','Ringkasan Input'].includes(w.name)).map(w=>w.name).sort(),['Padi - Penjualan Beras','Pisang - Penjualan']);
   assert.equal((await fetch(base+'/api/excel/download?tables=iklim',{headers:{cookie}})).status,403);
   assert.equal((await fetch(base+'/api/excel/upload?tables=pisang_penjualan,iklim',{method:'POST',headers:{cookie},body:Buffer.from(await roleBook.xlsx.writeBuffer())})).status,403);
+  assert.ok(roleBook.getWorksheet('Ringkasan Input'));
+  const riceSheet=roleBook.getWorksheet('Padi - Penjualan Beras');assert.ok(!riceSheet.getColumn(1).values.includes(hiddenRiceId),'process transfer hidden from sales workbook');
+  const inputStats=await request('/api/excel/summary');assert.equal(inputStats.status,200);assert.deepEqual(inputStats.body.tables.map(t=>t.table).sort(),['padi_penjualan','pisang_penjualan']);
   const roleSheet=roleBook.getWorksheet('Pisang - Penjualan');roleSheet.getCell(2,amountColumn).value=12346;
   const roleBytes=Buffer.from(await roleBook.xlsx.writeBuffer());
   for(const preview of [true,false]){const rr=await fetch(base+'/api/excel/upload'+(preview?'?preview=1':''),{method:'POST',headers:{cookie,'Content-Type':'application/octet-stream'},body:roleBytes});assert.equal(rr.status,200,await rr.text());}
   assert.equal((await request('/api/t/iklim')).status,403);assert.equal((await request('/api/users')).status,403);
-  cookie=adminCookie;after=await request('/api/t/pisang_penjualan');assert.equal(after.body.find(x=>x.id===id).dibayar,12346);
+  cookie=adminCookie;assert.ok((await request('/api/t/padi_penjualan')).body.some(r=>r.id===hiddenRiceId&&r.berat_kg===123.45),'hidden transfer survives reupload');after=await request('/api/t/pisang_penjualan');assert.equal(after.body.find(x=>x.id===id).dibayar,12346);
   r=await request('/api/t/pisang_penjualan/'+id,'PUT',{...after.body.find(x=>x.id===id),dibayar:12345});assert.equal(r.status,200);
   // A second start reruns migration against existing data without losing IDs or results.
   const exit=once(proc,'exit');proc.kill();await exit;
