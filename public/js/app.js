@@ -141,7 +141,7 @@ async function gisLayers() {
 
 const emptyBox = (msg) => `<div class="empty"><div class="big">📭</div>${msg}</div>`;
 const fieldMode=/^\/daily\/?$/.test(location.pathname);
-const isDailyOnly = () => !!me && !isAdmin(me) && !(me.peran || []).includes('management') && (me.peran || []).some((r) => r.startsWith('daily_'));
+const isDailyOnly = () => !!me && !isAdmin(me) && !(me.peran || []).includes('management') && (me.peran || []).some((r) => r.startsWith('daily_')) && !EXCEL_SHEETS.some(s=>can(s.table));
 
 // ================================================================ sidebar & router
 const state = { tbl: {} };
@@ -150,6 +150,7 @@ let settings = {};
 function renderSidebar(info, route) {
   const nav = (href, ico, label, active, extra = '') => `<a class="nav-item ${active ? 'active' : ''}" href="#/${href}"><span class="ico">${ico}</span>${label}${extra}</a>`;
   if (isDailyOnly()||fieldMode) { $('#sidebar').innerHTML = nav('daily', '📋', '<b>Input & Laporan Saya</b>', true); return; }
+  if(!isAdmin(me)&&EXCEL_SHEETS.some(s=>can(s.table))){$('#sidebar').innerHTML=nav('', '🏢', '<b>Ringkasan</b>',!route)+nav('excel','📥','Input Excel',route==='excel');return;}
   let h = nav('', '🏢', '<b>Ringkasan</b>', route === '');
   h += nav('blocks','▦','Blok & Riwayat GIS',route==='blocks');
   h += nav('hub/infra','🚜','Infra & Lahan',route==='hub/infra');
@@ -218,12 +219,15 @@ async function route() {
   charts.forEach((c) => c.destroy()); charts = [];
   $('#sidebar').classList.remove('open');
   document.body.classList.toggle('public-summary-mode',fieldMode||!isAdmin(me));
-  const publicView=(!isAdmin(me)&&!isDailyOnly()&&!safePublic)||!r;
+  const excelAuthorized=r==='excel'&&EXCEL_SHEETS.some(s=>can(s.table));
+  document.body.classList.toggle('public-summary-mode',fieldMode||(!isAdmin(me)&&!excelAuthorized));
+  const publicView=(!isAdmin(me)&&!isDailyOnly()&&!safePublic&&!excelAuthorized)||!r;
   if(publicView){
     $('#note').hidden=true;renderSidebar({},r);if(!isAdmin(me))$('#sidebar').innerHTML='<a class="nav-item active" href="#/">Ringkasan kebun</a>';
     return import('./public-summary.js').then(m=>m.renderPublicSummary($('#main'),App));
   }
   $('#main').classList.remove('summary-page');
+  if(excelAuthorized){renderSidebar({},r);$('#note').hidden=true;return renderExcel($('#main'));}
   if(r==='daily'){renderSidebar({},r);$('#note').hidden=true;if(!me)return import('./daily-public.js').then(m=>m.renderPublicDaily($('#main'),App));return renderDaily($('#main'),App).catch(e=>$('#main').innerHTML='<div class="card">'+esc(e.message)+'</div>');}
   if(r==='laporan'||r.startsWith('laporan/')){renderSidebar({},r);$('#note').hidden=true;return import('./weekly-owner.js').then(m=>m.renderWeeklyOwner($('#main'),App));}
   if(r==='pengaturan'){renderSidebar({},r);$('#note').hidden=true;return renderSettings($('#main'));}
@@ -540,12 +544,13 @@ function excelPanel(el, { tables, kom, label, onDone }) {
 async function renderExcel(main) {
   const st = await api.get('/api/excel/status');
   const rep = st.laporan;
+  const scopeNote=isAdmin(me)?'':`<p class="small">Sheet sesuai akses Anda: ${EXCEL_SHEETS.filter(s=>can(s.table)).map(s=>esc(s.sheet)).join(', ')}.</p>`;
   main.innerHTML = `<div class="page-head"><div><h1>📥 Input Excel</h1>
-      <p class="desc">${st.online ? 'Isi data lewat Excel: download file berisi data terbaru, ubah/tambah/hapus baris, lalu upload kembali.' : 'Isi data lewat Excel: ubah, tambah, atau hapus baris di file Excel lalu <b>simpan</b> — aplikasi otomatis ikut ter-update dalam beberapa detik. Perubahan lewat aplikasi juga otomatis ditulis ke file Excel.'}</p></div>
+      <p class="desc">${st.online ? 'Isi data lewat Excel: download file berisi data terbaru, ubah/tambah baris, lalu upload kembali. Baris lama yang tidak ada di file tetap disimpan.' : 'Isi data lewat Excel: ubah, tambah, atau hapus baris di file Excel lalu <b>simpan</b> — aplikasi otomatis ikut ter-update dalam beberapa detik. Perubahan lewat aplikasi juga otomatis ditulis ke file Excel.'}</p></div>
       <div class="actions"><a class="btn primary" href="/api/excel/download">⬇ Download Excel (data terbaru)</a></div></div>
-    <div class="cols-2">
+    ${scopeNote}<div class="cols-2">
       ${st.online ? `<div class="card"><h3>Isi lewat Excel (versi online)</h3>
-        <ol class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>Klik <b>Download Excel</b> — isinya data terbaru.</li><li>Ubah / tambah / hapus baris, lalu simpan.</li><li>Upload file itu di kotak sebelah (khusus admin) → periksa ringkasan perubahan → <b>Terapkan</b>.</li></ol>
+        <ol class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>Klik <b>Download Excel</b> — isinya data terbaru.</li><li>Ubah / tambah baris, lalu simpan.</li><li>Upload file itu di kotak sebelah sesuai akses akun → periksa ringkasan perubahan → <b>Terapkan</b>.</li></ol>
       </div>` : `<div class="card"><h3>File Excel input</h3>
         <div class="small muted">Lokasi file (di komputer server):</div>
         <div style="font-family:monospace;font-size:12.5px;background:#f3f6f4;padding:8px;border-radius:6px;margin:4px 0 10px;word-break:break-all">${esc(st.file)}</div>
@@ -554,11 +559,11 @@ async function renderExcel(main) {
           <tr><td>Sedang dibuka di Excel</td><td>${st.sedangDibuka ? '🟢 Ya' : 'Tidak'}</td></tr>
           ${st.stale ? `<tr><td colspan="2" style="color:var(--warn)">⚠ Ada perubahan dari aplikasi sejak ${new Date(st.staleSince).toLocaleString('id-ID')} yang belum masuk ke file (file sedang dibuka). Tutup Excel — file akan diperbarui otomatis. Kalau Excel disimpan sebelum itu, isi Excel yang dipakai.</td></tr>` : ''}
         </table>
-        <p class="small muted" style="margin:10px 0 0">Buka file itu langsung di komputer ini (dobel klik), isi, lalu Ctrl+S. Dari HP/komputer lain: download → isi → upload di sini (khusus admin).</p>
+        <p class="small muted" style="margin:10px 0 0">Buka file itu langsung di komputer ini (dobel klik), isi, lalu Ctrl+S. Dari HP/komputer lain: download → isi → upload di sini sesuai akses akun.</p>
       </div>`}
       <div class="card"><h3>Upload Excel</h3>
-        ${isAdmin(me) ? `<p class="small muted">Pilih file Excel hasil isian. Aplikasi menampilkan dulu apa yang akan berubah sebelum diterapkan.</p>
-          <input type="file" id="xF" accept=".xlsx"><div id="xP" style="margin-top:10px"></div>` : `<p class="small muted">${me ? 'Upload Excel khusus admin.' : 'Login sebagai admin untuk upload Excel.'}</p>`}
+        ${EXCEL_SHEETS.some(s=>can(s.table)) ? `<p class="small muted">Hanya sheet sesuai hak akun yang diproses. Pilih file Excel hasil isian. Aplikasi menampilkan dulu apa yang akan berubah sebelum diterapkan.</p>
+          <input type="file" id="xF" accept=".xlsx"><div id="xP" style="margin-top:10px"></div>` : `<p class="small muted">${me ? 'Akun ini belum memiliki hak input Excel.' : 'Login dengan akun yang memiliki hak input untuk upload Excel.'}</p>`}
       </div>
     </div>
     <div class="card" style="margin-top:14px"><h3>Hasil sinkron terakhir ${rep?.waktu ? `· ${new Date(rep.waktu).toLocaleString('id-ID')} · ${esc(rep.oleh || '')}` : ''}</h3>${excelReportTable(rep)}</div>`;
@@ -577,7 +582,7 @@ async function renderExcel(main) {
       $('#xP').innerHTML = `${excelReportTable(pv)}<div style="margin-top:10px;display:flex;gap:8px">${n ? `<button class="btn primary" id="xOk">Terapkan ${n} sheet</button>` : '<span class="small muted">Tidak ada perubahan untuk diterapkan.</span>'}<button class="btn" id="xNo">Batal</button></div>`;
       $('#xNo').onclick = () => { f.value = ''; $('#xP').innerHTML = ''; };
       $('#xOk')?.addEventListener('click', async () => {
-        try { await send(false); await syncAll(); toast('Data dari Excel sudah diterapkan'); renderExcel(main); } catch (e) { toast(e.message, true); }
+        try { await send(false); if(isAdmin(me))await syncAll(); toast('Data dari Excel sudah diterapkan'); renderExcel(main); } catch (e) { toast(e.message, true); }
       });
     } catch (e) { $('#xP').innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
   };
