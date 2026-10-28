@@ -124,6 +124,23 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   cookie=adminCookie;
   const weeklyPDF=await fetch(base+'/api/reports/owner.pdf?from=2026-10-01&to=2026-10-24',{headers:{cookie}});assert.equal(weeklyPDF.status,200);assert.ok(weeklyPDF.headers.get('content-disposition').includes('2026-10-19-2026-10-25'));assert.equal(Buffer.from(await weeklyPDF.arrayBuffer()).subarray(0,4).toString(),'%PDF');
   r=await request('/api/t/padi_penjualan','POST',{tanggal:'2026-10-22',pembeli:'PH UJI',tipe:'Mutasi Internal',jenis:'GKG',berat_kg:123.45});assert.equal(r.status,200);const hiddenRiceId=r.body.id;
+  // Full accountability workbook: admin and the "Unduh Laporan Lengkap" role only; that role cannot read or change raw data.
+  let full=await fetch(base+'/api/reports/lengkap.xlsx?from=2026-10-01&to=2026-10-31',{headers:{cookie}});assert.equal(full.status,200,full.status!==200?await full.text():'');
+  const fullBook=new ExcelJS.Workbook();await fullBook.xlsx.load(Buffer.from(await full.arrayBuffer()));
+  for(const name of ['Ringkasan','Daftar Lahan','Rencana Tanam Pisang','Kegiatan Harian','Penjualan Pisang','Panen Padi','Iklim Harian'])assert.ok(fullBook.getWorksheet(name),name);
+  const fullSummary=fullBook.getWorksheet('Ringkasan'),valueOf=label=>{let v;fullSummary.eachRow(row=>{if(row.getCell(1).value===label&&v===undefined)v=row.getCell(2).value;});return v;};
+  const sameOverview=(await request('/api/overview?from=2026-10-01&to=2026-10-31')).body,samePlan=(await request('/api/kebun-plan')).body,samePadi=(await request('/api/padi-summary')).body;
+  assert.equal(valueOf('Total luas blok Pisang'),samePlan.banana.area,'same planted-area basis as the dashboard');assert.equal(valueOf('Sudah tertanam'),samePlan.banana.plantedHa);assert.equal(valueOf('Total luas petak Padi'),samePadi.area);
+  assert.equal(valueOf('Penjualan'),sameOverview.pisang.sales.revenue,'same banana sales as the dashboard for the period');for(const [sheet,revenue] of [['Penjualan Pisang',sameOverview.pisang.sales.revenue],['Penjualan Padi',sameOverview.padi.sales.revenue]]){const ws=fullBook.getWorksheet(sheet),col=ws.getRow(5).values.indexOf('Total (Rp)');let row;ws.eachRow(x=>{if(x.getCell(1).value==='TOTAL PENJUALAN (sama dengan Ringkasan)')row=x;});assert.ok(row,sheet);assert.ok(Math.abs(row.getCell(col).value-revenue)<0.01,sheet+' detail total equals the summary');}
+  assert.equal((await fetch(base+'/api/reports/lengkap.xlsx?from=2026-10-31&to=2026-10-01',{headers:{cookie}})).status,400);
+  const reportPass=crypto.randomUUID();r=await request('/api/users','POST',{username:'laporan-test',nama:'Laporan test',password:reportPass,peran:['unduh_laporan']});assert.equal(r.status,200);
+  r=await request('/api/login','POST',{username:'laporan-test',password:reportPass});assert.equal(r.status,200);
+  full=await fetch(base+'/api/reports/lengkap.xlsx?from=2026-10-01&to=2026-10-31',{headers:{cookie}});assert.equal(full.status,200,'admin-granted download role');
+  assert.equal((await request('/api/t/pisang_penjualan')).status,403,'download role cannot read raw input');assert.equal((await request('/api/t/pisang_penjualan','POST',{tanggal:'2026-10-22'})).status,403,'download role cannot change data');
+  r=await request('/api/login','POST',{username:'mandor-test',password:mandorPass});assert.equal(r.status,200);
+  assert.equal((await fetch(base+'/api/reports/lengkap.xlsx',{headers:{cookie}})).status,403,'foremen cannot download the full report');
+  assert.equal((await fetch(base+'/api/reports/lengkap.xlsx')).status,401);
+  cookie=adminCookie;
   // Assigned input roles can import only their sheets, without becoming admins.
   const salesPass=crypto.randomUUID();r=await request('/api/users','POST',{username:'sales-role-test',nama:'Sales role test',password:salesPass,peran:['penjualan']});assert.equal(r.status,200);
   r=await request('/api/login','POST',{username:'sales-role-test',password:salesPass});assert.equal(r.status,200);

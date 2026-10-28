@@ -6,9 +6,20 @@ const fmt=v=>v==null?'Belum tercatat':Number(v).toLocaleString('id-ID',{maximumF
 const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Jakarta'});
 const titles={pisang:'Pisang',padi:'Padi',infra:'Infra & lahan',iklim:'Iklim'};
 const tile=(label,value,note='')=>`<div class="kpi"><div class="lbl">${label}</div><div class="val">${value}</div><div class="note">${note}</div></div>`;
+// Laporan pertanggungjawaban lengkap: tombol hanya untuk admin / peran "Unduh Laporan Lengkap" (server tetap memeriksa izin).
+function fullReportButton(main,A){
+  const button=main.querySelector('#hubFullReport'),status=main.querySelector('#hubStatus');
+  if(!button||!(A.isAdmin()||(A.me()?.peran||[]).includes('unduh_laporan')))return;button.hidden=false;
+  button.onclick=async()=>{const from=main.querySelector('#hubFrom').value,to=main.querySelector('#hubTo').value;if(!from||!to||from>to){status.textContent='Periksa periode Dari–Sampai.';return;}
+    button.disabled=true;status.textContent='Menyiapkan laporan lengkap…';
+    try{const r=await fetch('/api/reports/lengkap.xlsx?'+new URLSearchParams({from,to}));if(!r.ok){let e='Laporan belum dapat dibuat';try{e=(await r.json()).error||e;}catch{}throw new Error(e);}
+      const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download=`Laporan Lengkap Kebun ${from} sd ${to}.xlsx`;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);status.textContent='✓ Laporan lengkap diunduh.';}
+    catch(e){status.textContent=e.message;A.toast?.(e.message,true);}finally{button.disabled=false;}};
+}
 export async function renderHub(main,A,module='') {
-  const day=today();main.innerHTML=`<div class="page-head"><div><div class="crumb">VIGU FARM / OPERASIONAL</div><h1>${cropLabel(titles[module]||'Kondisi kebun, sekilas.')}</h1><p class="desc">Ringkasan periode terpilih. Buka detail saat diperlukan.</p></div><a class="btn primary" href="#/daily">＋ Laporan harian</a></div><div class="card dr-filter"><label>Dari <input id="hubFrom" type="date" value="${day.slice(0,7)}-01"></label><label>Sampai <input id="hubTo" type="date" value="${day}"></label><button class="btn" id="hubApply">Tampilkan</button><span id="hubStatus" role="status"></span></div><div class="actions" id="hubExports"></div><div id="hubResult"></div><div id="hubPeriodTotals"></div>`;
+  const day=today();main.innerHTML=`<div class="page-head"><div><div class="crumb">VIGU FARM / OPERASIONAL</div><h1>${cropLabel(titles[module]||'Kondisi kebun, sekilas.')}</h1><p class="desc">Ringkasan periode terpilih. Buka detail saat diperlukan.</p></div><div class="actions"><button class="btn" id="hubFullReport" type="button" hidden title="Laporan pertanggungjawaban lengkap untuk periode Dari–Sampai di bawah">📥 Unduh Laporan Lengkap (Excel)</button><a class="btn primary" href="#/daily">＋ Laporan harian</a></div></div><div class="card dr-filter"><label>Dari <input id="hubFrom" type="date" value="${day.slice(0,7)}-01"></label><label>Sampai <input id="hubTo" type="date" value="${day}"></label><button class="btn" id="hubApply">Tampilkan</button><span id="hubStatus" role="status"></span></div><div class="actions" id="hubExports"></div><div id="hubResult"></div><div id="hubPeriodTotals"></div>`;
   if(!A.me()){const input=main.querySelector('.page-head .btn.primary');if(input){input.textContent='Lihat Daily & foto';input.href='/daily';}}
+  fullReportButton(main,A);
   renderPeriodSummary(main.querySelector('#hubPeriodTotals'),A.api,module);
   let ticket=0;
   async function load(){const n=++ticket,from=main.querySelector('#hubFrom').value,to=main.querySelector('#hubTo').value;if(!from||!to||from>to){A.toast('Periksa rentang tanggal',true);return;}main.querySelector('#hubStatus').textContent='Memuat ringkasan…';try{

@@ -219,6 +219,8 @@ function log(aksi, tabel, id, data) {
 const DAILY_ROLE = { Pisang: 'daily_pisang', Padi: 'daily_padi', Infra: 'daily_infra' };
 const DAILY_DIVISI = Object.keys(DAILY_ROLE);
 const canDaily = (user, divisi) => !!user && (isAdmin(user) || (user.peran || []).includes(DAILY_ROLE[divisi]));
+// Laporan pertanggungjawaban lengkap: admin, atau akun yang dicentang admin dengan peran "Unduh Laporan Lengkap" (hanya unduh).
+const canDownloadFullReport = (user) => !!user && (isAdmin(user) || (user.peran || []).includes('unduh_laporan'));
 const dailyOnly = (user) => !!user && !isAdmin(user) && !(user.peran || []).includes('management') && (user.peran || []).some((r) => r.startsWith('daily_'));
 const dailyDivisions = (user) => DAILY_DIVISI.filter((d) => canDaily(user, d));
 const textLimit = (v, n = 500) => String(v ?? '').trim().slice(0, n) || null;
@@ -728,6 +730,23 @@ async function api(req, res, url) {
     return send(res,200,reconcilePlanting({db,tx,locations:ownedPlanningLocations(),insertRow,now,log},await readBody(req)));
   }
 
+  // Laporan pertanggungjawaban lengkap (Excel): khusus admin atau akun yang diberi peran "Unduh Laporan Lengkap" oleh admin.
+  if(parts[1]==='reports' && parts[2]==='lengkap.xlsx' && m==='GET') {
+    if(!canDownloadFullReport(user))return send(res,403,{error:'Unduh laporan lengkap hanya untuk admin atau akun yang diberi izin oleh admin.'});
+    const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today.slice(0,4)+'-01-01',to=url.searchParams.get('to')||today;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(from)||!/^\d{4}-\d{2}-\d{2}$/.test(to)||from>to)return send(res,400,{error:'Periksa periode laporan (tanggal awal tidak boleh setelah tanggal akhir).'});
+    const {accountabilityData,accountabilityWorkbook}=await import('./lib/accountability-report.js'),planning=ownedPlanningLocations(),cache=new Map();
+    const ctx={rows:t=>{if(!cache.has(t))cache.set(t,db.prepare(`SELECT * FROM ${q(t)}`).all());return cache.get(t);}};
+    const details=[['pisang_panen_pkk','Panen Pisang PKK'],['pisang_box','Packing Pisang'],['pisang_penjualan','Penjualan Pisang'],['padi_panen','Panen Padi'],['padi_giling','Giling Padi'],['padi_penjualan','Penjualan Padi'],['pisang_bibit','Bibit Pisang Datang']].map(([t,title])=>{
+      const T=TABLES[t],rows=db.prepare(`SELECT * FROM ${q(t)} WHERE ${q(T.date)} BETWEEN ? AND ? ORDER BY ${q(T.date)},id`).all(from,to);
+      for(const r of rows)for(const f of T.f.filter(f=>f.t==='calc'))try{r[f.k]=f.fn(r,ctx);}catch{r[f.k]=null;}
+      return {title,fields:T.f.filter(f=>!f.hide).map(f=>({k:f.k,l:f.l,t:f.t})),rows,...(t.endsWith('_penjualan')?{sale:isJual}:{})};
+    });
+    const activities=db.prepare("SELECT r.divisi,min(i.aktivitas) aktivitas,min(i.satuan) satuan,count(DISTINCT r.tanggal) hari,count(DISTINCT lower(trim(i.blok))) blok,sum(i.realisasi) hasil,sum(i.hk_realisasi) hk FROM daily_report r JOIN daily_item i ON i.report_id=r.id WHERE r.status='Selesai' AND r.tanggal BETWEEN ? AND ? GROUP BY r.divisi,lower(trim(i.aktivitas)),lower(trim(coalesce(i.satuan,''))) ORDER BY r.divisi,min(i.aktivitas)").all(from,to);
+    const data=accountabilityData({from,to,today,company:getSetting('nama')||'PT VIGU FARM INDONESIA',createdBy:user.nama||user.username,overview:reads.overview({from,to,today,blocks:verifiedOverviewBlocks()}),plan:kebunPlan(db,planning,today),padi:padiSummary(db,planning,today),locations:planning,landPisang:kebunSummary(db,planning,today,'Pisang'),landPadi:kebunSummary(db,ownedDailyLocations(),today,'Padi'),activities,details});
+    const buf=await accountabilityWorkbook(data),fname=`Laporan Lengkap Kebun ${from} sd ${to}.xlsx`;
+    return send(res,200,buf,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',{'Content-Disposition':`attachment; filename="${fname}"; filename*=UTF-8''${encodeURIComponent(fname)}`});
+  }
   if(parts[1]==='reports' && m==='GET') {
     if(!user)return send(res,401,{error:'Silakan login untuk mengunduh laporan.'});
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),divisi=url.searchParams.get('divisi'),reportId=Number(url.searchParams.get('reportId'))||null;let from=url.searchParams.get('from')||today,to=url.searchParams.get('to')||from;
