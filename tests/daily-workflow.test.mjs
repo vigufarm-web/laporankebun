@@ -78,3 +78,11 @@ test('routine targets are per execution and never exhausted; without a target th
  assert.deepEqual(dailyWorkTarget({row,division:'Infra',plan:p(null,'rutin'),previousItems:done}),{remaining:null,repeat:true});
  assert.deepEqual(dailyWorkTarget({row,division:'Infra',plan:p(20),previousItems:done}),{remaining:12,repeat:false},'old plans keep consuming the weekly target');
 });
+test('a plan that cannot be saved lists every missing input with its activity and block',()=>{
+ const locs=[{nama:'A',luas_ha:1},{nama:'B',luas_ha:1}],groups=[{aktivitas:'Pembuatan parit',satuan:'meter',mode:'manual',times:1,hk:'',jenis:'target',rows:[{blok:'A',selected:true,target:''},{blok:'B',selected:true,target:5}]},{aktivitas:'',satuan:'ha',rows:[]},{aktivitas:'Panen',satuan:'tandan',mode:'manual',times:1,hk:'x',rows:[{blok:'A',selected:false,target:''}]}];
+ let err;try{validatePlan(groups,locs,'Infra');}catch(e){err=e;}
+ assert.deepEqual(err.problems.map(p=>[p.group,p.field,p.blok??null]),[[0,'target','A'],[1,'aktivitas',null],[2,'blok',null]]);
+ assert.match(err.message,/^3 isian belum lengkap. Pertama: Pembuatan parit: isi target blok A./);
+ const actual=prepareActualError([{key:'a',aktivitas:'Bud injection',satuan:'stem',hk:1,rows:[{blok:'A',selected:true,realisasi:5}]},{key:'b',aktivitas:'Panen',satuan:'tandan',hk:'',rows:[{blok:'A',selected:true,realisasi:1}]}]);assert.equal(actual.group,1,'realisasi error points at the second activity card');assert.match(actual.message,/Panen/);
+});
+function prepareActualError(groups){try{prepareActual(groups,{complete:true});}catch(e){return e;}}

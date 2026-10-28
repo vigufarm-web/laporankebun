@@ -31,10 +31,11 @@ export function allocateHK(total,weights){
 }
 export function prepareActual(groups,{complete=false}={}){
  const items=[],hk_groups=[];
- for(let g of groups){const selected=g.rows.filter(r=>r.selected);if(!selected.length)continue;
+ // error.group = urutan kartu kegiatan yang bermasalah, agar form bisa menyorotnya.
+ for(const [gi,group] of groups.entries())try{let g=group;const selected=g.rows.filter(r=>r.selected);if(!selected.length)continue;
   if(g.satuan==='HK'&&selected.length===1&&g.hk!==''&&g.hk!=null){g={...g,manual:true};selected[0]={...selected[0],hk_realisasi:Number(g.hk),realisasi:null};}
-  if(complete&&(g.hk===''||g.hk==null))throw new Error('Isi total HK kegiatan '+g.aktivitas+'.');
-  if(complete&&!g.manual&&selected.some(r=>r.realisasi===''||r.realisasi==null))throw new Error('Isi hasil tiap blok yang dicentang: '+g.aktivitas+'.');
+  if(complete&&(g.hk===''||g.hk==null))throw Object.assign(new Error('Isi total HK kegiatan '+g.aktivitas+'.'),{field:'hk'});
+  if(complete&&!g.manual&&selected.some(r=>r.realisasi===''||r.realisasi==null))throw Object.assign(new Error('Isi hasil tiap blok yang dicentang: '+g.aktivitas+'.'),{field:'result'});
   let allocations;
   if(g.manual){if(!complete&&selected.some(r=>r.hk_realisasi===''||r.hk_realisasi==null)){allocations=selected.map(r=>r.hk_realisasi===''||r.hk_realisasi==null?null:Number(r.hk_realisasi));}
   else {if(selected.some(r=>r.hk_realisasi===''||r.hk_realisasi==null||Number(r.hk_realisasi)<0||!Number.isFinite(Number(r.hk_realisasi))))throw new Error('Isi HK manual tiap blok.');
@@ -43,23 +44,28 @@ export function prepareActual(groups,{complete=false}={}){
    allocations=selected.map(r=>Number(r.hk_realisasi));}
   }else allocations=!complete&&selected.some(r=>r.realisasi===''||r.realisasi==null)?selected.map(()=>null):allocateHK(g.hk,selected.map(r=>r.realisasi===''||r.realisasi==null?0:r.realisasi));
   selected.forEach((r,i)=>items.push({...r,hk_realisasi:allocations[i]}));hk_groups.push({key:g.key,hk:g.manual?(g.hk===''?'':Number(g.hk)):g.hk,manual:g.manual});
- }
+ }catch(e){e.group??=gi;throw e;}
  return {items,hk_groups};
 }
+// Semua kekurangan dikumpulkan sekaligus (error.problems = [{group, field, blok, message}]) agar form bisa menandai setiap isian yang kurang.
 export function validatePlan(groups,locations,division){
- const items=[],hk_groups=[],seen=new Set(),activityKeys=new Set();const locs=new Map(locations.map(l=>[l.nama,l]));
- for(const g of groups){const groupKey=activityKey(g.aktivitas,g.satuan);if(activityKeys.has(groupKey))throw new Error('Gabungkan blok dengan kegiatan/satuan yang sama dalam satu kartu.');activityKeys.add(groupKey);if(!String(g.aktivitas||'').trim())throw new Error('Pilih kegiatan.');
-  const rows=g.rows.filter(r=>r.selected);if(!rows.length)throw new Error('Centang blok untuk '+g.aktivitas+'.');
+ const items=[],hk_groups=[],seen=new Set(),activityKeys=new Set(),problems=[];const locs=new Map(locations.map(l=>[l.nama,l]));
+ const bad=(group,field,message,blok)=>{problems.push({group,field,message,...(blok!=null?{blok}:{})});};
+ groups.forEach((g,gi)=>{const name=String(g.aktivitas||'').trim();
+  if(!name)return bad(gi,'aktivitas',`Kegiatan ke-${gi+1}: pilih nama kegiatan.`);
+  const groupKey=activityKey(g.aktivitas,g.satuan);if(activityKeys.has(groupKey))return bad(gi,'aktivitas',`Gabungkan blok dengan kegiatan/satuan yang sama dalam satu kartu (${name}).`);activityKeys.add(groupKey);
+  const rows=g.rows.filter(r=>r.selected);if(!rows.length)return bad(gi,'blok',`${name}: centang minimal satu blok.`);
   const kind=workKind(division,g.aktivitas,g.satuan,g.jenis),blank=v=>v===''||v==null;
-  if(g.hk!==''&&(!Number.isFinite(Number(g.hk))||Number(g.hk)<0))throw new Error('HK rencana harus nol atau lebih.');
-  for(const row of rows){if(!locs.has(row.blok)&&!row.id)throw new Error('Pilih blok GIS aktif.');const key=activityKey(g.aktivitas,g.satuan)+'|'+row.blok;if(seen.has(key))throw new Error('Blok/kegiatan yang sama terpilih dua kali.');seen.add(key);
-   if(kind.targetRequired&&blank(row.target))throw new Error('Isi target per blok '+row.blok+'.');
-   if(g.satuan!=='HK'&&!blank(row.target)&&(!Number.isFinite(Number(row.target))||Number(row.target)<0))throw new Error('Target '+row.blok+' harus angka nol atau lebih.');
-   if(g.satuan==='ha'&&Number(row.target)>Number(locs.get(row.blok)?.luas_ha||0)*Number(g.times||1)+1e-6&&locs.has(row.blok)&&!(row.id&&Number(row.target)===Number(row._originalTarget)))throw new Error('Target ha melebihi luas GIS dan jumlah pelaksanaan '+row.blok+'.');
+  if(g.hk!==''&&g.hk!=null&&(!Number.isFinite(Number(g.hk))||Number(g.hk)<0))bad(gi,'hk',`${name}: total HK rencana harus angka nol atau lebih.`);
+  for(const row of rows){if(!locs.has(row.blok)&&!row.id){bad(gi,'blok',`${name}: blok ${row.blok} tidak ada di GIS aktif.`,row.blok);continue;}const key=groupKey+'|'+row.blok;if(seen.has(key)){bad(gi,'blok',`${name}: blok ${row.blok} terpilih dua kali.`,row.blok);continue;}seen.add(key);
+   if(kind.targetRequired&&blank(row.target)){bad(gi,'target',`${name}: isi target blok ${row.blok}.`,row.blok);continue;}
+   if(g.satuan!=='HK'&&!blank(row.target)&&(!Number.isFinite(Number(row.target))||Number(row.target)<0)){bad(gi,'target',`${name}: target blok ${row.blok} harus angka nol atau lebih.`,row.blok);continue;}
+   if(g.satuan==='ha'&&Number(row.target)>Number(locs.get(row.blok)?.luas_ha||0)*Number(g.times||1)+1e-6&&locs.has(row.blok)&&!(row.id&&Number(row.target)===Number(row._originalTarget))){bad(gi,'target',`${name}: target ha blok ${row.blok} melebihi luas GIS × jumlah pelaksanaan.`,row.blok);continue;}
    items.push({...row,aktivitas:g.aktivitas,satuan:g.satuan,target:g.satuan==='HK'||blank(row.target)?null:row.target,hk_rencana:null});
-  }hk_groups.push({key:activityKey(g.aktivitas,g.satuan),hk:g.hk,manual:false,mode:g.mode,times:g.times,...(kind.locked?{}:{jenis:kind.kind})});
- }
- if(items.length>200)throw new Error('Maksimal 200 baris blok/kegiatan per minggu.');
+  }hk_groups.push({key:groupKey,hk:g.hk,manual:false,mode:g.mode,times:g.times,...(kind.locked?{}:{jenis:kind.kind})});
+ });
+ if(items.length>200)problems.push({message:'Maksimal 200 baris blok/kegiatan per minggu.'});
+ if(problems.length){const e=new Error(problems.length===1?problems[0].message:`${problems.length} isian belum lengkap. Pertama: ${problems[0].message}`);e.problems=problems;throw e;}
  return {items,hk_groups};
 }
 
