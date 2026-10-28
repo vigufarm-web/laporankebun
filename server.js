@@ -882,6 +882,12 @@ async function api(req, res, url) {
       if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah rencana ${divisi}` });
       const old = b.id ? db.prepare('SELECT * FROM daily_week_plan WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(bounds.start, divisi);
       if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah rencana ini' });
+      if (b.workflow_v2) {
+        // Form baru tidak boleh diam-diam menimpa rencana minggu yang sama; revisi memakai id rencana tersebut.
+        if (b.id && !old) return send(res, 404, { error: 'Rencana tidak ditemukan. Muat ulang halaman.' });
+        const occupied = db.prepare('SELECT id, status FROM daily_week_plan WHERE week_start=? AND divisi=?').get(bounds.start, divisi);
+        if (occupied && (!b.id || Number(occupied.id) !== Number(b.id))) return send(res, 409, { error: `Rencana ${divisi} minggu ${bounds.start} sudah ada (${occupied.status}). Buka rencana itu dari daftar untuk melanjutkan atau merevisi.` });
+      }
       const weeklyGroups=b.workflow_v2?checkWeeklyWorkflow(b,ownedDailyLocations(),old?db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(old.id):[]):null;
       const status = b.status === 'Dikirim' ? 'Dikirim' : 'Draf', penginput = user.nama || user.username;
       let planId;

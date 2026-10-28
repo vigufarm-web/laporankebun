@@ -6,12 +6,18 @@ export function imageShareButton(container,A,options){
   container.innerHTML='<button class="btn primary" data-img>Bagikan gambar ke WhatsApp</button><small data-share-status role="status"></small><div class="dr-img-preview" data-img-preview hidden></div>';
   imageShare(container,A,options);
 }
+// options.buat (opsional) = async () => ({files, text}) untuk gambar selain realisasi (mis. rencana kerja harian)
 function imageShare(container,A,options){
-  const button=container.querySelector('[data-img]'),status=container.querySelector('[data-share-status]'),preview=container.querySelector('[data-img-preview]');
+  const button=container.querySelector('[data-img]'),status=container.querySelector('[data-share-status]'),preview=container.querySelector('[data-img-preview]'),label=button.textContent;
   let files=null,preparing=false,text='';
   const caption=()=>text||`DAILY REPORT ${options.divisi?options.divisi.toUpperCase()+' ':''}${options.from===options.to?options.from:options.from+' s.d. '+options.to}`;
   button.onclick=async()=>{
     if(preparing)return;
+    if(!files&&options.buat){preparing=true;button.disabled=true;status.textContent='Menyiapkan gambar…';try{
+      ({files,text}=await options.buat());
+      preview.innerHTML=files.map(f=>`<img alt="${f.name}" src="${URL.createObjectURL(f)}">`).join('');preview.hidden=false;
+      status.textContent=`${files.length} gambar siap. Klik sekali lagi untuk memilih WhatsApp.`;button.textContent='Kirim gambar · pilih WhatsApp';
+    }catch(e){files=null;status.textContent=e.message||'Gambar belum dapat dibuat';}finally{preparing=false;button.disabled=false;}return;}
     if(!files){preparing=true;button.disabled=true;status.textContent='Menyiapkan gambar…';try{
       const {dailyReportImages,dailyShareText}=await import('./report-image.js');
       let reports=options.reports?[...options.reports]:await A.api.get('/api/daily?'+new URLSearchParams(Object.fromEntries(Object.entries({from:options.from,to:options.to,divisi:options.divisi}).filter(([,v])=>v))));
@@ -25,6 +31,22 @@ function imageShare(container,A,options){
     if(navigator.canShare?.({files})&&navigator.share){try{await navigator.share({files,title:'Daily Report',text:caption()});status.textContent='Pilihan berbagi dibuka. Pilih WhatsApp lalu grup/kontak tujuan.';}catch(e){if(e.name!=='AbortError')status.textContent='Berbagi gambar tidak tersedia di perangkat ini. Gambar diunduh — kirim lewat WhatsApp secara manual.';if(e.name!=='AbortError')unduh(files);}}
     else {unduh(files);window.open('https://wa.me/?text='+encodeURIComponent(caption()),'_blank','noopener,noreferrer');status.textContent='Gambar diunduh dan WhatsApp dibuka. Lampirkan gambar yang diunduh (ikon klip/kamera) sebelum mengirim.';}
   };
+  return {reset(){files=null;text='';preview.hidden=true;preview.innerHTML='';status.textContent='';button.textContent=label;}};
+}
+// Rencana kerja harian dari Rencana Mingguan → gambar + teks WhatsApp (default: besok). Hanya divisi milik akun ini.
+export function planShare(container,A,divisions){
+  if(!container||!divisions?.length){if(container)container.innerHTML='';return;}
+  const besok=new Date(Date.now()+7*3600e3+864e5).toISOString().slice(0,10);
+  container.innerHTML=`<div class="plan-share"><b>Bagikan rencana kerja harian ke WhatsApp</b><label>Tanggal <input type="date" data-plan-date value="${besok}"></label>${divisions.length>1?`<label>Divisi <select data-plan-div>${divisions.map(d=>`<option>${d}</option>`).join('')}</select></label>`:''}<button class="btn primary" type="button" data-img>Siapkan gambar rencana</button><small data-share-status role="status"></small><div class="dr-img-preview" data-img-preview hidden></div></div>`;
+  const tgl=()=>container.querySelector('[data-plan-date]').value,div=()=>container.querySelector('[data-plan-div]')?.value||divisions[0];
+  const ctl=imageShare(container,A,{buat:async()=>{
+    const t=tgl(),d=div();if(!t)throw new Error('Pilih tanggal rencana.');
+    const {from}=reportWeek(t),[plans,laporan]=await Promise.all([A.api.get('/api/daily/plans?'+new URLSearchParams({week:t,divisi:d})),A.api.get('/api/daily?'+new URLSearchParams({from,to:t,divisi:d}))]);
+    const plan=plans.find(p=>p.divisi===d);if(!plan)throw new Error(`Belum ada rencana mingguan ${d} untuk minggu mulai ${from}. Buat dulu di Rencana Mingguan.`);
+    const {rencanaHarian,planShareText,planImages}=await import('./report-image.js'),rows=rencanaHarian({plan,divisi:d,tanggal:t,laporan});
+    return {text:planShareText({divisi:d,tanggal:t,rows,catatan:plan.catatan}),files:await planImages({divisi:d,tanggal:t,rows,catatan:plan.catatan,name:A.settings?.().nama||'PT VIGU FARM INDONESIA',createdBy:A.me?.()?.nama||A.me?.()?.username||''})};
+  }});
+  container.querySelectorAll('[data-plan-date],[data-plan-div]').forEach(el=>el.onchange=()=>ctl.reset());
 }
 function unduh(files){for(const f of files){const u=URL.createObjectURL(f),a=document.createElement('a');a.href=u;a.download=f.name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1500);}}
 export function reportActions(container,A,options) {

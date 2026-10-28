@@ -52,6 +52,10 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   const wkGroups=[{key:'bud injection|stem',hk:3,mode:'manual',times:1}];
   r=await request('/api/daily/plans','POST',{workflow_v2:true,week_start:'2002-01-07',divisi:'Pisang',status:'Dikirim',hk_groups:wkGroups,items:[{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-1',target:100},{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-2',target:200}]});
   assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(JSON.parse(r.body.hk_kegiatan)[0].hk,3);assert.ok(r.body.items.every(i=>i.hk_rencana===null));
+  const otherPlan={workflow_v2:true,week_start:'2002-01-07',divisi:'Pisang',status:'Draf',hk_groups:[{key:'bud injection|stem',hk:1,mode:'manual',times:1}],items:[{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-1',target:1}]};
+  r=await request('/api/daily/plans','POST',otherPlan);assert.equal(r.status,409,'a new weekly form cannot silently replace the saved plan of that week');assert.match(r.body.error,/sudah ada/);
+  r=await request('/api/daily/plans','POST',{...otherPlan,week_start:'2002-01-14'});assert.equal(r.status,200,JSON.stringify(r.body));
+  r=await request('/api/daily/plans','POST',{...otherPlan,id:r.body.id});assert.equal(r.status,409,'a plan cannot be moved onto a week that already has one');
   const groupReport={workflow_v2:true,tanggal:'2002-01-08',divisi:'Pisang',status:'Selesai',apel_hadir:2,hk_groups:[{key:'bud injection|stem',hk:2,manual:false}],items:[{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-1',realisasi:20},{aktivitas:'Bud injection',satuan:'stem',blok:'ANAK-2',realisasi:60}]};
   r=await request('/api/daily','POST',groupReport);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.tanggal,'2002-01-08');assert.deepEqual(r.body.items.map(i=>i.hk_realisasi),[.5,1.5]);assert.equal(JSON.parse(r.body.hk_kegiatan_rencana)[0].hk,3);
   const groupedId=r.body.id,firstGroupVersion=r.body.updated_at;

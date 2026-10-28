@@ -1,6 +1,7 @@
 // Daily Report sebagai GAMBAR untuk dibagikan mandor ke WhatsApp (foto langsung terlihat di chat, tidak perlu buka PDF).
 // Isi sama dengan PDF Daily Report: blok, kegiatan, HI, SDHI minggu, HK aktual, target minggu, kendala, tindak lanjut, foto.
 // dailyImageLayout() murni (tanpa canvas, bisa diuji di Node); dailyReportImages() menggambar di canvas browser.
+import { dailyWorkTarget } from './daily-work.js';
 export const IMG = { W: 1080, PAD: 44, MAXH: 1900, HEAD1: 196, HEAD2: 92, FOOT: 66, LINE: 33 };
 const C = { green: '#24563D', muted: '#6A786E', ink: '#24352A', line: '#E3E9DF', head: '#EDF3EA', Pisang: '#FFF8CC', Padi: '#EAF5E5', Infra: '#EEF1F6', done: '#DCFCE7', doneInk: '#166534', draft: '#FEF3C7', draftInk: '#92400E' };
 const FONT = '"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif';
@@ -83,8 +84,9 @@ export function dailyImageLayout({ reports, from, to, divisi, name = 'PT VIGU FA
     }
     const aktif = (r.photos || []).filter((p) => !p.deleted_at && (p.thumbnail_url || p.url)), pilih = aktif.slice(0, PHOTOS_PER_REPORT), gap = 16, box = (inner - gap) / 2, ih = Math.round(box * 0.75);
     for (let i = 0; i < pilih.length; i += 2) {
-      blocks.push({ h: ih + 52, ops: (y) => pilih.slice(i, i + 2).flatMap((p, k) => { const idx = photos.indexOf(p) >= 0 ? photos.indexOf(p) : photos.push(p) - 1, x = PAD + k * (box + gap);
-        return [{ t: 'img', x, y: y + 6, w: box, h: ih, i: idx }, { t: 'text', x, y: y + ih + 38, s: keteranganFoto(p), font: F.cap, fill: C.muted, maxW: box }]; }) });
+      // keterangan ditempel di atas foto (pita gelap di bawah foto, tulisan putih) → tidak makan ruang di bawah foto
+      blocks.push({ h: ih + 18, ops: (y) => pilih.slice(i, i + 2).flatMap((p, k) => { const idx = photos.indexOf(p) >= 0 ? photos.indexOf(p) : photos.push(p) - 1, x = PAD + k * (box + gap), ket = keteranganFoto(p);
+        return [{ t: 'img', x, y: y + 6, w: box, h: ih, i: idx }, ...(ket ? [{ t: 'rect', x, y: y + 6 + ih - 50, w: box, h: 50, fill: 'rgba(0,0,0,0.55)' }, { t: 'text', x: x + 14, y: y + 6 + ih - 16, s: ket, font: `bold 23px ${FONT}`, fill: '#FFFFFF', maxW: box - 28 }] : [])]; }) });
     }
     if (aktif.length > pilih.length) blocks.push({ h: 44, ops: (y) => [{ t: 'text', x: PAD + 10, y: y + 30, s: `+ ${aktif.length - pilih.length} foto lain ada di aplikasi / PDF.`, font: F.cap, fill: C.muted }] });
     blocks.push({ h: 26, spasi: true, ops: () => [] }); // jarak antar laporan (tidak pernah membuat gambar baru)
@@ -92,7 +94,12 @@ export function dailyImageLayout({ reports, from, to, divisi, name = 'PT VIGU FA
   if (!tampil.length) blocks.push({ h: 80, ops: (y) => [{ t: 'text', x: PAD, y: y + 46, s: 'Belum ada laporan pada periode ini.', font: F.text, fill: C.muted }] });
   if (reports.length > tampil.length) blocks.push({ h: 50, ops: (y) => [{ t: 'text', x: PAD, y: y + 34, s: `Dan ${reports.length - tampil.length} laporan lain — lihat aplikasi atau PDF.`, font: F.text, fill: C.muted }] });
 
-  // susun ke halaman (gambar) setinggi layar HP; judul tabel diulang bila baris berlanjut ke gambar berikutnya
+  return { photos, pages: susunHalaman(blocks, { judul: divisi ? `Daily Report ${divisi}` : 'Daily Report Kebun', per: periodeLabel(from, to), name, createdBy, dibuat }) };
+}
+
+// susun blok ke halaman (gambar) setinggi layar HP; judul tabel diulang bila baris berlanjut ke gambar berikutnya
+export function susunHalaman(blocks, { judul, per, name = 'PT VIGU FARM INDONESIA', createdBy = '', dibuat = '' }) {
+  const { W, PAD, MAXH, HEAD1, HEAD2, FOOT } = IMG, inner = W - PAD * 2;
   const pages = []; let cur = null;
   const baru = () => { cur = { top: pages.length ? HEAD2 : HEAD1, y: pages.length ? HEAD2 : HEAD1, ops: [] }; pages.push(cur); };
   baru();
@@ -103,15 +110,15 @@ export function dailyImageLayout({ reports, from, to, divisi, name = 'PT VIGU FA
     if (b.h + ikut > sisa && cur.y > cur.top && !(cur.y + akhir <= MAXH * 1.25 - FOOT)) { baru(); if (b.repeat) { cur.ops.push(...b.repeat.ops(cur.y)); cur.y += b.repeat.h; } }
     cur.ops.push(...b.ops(cur.y)); cur.y += b.h;
   });
-  const n = pages.length, judul = divisi ? `Daily Report ${divisi}` : 'Daily Report Kebun', per = periodeLabel(from, to);
-  return { photos, pages: pages.map((p, i) => ({ height: Math.max(p.y + FOOT, i ? 700 : 900), ops: [
+  const n = pages.length;
+  return pages.map((p, i) => ({ height: Math.max(p.y + FOOT, i ? 700 : 900), ops: [
     ...(i === 0 ? [{ t: 'rect', x: 0, y: 0, w: W, h: HEAD1 - 24, fill: C.green }, { t: 'text', x: PAD, y: 50, s: name.toUpperCase(), font: `bold 22px ${FONT}`, fill: '#CFE3D5' },
       { t: 'text', x: PAD, y: 104, s: judul, font: `bold 46px ${FONT}`, fill: '#FFFFFF' }, { t: 'text', x: PAD, y: 146, s: per, font: `27px ${FONT}`, fill: '#E8F1EA' }]
       : [{ t: 'rect', x: 0, y: 0, w: W, h: HEAD2 - 22, fill: C.green }, { t: 'text', x: PAD, y: 46, s: `${judul} · ${per} · lanjutan`, font: `bold 25px ${FONT}`, fill: '#FFFFFF', maxW: W - PAD * 2 }]),
     ...p.ops,
     { t: 'line', x: PAD, y: Math.max(p.y + FOOT, i ? 700 : 900) - FOOT + 8, w: inner },
     { t: 'text', x: PAD, y: Math.max(p.y + FOOT, i ? 700 : 900) - 24, s: `VIGU FARM · ${n > 1 ? `Gambar ${i + 1}/${n} · ` : ''}dibuat ${dibuat}${createdBy ? ' · ' + createdBy : ''}`, font: F.cap, fill: C.muted, maxW: inner },
-  ] })) };
+  ] }));
 }
 
 function gambar(ctx, ops, imgs) {
@@ -129,17 +136,63 @@ function gambar(ctx, ops, imgs) {
 }
 
 // gambar di browser → File JPEG (siap navigator.share ke WhatsApp)
-export async function dailyReportImages({ reports, from, to, divisi, name, createdBy }) {
-  const cv = document.createElement('canvas'), ctx = cv.getContext('2d'), measure = (s, font) => { ctx.font = font; return ctx.measureText(s).width; };
-  const dibuat = new Date().toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }) + ' WIB';
-  const L = dailyImageLayout({ reports, from, to, divisi, name, createdBy, dibuat, measure });
-  const imgs = await Promise.all(L.photos.map(async (p) => { try { const r = await fetch(p.thumbnail_url || p.url, { credentials: 'same-origin' }); if (!r.ok) return null; return await createImageBitmap(await r.blob()); } catch { return null; } }));
+const kanvas = () => { const cv = document.createElement('canvas'), ctx = cv.getContext('2d'); return { cv, ctx, measure: (s, font) => { ctx.font = font; return ctx.measureText(s).width; } }; };
+const waktuBuat = () => new Date().toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }) + ' WIB';
+async function keFile({ cv, ctx }, L, namaDasar) {
+  const imgs = await Promise.all((L.photos || []).map(async (p) => { try { const r = await fetch(p.thumbnail_url || p.url, { credentials: 'same-origin' }); if (!r.ok) return null; return await createImageBitmap(await r.blob()); } catch { return null; } }));
   const files = [];
   for (const [i, pg] of L.pages.entries()) {
     cv.width = IMG.W; cv.height = Math.ceil(pg.height); ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.textBaseline = 'alphabetic';
     gambar(ctx, pg.ops, imgs);
     const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.9));
-    files.push(new File([blob], `daily-report-${divisi ? divisi.toLowerCase() + '-' : ''}${from}${to && to !== from ? '_' + to : ''}${L.pages.length > 1 ? '-' + (i + 1) : ''}.jpg`, { type: 'image/jpeg' }));
+    files.push(new File([blob], `${namaDasar}${L.pages.length > 1 ? '-' + (i + 1) : ''}.jpg`, { type: 'image/jpeg' }));
   }
   return files;
+}
+export async function dailyReportImages({ reports, from, to, divisi, name, createdBy }) {
+  const k = kanvas(), L = dailyImageLayout({ reports, from, to, divisi, name, createdBy, dibuat: waktuBuat(), measure: k.measure });
+  return keFile(k, L, `daily-report-${divisi ? divisi.toLowerCase() + '-' : ''}${from}${to && to !== from ? '_' + to : ''}`);
+}
+
+// ================= RENCANA KERJA HARIAN (dari Rencana Mingguan) =================
+// Rencana mingguan tidak dibagi per hari, jadi untuk tanggal tertentu: pekerjaan sekali selesai → SISA target minggu ini
+// (target − realisasi laporan Selesai sebelum tanggal itu, hitungan sama dengan form realisasi mandor); pekerjaan berulang
+// (siram, jaga burung, dll.) → target per kali. Blok yang sudah selesai tidak ditampilkan.
+export function rencanaHarian({ plan, divisi, tanggal, laporan = [] }) {
+  if (!plan) return [];
+  const sebelum = laporan.filter((r) => r.divisi === divisi && r.status === 'Selesai' && r.tanggal < tanggal).flatMap((r) => r.items || []);
+  return [...(plan.items || [])].sort((a, b) => (Number(a.urutan) || 0) - (Number(b.urutan) || 0) || (Number(a.id) || 0) - (Number(b.id) || 0)).map((x) => {
+    const t = dailyWorkTarget({ row: { ...x, plan_item_id: x.id }, division: divisi, plan, previousItems: sebelum }), target = isi(x.target) ? Number(x.target) : null;
+    return { blok: x.blok, aktivitas: x.aktivitas, satuan: x.satuan || '', keterangan: x.keterangan || '', rutin: !!t.repeat, sisa: t.remaining, target };
+  }).filter((x) => x.rutin || x.sisa == null || x.sisa > 0.0001);
+}
+export const targetRencana = (x) => (x.sisa == null ? (x.target == null ? '-' : num(x.target) + ' ' + x.satuan) : x.rutin ? `${num(x.sisa)} ${x.satuan} (rutin)` : `sisa ${num(x.sisa)} ${x.satuan}${x.target != null && x.target - x.sisa > 0.0001 ? ` dari ${num(x.target)}` : ''}`).trim();
+export function planShareText({ divisi, tanggal, rows, catatan }) {
+  const out = [`*RENCANA KERJA ${String(divisi).toUpperCase()}* — ${tglPanjang(tanggal)}`];
+  if (!rows.length) out.push('Belum ada pekerjaan tersisa di rencana minggu ini.');
+  for (const x of rows.slice(0, 15)) out.push(`• ${x.blok || '-'} ${x.aktivitas}: ${targetRencana(x)}`);
+  if (rows.length > 15) out.push(`• dan ${rows.length - 15} pekerjaan lain (lihat gambar)`);
+  if (catatan) out.push(`Catatan: ${String(catatan).slice(0, 200)}`);
+  return out.join('\n');
+}
+const KOL_RENCANA = [['Blok', 70], ['Kegiatan', 150], ['Target', 105], ['Keterangan', 120]];
+export function planImageLayout({ divisi, tanggal, rows, catatan, name, createdBy = '', dibuat = '', measure }) {
+  const { W, PAD, LINE } = IMG, inner = W - PAD * 2, tot = KOL_RENCANA.reduce((s, c) => s + c[1], 0), widths = KOL_RENCANA.map((c) => (c[1] / tot) * inner), xs = widths.map((_, i) => PAD + widths.slice(0, i).reduce((a, v) => a + v, 0) + 10);
+  const blocks = [{ keep: 2, h: 76, ops: (y) => [{ t: 'rect', x: PAD, y, w: inner, h: 62, fill: C[divisi] || C.head, r: 10 }, { t: 'text', x: PAD + 18, y: y + 42, s: `${tglPanjang(tanggal)} · ${divisi}`, font: F.title, fill: C.green },
+    { t: 'chip', x: PAD + inner - 16, y: y + 31, s: `${rows.length} pekerjaan`, font: F.chip, fill: C.draft, ink: C.draftInk }] }];
+  const head = { h: 54, ops: (y) => [{ t: 'rect', x: PAD, y, w: inner, h: 50, fill: C.head }, ...KOL_RENCANA.map((c, i) => ({ t: 'text', x: xs[i], y: y + 33, s: c[0], font: F.cellB, fill: C.green }))] };
+  if (rows.length) {
+    blocks.push({ ...head, keep: 2 });
+    for (const x of rows) {
+      const cells = [x.blok || '-', x.aktivitas || '-', targetRencana(x), x.keterangan || ''].map((v, i) => wrapText(measure, v, widths[i] - 18, F.cell)), h = Math.max(1, ...cells.map((l) => l.length)) * LINE + 22;
+      blocks.push({ h, repeat: head, ops: (y) => [...cells.flatMap((lines, i) => lines.map((s, j) => ({ t: 'text', x: xs[i], y: y + 34 + j * LINE, s, font: i === 1 && j === 0 ? `bold 25px ${FONT}` : F.cell, fill: i === 2 && x.rutin ? C.green : C.ink }))), { t: 'line', x: PAD, y: y + h, w: inner }] });
+    }
+  } else blocks.push({ h: 60, ops: (y) => [{ t: 'text', x: PAD + 10, y: y + 40, s: 'Belum ada pekerjaan tersisa di rencana minggu ini.', font: F.text, fill: C.muted }] });
+  if (catatan) { const lines = wrapText(measure, catatan, inner - 20, F.text); blocks.push({ h: 48 + lines.length * LINE + 10, ops: (y) => [{ t: 'text', x: PAD + 10, y: y + 36, s: 'Catatan rencana', font: F.label, fill: C.green }, ...lines.map((s, j) => ({ t: 'text', x: PAD + 10, y: y + 74 + j * LINE, s, font: F.text, fill: C.ink }))] }); }
+  blocks.push({ h: 50, ops: (y) => [{ t: 'text', x: PAD + 10, y: y + 34, s: 'Sisa = target minggu ini dikurangi hasil yang sudah dilaporkan; rutin = target setiap kali dikerjakan.', font: F.cap, fill: C.muted, maxW: inner - 20 }] });
+  return { photos: [], pages: susunHalaman(blocks, { judul: `Rencana Kerja ${divisi}`, per: tglPanjang(tanggal), name, createdBy, dibuat }) };
+}
+export async function planImages({ divisi, tanggal, rows, catatan, name, createdBy }) {
+  const k = kanvas(), L = planImageLayout({ divisi, tanggal, rows, catatan, name, createdBy, dibuat: waktuBuat(), measure: k.measure });
+  return keFile(k, L, `rencana-kerja-${String(divisi).toLowerCase()}-${tanggal}`);
 }

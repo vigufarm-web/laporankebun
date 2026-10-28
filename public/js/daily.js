@@ -1,6 +1,6 @@
 import {activityKey,parseGroups} from './daily-work.js';
 import {dailyHKMarkup} from './daily-hk.js';
-import { reportActions } from './report-sharing.js';
+import { reportActions, planShare } from './report-sharing.js';
 import { quickDaily } from './daily-quick.js';
 const DIVISI = ['Pisang', 'Padi', 'Infra'];
 const ROLE = { Pisang: 'daily_pisang', Padi: 'daily_padi', Infra: 'daily_infra' };
@@ -33,7 +33,7 @@ function reportCard(r, canEdit) {
     <div class="dr-card-head"><div><span class="dr-div ${r.divisi.toLowerCase()}">${safe(r.divisi)}</span><h3>${safe(r.dibuat_oleh || 'Data awal')}</h3><div class="small muted">Penginput · ${safe(new Date(r.tanggal + 'T00:00:00').toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}</div></div><span class="st ${isDone(r) ? 'ok' : 'wait'}">${safe(r.status)}</span></div>
     <div class="dr-metrics"><span><b>${r.items.length}</b><small>kegiatan</small></span><span><b>${fmt(r.apel_hadir)}</b><small>HK tercatat</small></span><span><b>${livePhotos.length}</b><small>foto aktif</small></span><span><b>${p == null ? '—' : Math.round(p * 100) + '%'}</b><small>hasil kerja</small></span></div>
     ${r.kendala ? `<div class="dr-alert"><b>Kendala:</b> ${safe(r.kendala)}</div>` : ''}
-    <div class="actions"><button class="btn sm dr-view">Lihat lengkap</button>${canEdit ? '<button class="btn sm dr-edit">Lanjutkan laporan</button>' : ''}</div>
+    <div class="actions"><button class="btn sm dr-view">Lihat lengkap</button>${canEdit ? `<button class="btn sm dr-edit">${isDone(r) ? 'Revisi laporan' : 'Lanjutkan laporan'}</button>` : ''}</div>
   </article>`;
 }
 
@@ -43,6 +43,14 @@ const monthStart = (date) => date.slice(0, 7) + '-01';
 const weekStart = (date, nextOnWeekend = false) => { const d=new Date(date+'T00:00:00'), day=d.getDay()||7; d.setDate(d.getDate()-day+1+(nextOnWeekend&&day>=6?7:0)); return iso(d); };
 const plusDays = (date,n) => { const d=new Date(date+'T00:00:00'); d.setDate(d.getDate()+n); return iso(d); };
 const weekLabel = (date) => { const start=weekStart(date),end=plusDays(start,6); return `${new Date(start+'T00:00:00').toLocaleDateString('id-ID',{day:'numeric',month:'short'})} – ${new Date(end+'T00:00:00').toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric'})}`; };
+// Daftar rencana: minggu lalu (bila ada, untuk revisi), minggu ini, minggu depan. Draf dan rencana terkirim bisa dibuka lagi.
+function planWeeks(weeks, byWeek, allowed) {
+  const names = ['Minggu lalu', 'Minggu ini', 'Minggu depan'];
+  return `<div class="dr-plan-weeks">${weeks.map((w, k) => { const list = byWeek[k] || []; if (k === 0 && !list.length) return '';
+    const open = list.map((p) => `<button class="btn sm dr-edit-plan" data-id="${p.id}"><b>${safe(p.divisi)}</b> · ${p.items.length} kegiatan · ${safe(p.status)} · ${p.status === 'Draf' ? 'lanjutkan' : 'revisi'}</button>`);
+    const add = k ? allowed.filter((d) => !list.some((p) => p.divisi === d)).map((d) => `<button class="btn sm dr-new-plan" data-week="${w}" data-div="${safe(d)}">＋ ${safe(d)}</button>`) : [];
+    return `<div class="dr-plan-week"><small><b>${names[k]}</b> · ${weekLabel(w)}</small>${[...open, ...add].join('')}</div>`; }).join('')}</div>`;
+}
 
 function ownerRows(reports) {
   return reports.flatMap((r) => r.items.map((x) => ({ ...x, report: r })));
@@ -106,8 +114,8 @@ export async function renderDaily(main, A) {
 }
 
 async function renderMandor(main,A,allowed,today){
-  const fromDefault=minusDays(today,13), defaultWeek=weekStart(today,true); main.innerHTML=`<div class="page-head"><div><div class="crumb">Tim Lapangan › Daily Report</div><h1>Input & Laporan Saya</h1><p class="desc">Susun rencana per blok untuk satu minggu, lalu catat hasil kerja dan foto setiap hari.</p></div><div class="actions"><button class="btn" id="drPlan">📅 Rencana Mingguan</button><button class="btn primary" id="drAdd">＋ Realisasi Hari Ini</button></div></div><div class="card dr-plan-strip"><div><b>Rencana minggu pelaksanaan</b><small>${weekLabel(defaultWeek)} · tanggal akhir dihitung otomatis</small></div><div id="drPlanList"></div></div><div class="card dr-filter"><label>Dari <input type="date" id="drFrom" value="${fromDefault}"></label><label>Sampai <input type="date" id="drTo" value="${today}"></label><button class="btn" id="drApply">Tampilkan</button></div><div class="actions" id="drExports"></div><div id="drSummary"></div><div class="dr-grid" id="drList"></div>`;
-  const load=async()=>{reportActions($('#drExports',main),A,{from:$('#drFrom',main).value,to:$('#drTo',main).value,divisi:allowed.length===1?allowed[0]:''});const q=new URLSearchParams({from:$('#drFrom',main).value,to:$('#drTo',main).value}),[reports,plans]=await Promise.all([A.api.get('/api/daily?'+q),A.api.get('/api/daily/plans?week='+defaultWeek)]),sent=reports.filter(isDone).length,photos=reports.reduce((a,r)=>a+r.photos.filter(p=>!p.deleted_at).length,0);$('#drPlanList',main).innerHTML=plans.length?plans.map(p=>`<button class="btn sm dr-edit-plan" data-id="${p.id}"><b>${safe(p.divisi)}</b> · ${p.items.length} kegiatan · ${safe(p.status)}</button>`).join(''):'<span class="small muted">Belum ada rencana. Buat rencana per blok untuk minggu ini.</span>';$('#drSummary',main).innerHTML=`<div class="kpis dr-kpis"><div class="kpi"><div class="lbl">Laporan</div><div class="val">${reports.length}</div></div><div class="kpi"><div class="lbl">Selesai</div><div class="val">${sent}</div></div><div class="kpi"><div class="lbl">Foto aktif</div><div class="val">${photos}</div></div></div>`;$('#drList',main).innerHTML=reports.length?reports.map(r=>reportCard(r,allowed.includes(r.divisi))).join(''):'<div class="card empty">Belum ada laporan.</div>';$$('.dr-edit-plan',main).forEach(el=>el.onclick=()=>openWeeklyPlan(plans.find(p=>p.id===Number(el.dataset.id)),A,load));$$('.dr-card',main).forEach(el=>{const r=reports.find(x=>x.id===Number(el.dataset.id));$('.dr-view',el).onclick=()=>openDetail(r,A);$('.dr-edit',el)?.addEventListener('click',()=>openForm(r,A,load));});};$('#drApply',main).onclick=load;$('#drPlan',main).onclick=()=>openWeeklyPlan(null,A,load);$('#drAdd',main).onclick=()=>openForm(null,A,load);await load();
+  const fromDefault=minusDays(today,13), planWeekStarts=[-7,0,7].map(n=>plusDays(weekStart(today),n)); main.innerHTML=`<div class="page-head"><div><div class="crumb">Tim Lapangan › Daily Report</div><h1>Input & Laporan Saya</h1><p class="desc">Susun rencana per blok untuk satu minggu, lalu catat hasil kerja dan foto setiap hari.</p></div><div class="actions"><button class="btn" id="drPlan">📅 Rencana Mingguan</button><button class="btn primary" id="drAdd">＋ Realisasi Hari Ini</button></div></div><div class="card dr-plan-strip"><div><b>Rencana mingguan</b><small>Klik rencana untuk melanjutkan draf atau merevisi · ＋ untuk membuat baru</small></div><div id="drPlanList"></div><div id="drPlanShare"></div></div><div class="card dr-filter"><label>Dari <input type="date" id="drFrom" value="${fromDefault}"></label><label>Sampai <input type="date" id="drTo" value="${today}"></label><button class="btn" id="drApply">Tampilkan</button></div><div class="actions" id="drExports"></div><div id="drSummary"></div><div class="dr-grid" id="drList"></div>`;
+  const load=async()=>{reportActions($('#drExports',main),A,{from:$('#drFrom',main).value,to:$('#drTo',main).value,divisi:allowed.length===1?allowed[0]:''});const q=new URLSearchParams({from:$('#drFrom',main).value,to:$('#drTo',main).value}),[reports,plansByWeek]=await Promise.all([A.api.get('/api/daily?'+q),Promise.all(planWeekStarts.map(w=>A.api.get('/api/daily/plans?week='+w)))]),plans=plansByWeek.flat(),sent=reports.filter(isDone).length,photos=reports.reduce((a,r)=>a+r.photos.filter(p=>!p.deleted_at).length,0);$('#drPlanList',main).innerHTML=planWeeks(planWeekStarts,plansByWeek,allowed);$('#drSummary',main).innerHTML=`<div class="kpis dr-kpis"><div class="kpi"><div class="lbl">Laporan</div><div class="val">${reports.length}</div></div><div class="kpi"><div class="lbl">Selesai</div><div class="val">${sent}</div></div><div class="kpi"><div class="lbl">Foto aktif</div><div class="val">${photos}</div></div></div>`;$('#drList',main).innerHTML=reports.length?reports.map(r=>reportCard(r,allowed.includes(r.divisi))).join(''):'<div class="card empty">Belum ada laporan.</div>';$$('.dr-edit-plan',main).forEach(el=>el.onclick=()=>openWeeklyPlan(plans.find(p=>p.id===Number(el.dataset.id)),A,load));$$('.dr-new-plan',main).forEach(el=>el.onclick=()=>weeklyWorkForm(null,A,load,{week_start:el.dataset.week,divisi:el.dataset.div}));$$('.dr-card',main).forEach(el=>{const r=reports.find(x=>x.id===Number(el.dataset.id));$('.dr-view',el).onclick=()=>openDetail(r,A);$('.dr-edit',el)?.addEventListener('click',()=>openForm(r,A,load));});};planShare($('#drPlanShare',main),A,allowed);$('#drApply',main).onclick=load;$('#drPlan',main).onclick=()=>openWeeklyPlan(null,A,load);$('#drAdd',main).onclick=()=>openForm(null,A,load);await load();
 }
 
 async function openWeeklyPlan(plan,A,afterSave){return weeklyWorkForm(plan,A,afterSave);}
@@ -160,7 +168,7 @@ async function openDetailedForm(report, A, afterSave) {
     <div class="form-grid dr-form-head"><div class="fld"><label>Tanggal *</label><input id="drTanggal" type="date" required value="${safe(report?.tanggal || iso(new Date()))}"></div><div class="fld"><label>Divisi *</label><select id="drDivisi" ${report || allowed.length === 1 ? 'disabled' : ''}>${allowed.map((d) => `<option ${d === initialDiv ? 'selected' : ''}>${d}</option>`).join('')}</select></div><div class="fld"><label>Penginput</label><div class="dr-auto-field">Otomatis dari akun login</div></div><div class="fld"><label>Siklus / periode</label><input id="drSiklus" value="${safe(report?.siklus || '')}" placeholder="contoh: Padi MT-1 2026"></div><div class="fld"><label>Total HK hari ini · pernyataan mandor</label><input id="drHadir" type="number" min="0" step="any" placeholder="Contoh: 64" value="${safe(report?.apel_hadir)}"></div><div class="fld full"><label>Catatan tenaga kerja</label><textarea id="drApel" rows="2">${safe(report?.apel_catatan)}</textarea></div></div>
     <div id="drHKCheck"></div><div class="dr-section-title"><h3>Hasil Kerja Hari Ini</h3><button type="button" class="btn sm" id="drAddItem">＋ Kegiatan tambahan</button></div><div id="drItems"></div>
     <div class="form-grid"><div class="fld full"><label>Kendala</label><textarea id="drKendala" rows="3">${safe(report?.kendala)}</textarea></div><div class="fld full"><label>Tindak lanjut</label><textarea id="drTindak" rows="3">${safe(report?.tindak_lanjut)}</textarea></div></div>
-    <div class="card dr-upload"><h3>Foto langsung</h3><p class="small muted">Pilih dari galeri atau kamera. Foto dikompres sebelum diunggah dan otomatis terhapus setelah 14 hari berdasarkan tanggal laporan.</p><div class="form-grid"><div class="fld"><label>Jenis</label><select id="drFotoJenis"><option>Apel</option><option selected>Kegiatan</option><option>Kendala</option></select></div><div class="fld"><label>Keterangan foto</label><input id="drFotoCaption" placeholder="contoh: Panen blok D08"></div><div class="fld full"><label>Pilih foto</label><input id="drFoto" type="file" accept="image/jpeg,image/png,image/webp" multiple></div></div>${report?.photos?.some((p) => !p.deleted_at) ? `<div class="small">Foto aktif saat ini: ${report.photos.filter((p) => !p.deleted_at).length}</div>` : ''}</div>
+    <div class="card dr-upload"><h3>Foto langsung</h3><p class="small muted">Pilih dari galeri atau kamera. Foto dikompres sebelum diunggah dan otomatis terhapus setelah 14 hari berdasarkan tanggal laporan.</p><div class="form-grid"><div class="fld"><label>Jenis</label><select id="drFotoJenis"><option>Apel</option><option selected>Kegiatan</option><option>Kendala</option></select></div><div class="fld"><label>Keterangan untuk semua foto</label><input id="drFotoCaption" placeholder="contoh: Panen blok D08"></div><div class="fld full"><label>Pilih foto</label><input id="drFoto" type="file" accept="image/jpeg,image/png,image/webp" multiple></div><div class="fld full" id="drFotoList"></div></div>${report?.photos?.some((p) => !p.deleted_at) ? `<div class="small">Foto aktif saat ini: ${report.photos.filter((p) => !p.deleted_at).length}</div>` : ''}</div>
   </div><div class="modal-foot"><button type="button" class="btn" id="drCancel">Batal</button><span class="sp"></span><button type="submit" class="btn" data-status="Draf">Simpan draf</button><button type="submit" class="btn primary" data-status="Selesai">Selesaikan laporan</button></div></form>`, true);
 
   let currentDiv = initialDiv;
@@ -184,6 +192,9 @@ async function openDetailedForm(report, A, afterSave) {
   drawItems();
   $('#drAddItem', md).onclick = () => { items.push(blankItem()); drawItems(); };
   $('#drCancel', md).onclick = A.closeModal;
+  // keterangan per foto (kosong → pakai "Keterangan untuk semua foto"); pilihan cepat dari blok · kegiatan di laporan ini
+  let fotoQueue = [];
+  $('#drFoto', md).onchange = async (e) => { fotoQueue = [...e.target.files].map((file) => ({ file, caption: '' })); (await import('./photos.js')).photoCaptionInputs($('#drFotoList', md), fotoQueue, [...items.flatMap((x) => String(x.blok || '').split(/s*,s*/).filter(Boolean).map((b) => b + ' · ' + (x.aktivitas || ''))), ...items.map((x) => x.aktivitas)]); };
   $('#drDivisi', md)?.addEventListener('change', (e) => { currentDiv = e.target.value; drawItems(); });
   let submitStatus = report?.status || 'Draf';
   $$('button[type="submit"]', md).forEach((b) => b.onclick = () => { submitStatus = b.dataset.status; });
@@ -196,10 +207,10 @@ async function openDetailedForm(report, A, afterSave) {
     const buttons = $$('button', md); buttons.forEach((b) => b.disabled = true);
     try {
       const saved = await A.api.post('/api/daily', { id: report?.id, tanggal: $('#drTanggal', md).value, divisi: currentDiv, siklus: $('#drSiklus', md).value, status: submitStatus, apel_hadir: $('#drHadir', md).value, apel_catatan: $('#drApel', md).value, kendala: $('#drKendala', md).value, tindak_lanjut: $('#drTindak', md).value, items: activity });
-      const files = [...$('#drFoto', md).files];
+      const files = [...$('#drFoto', md).files], semua = $('#drFotoCaption', md).value.trim(), jenis = $('#drFotoJenis', md).value;
       for (let i = 0; i < files.length; i++) {
         A.toast(`Mengunggah foto ${i + 1}/${files.length}…`);
-        await (await import('./photos.js')).uploadPhoto(files[i],saved.id,text=>A.toast(text));
+        await (await import('./photos.js')).uploadPhoto(files[i],saved.id,text=>A.toast(text),null,{caption:fotoQueue[i]?.caption||semua,jenis});
       }
       A.closeModal(); A.toast(submitStatus === 'Selesai' ? 'Laporan selesai' : 'Draf tersimpan'); await afterSave();
     } catch (err) { A.toast(err.message, true); buttons.forEach((b) => b.disabled = false); }

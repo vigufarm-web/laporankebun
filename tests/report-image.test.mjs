@@ -58,3 +58,16 @@ test('WhatsApp caption summarises the report so the image has a readable descrip
 test('photo captions written by the foreman are shown, camera file names are hidden',()=>{
  assert.equal(keteranganFoto({caption:'1000500293.jpg'}),'');assert.equal(keteranganFoto({caption:'IMG_2041.HEIC',jenis:'Sesudah'}),'Sesudah');assert.equal(keteranganFoto({caption:'Bajak D04 sisi timur'}),'Bajak D04 sisi timur');
 });
+import {rencanaHarian,planShareText,planImageLayout,targetRencana} from '../public/js/report-image.js';
+test('daily plan for a date: remaining weekly target for one-off work, per-time target for routine work, finished blocks hidden',()=>{
+ const plan={divisi:'Pisang',hk_kegiatan:JSON.stringify([{key:'herbisida spray|ha',hk:4,times:2}]),items:[{id:1,urutan:1,blok:'D04',aktivitas:'Bajak 2',satuan:'ha',target:2},{id:2,urutan:2,blok:'D11',aktivitas:'Bajak 2',satuan:'ha',target:0.84},{id:3,urutan:3,blok:'A05',aktivitas:'Herbisida spray',satuan:'ha',target:1.2,keterangan:'pagi'}]};
+ const laporan=[{divisi:'Pisang',status:'Selesai',tanggal:'2026-10-27',items:[{blok:'D04',aktivitas:'Bajak 2',satuan:'ha',realisasi:0.75},{blok:'D11',aktivitas:'Bajak 2',satuan:'ha',realisasi:0.84}]},
+  {divisi:'Pisang',status:'Draf',tanggal:'2026-10-28',items:[{blok:'D04',aktivitas:'Bajak 2',satuan:'ha',realisasi:1}]},{divisi:'Pisang',status:'Selesai',tanggal:'2026-10-29',items:[{blok:'D04',aktivitas:'Bajak 2',satuan:'ha',realisasi:1}]}];
+ const rows=rencanaHarian({plan,divisi:'Pisang',tanggal:'2026-10-29',laporan});
+ assert.deepEqual(rows.map(r=>[r.blok,r.aktivitas,targetRencana(r)]),[['D04','Bajak 2','sisa 1,25 ha dari 2'],['A05','Herbisida spray','0,6 ha (rutin)']],'D11 selesai disembunyikan; draf & laporan di/sesudah tanggal tidak mengurangi');
+ const s=planShareText({divisi:'Pisang',tanggal:'2026-10-29',rows,catatan:'Traktor servis jam 13'});
+ assert.match(s,/^\*RENCANA KERJA PISANG\* — Kamis, 29 Oktober 2026/);assert.match(s,/• D04 Bajak 2: sisa 1,25 ha dari 2/);assert.match(s,/Catatan: Traktor servis/);
+ const L=planImageLayout({divisi:'Pisang',tanggal:'2026-10-29',rows,catatan:'Traktor servis jam 13',measure});
+ const t=L.pages.flatMap(texts).join(' ');for(const b of ['Rencana Kerja Pisang','D04','sisa 1,25 ha dari 2','0,6 ha (rutin)','pagi','Catatan rencana'])assert.ok(t.includes(b),b);
+ assert.deepEqual(rencanaHarian({plan:null,divisi:'Pisang',tanggal:'2026-10-29'}),[]);
+});

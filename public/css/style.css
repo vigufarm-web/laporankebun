@@ -362,3 +362,10 @@ table.mini td.num, table.mini th.num { text-align: right; font-variant-numeric: 
 /* Daily Report sebagai gambar (WhatsApp): pratinjau sebelum dikirim */
 [data-share-status]{flex-basis:100%}.dr-img-preview{display:flex;gap:8px;overflow-x:auto;margin-top:8px;flex-basis:100%;padding-bottom:4px}.dr-img-preview img{height:240px;width:auto;border:1px solid #dce5dd;border-radius:8px;background:#fff;flex:0 0 auto}
 .public-share{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+/* keterangan per foto sebelum diunggah */
+.photo-captions{display:grid;gap:8px;margin-top:8px}.photo-captions .photo-caption,.quick-daily .photo-captions .photo-caption{display:grid;grid-template-columns:72px 1fr;gap:10px;align-items:center;padding:6px;border:1px solid #dce5dd;border-radius:8px;background:#fff}.photo-caption img{width:72px;height:72px;object-fit:cover;border-radius:6px}.photo-caption span{display:grid;gap:4px;font-size:.9rem}.photo-caption input{min-height:42px;padding:8px 10px;border:1px solid #dce5dd;border-radius:8px;font:inherit;width:100%}
+/* rencana kerja harian → WhatsApp */
+.plan-share{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #e3e9df}.plan-share>b{flex-basis:100%}.plan-share label{display:inline-flex;gap:6px;align-items:center}.plan-share input,.plan-share select{min-height:40px;padding:6px 10px;border:1px solid #dce5dd;border-radius:8px;font:inherit}
+.block-quick{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.dr-plan-strip{flex-wrap:wrap}.dr-plan-strip #drPlanShare{flex-basis:100%}.dr-plan-weeks{display:grid;gap:6px;justify-items:end}.dr-plan-week{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end}.dr-plan-week>small{margin-right:4px}
+@media (max-width:900px){.dr-plan-weeks{justify-items:start}.dr-plan-week{justify-content:flex-start}}
