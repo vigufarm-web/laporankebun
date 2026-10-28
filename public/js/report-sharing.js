@@ -33,20 +33,41 @@ function imageShare(container,A,options){
   };
   return {reset(){files=null;text='';preview.hidden=true;preview.innerHTML='';status.textContent='';button.textContent=label;}};
 }
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Rencana kerja harian dari Rencana Mingguan → gambar + teks WhatsApp (default: besok). Hanya divisi milik akun ini.
+// Rencana mingguan tidak dikerjakan semua setiap hari: mandor mencentang kegiatan/blok untuk tanggal itu sebelum gambar dibuat.
+// Semua dicentang manual (tidak ada centang otomatis). Kegiatan rutin (siram, semprot, pupuk, …) selalu tampil, tidak disembunyikan.
 export function planShare(container,A,divisions){
   if(!container||!divisions?.length){if(container)container.innerHTML='';return;}
   const besok=new Date(Date.now()+7*3600e3+864e5).toISOString().slice(0,10);
-  container.innerHTML=`<div class="plan-share"><b>Bagikan rencana kerja harian ke WhatsApp</b><label>Tanggal <input type="date" data-plan-date value="${besok}"></label>${divisions.length>1?`<label>Divisi <select data-plan-div>${divisions.map(d=>`<option>${d}</option>`).join('')}</select></label>`:''}<button class="btn primary" type="button" data-img>Siapkan gambar rencana</button><small data-share-status role="status"></small><div class="dr-img-preview" data-img-preview hidden></div></div>`;
-  const tgl=()=>container.querySelector('[data-plan-date]').value,div=()=>container.querySelector('[data-plan-div]')?.value||divisions[0];
+  container.innerHTML=`<div class="plan-share"><b>Bagikan rencana kerja harian ke WhatsApp</b><label>Tanggal <input type="date" data-plan-date value="${besok}"></label>${divisions.length>1?`<label>Divisi <select data-plan-div>${divisions.map(d=>`<option>${d}</option>`).join('')}</select></label>`:''}<button class="btn" type="button" data-plan-load>Pilih kegiatan</button><div class="plan-pick" data-plan-rows hidden></div><button class="btn primary" type="button" data-img hidden>Siapkan gambar rencana</button><small data-share-status role="status"></small><div class="dr-img-preview" data-img-preview hidden></div></div>`;
+  const $=s=>container.querySelector(s),$$=s=>[...container.querySelectorAll(s)],tgl=()=>$('[data-plan-date]').value,div=()=>$('[data-plan-div]')?.value||divisions[0];
+  let data=null;
+  const chosen=()=>data?data.rows.filter((r,i)=>$(`[data-plan-row="${i}"]`)?.checked):[];
   const ctl=imageShare(container,A,{buat:async()=>{
-    const t=tgl(),d=div();if(!t)throw new Error('Pilih tanggal rencana.');
-    const {from}=reportWeek(t),[plans,laporan]=await Promise.all([A.api.get('/api/daily/plans?'+new URLSearchParams({week:t,divisi:d})),A.api.get('/api/daily?'+new URLSearchParams({from,to:t,divisi:d}))]);
-    const plan=plans.find(p=>p.divisi===d);if(!plan)throw new Error(`Belum ada rencana mingguan ${d} untuk minggu mulai ${from}. Buat dulu di Rencana Mingguan.`);
-    const {rencanaHarian,planShareText,planImages}=await import('./report-image.js'),rows=rencanaHarian({plan,divisi:d,tanggal:t,laporan});
-    return {text:planShareText({divisi:d,tanggal:t,rows,catatan:plan.catatan}),files:await planImages({divisi:d,tanggal:t,rows,catatan:plan.catatan,name:A.settings?.().nama||'PT VIGU FARM INDONESIA',createdBy:A.me?.()?.nama||A.me?.()?.username||''})};
+    const rows=chosen();if(!rows.length)throw new Error('Centang minimal satu kegiatan yang dikerjakan tanggal ini.');
+    const {planShareText,planImages}=await import('./report-image.js');
+    return {text:planShareText({divisi:data.d,tanggal:data.t,rows,catatan:data.plan.catatan}),files:await planImages({divisi:data.d,tanggal:data.t,rows,catatan:data.plan.catatan,name:A.settings?.().nama||'PT VIGU FARM INDONESIA',createdBy:A.me?.()?.nama||A.me?.()?.username||''})};
   }});
-  container.querySelectorAll('[data-plan-date],[data-plan-div]').forEach(el=>el.onchange=()=>ctl.reset());
+  // Centang kegiatan = semua bloknya; tanda setengah bila hanya sebagian blok dipilih. Gambar lama dibuang bila pilihan berubah.
+  const sync=()=>{for(const g of $$('[data-plan-grp-all]')){const rows=$$(`[data-plan-grp="${g.dataset.planGrpAll}"]`),n=rows.filter(r=>r.checked).length;g.checked=n===rows.length;g.indeterminate=n>0&&n<rows.length;}
+    const n=chosen().length;$('[data-plan-count]').textContent=`${n} dari ${data.rows.length} pekerjaan dipilih`;ctl.reset();};
+  const clear=()=>{data=null;ctl.reset();$('[data-plan-rows]').hidden=true;$('[data-plan-rows]').innerHTML='';$('[data-img]').hidden=true;};
+  $('[data-plan-load]').onclick=async()=>{
+    const t=tgl(),d=div(),box=$('[data-plan-rows]');clear();const status=$('[data-share-status]');if(!t){status.textContent='Pilih tanggal rencana.';return;}
+    status.textContent='Memuat rencana mingguan…';try{
+      const {from}=reportWeek(t),[plans,laporan]=await Promise.all([A.api.get('/api/daily/plans?'+new URLSearchParams({week:t,divisi:d})),A.api.get('/api/daily?'+new URLSearchParams({from,to:t,divisi:d}))]);
+      const plan=plans.find(p=>p.divisi===d);if(!plan)throw new Error(`Belum ada rencana mingguan ${d} untuk minggu mulai ${from}. Buat dulu di Rencana Mingguan.`);
+      const {rencanaHarian,targetRencana}=await import('./report-image.js'),rows=rencanaHarian({plan,divisi:d,tanggal:t,laporan});
+      if(!rows.length)throw new Error(`Semua pekerjaan rencana ${d} minggu ini sudah selesai dilaporkan.`);
+      if(t!==tgl()||d!==div())return;
+      data={t,d,plan,rows};const acts=[...new Set(rows.map(r=>r.aktivitas))];
+      box.innerHTML=`<div class="plan-pick-head"><span>Centang yang dikerjakan tanggal ${esc(t)}</span><button type="button" class="btn sm" data-plan-all>Semua</button><button type="button" class="btn sm" data-plan-none>Kosongkan</button></div>${acts.map((a,g)=>`<fieldset class="plan-pick-group"><legend><label><input type="checkbox" data-plan-grp-all="${g}"> <b>${esc(a)}</b></label></legend>${rows.map((r,i)=>r.aktivitas===a?`<label><input type="checkbox" data-plan-row="${i}" data-plan-grp="${g}"> <b>${esc(r.blok)}</b> · ${esc(targetRencana(r))}${r.keterangan?` · ${esc(r.keterangan)}`:''}</label>`:'').join('')}</fieldset>`).join('')}<small data-plan-count></small>`;
+      box.hidden=false;$('[data-img]').hidden=false;sync();
+    }catch(e){status.textContent=e.message;}};
+  $('[data-plan-rows]').onchange=e=>{const g=e.target.dataset.planGrpAll;if(g!=null)for(const r of $$(`[data-plan-grp="${g}"]`))r.checked=e.target.checked;sync();};
+  $('[data-plan-rows]').onclick=e=>{const all=e.target.closest('[data-plan-all]'),none=e.target.closest('[data-plan-none]');if(!all&&!none)return;for(const r of $$('[data-plan-row]'))r.checked=!!all;sync();};
+  $$('[data-plan-date],[data-plan-div]').forEach(el=>el.onchange=clear);
 }
 function unduh(files){for(const f of files){const u=URL.createObjectURL(f),a=document.createElement('a');a.href=u;a.download=f.name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1500);}}
 export function reportActions(container,A,options) {

@@ -1,11 +1,23 @@
 import {isRepeatedArea,isNurseryPopulation,isDryingWork} from './work-measures.js';
-import {activityKey} from './daily-catalog.js';
+import {activityKey,landStage} from './daily-catalog.js';
 export {activityKey};
 export function parseGroups(value){try{return Array.isArray(value)?value:JSON.parse(value||'[]');}catch{return [];}}
+// Jenis kegiatan rencana: 'rutin' (berulang, acuan per pelaksanaan, tidak habis) · 'target' (sisa berkurang sampai selesai) · 'hk' (tanpa target).
+// Cakupan luas berulang (siram/spray/pupuk … ha, bibit) selalu rutin dan persiapan lahan selalu target: perhitungan cakupan,
+// progres lahan GIS dan laporan owner bergantung padanya. Selain itu dipilih mandor (choice); rencana lama tanpa pilihan = target.
+export function workKind(division,activity,unit,choice){
+ const u=String(unit||'').trim();
+ if(u==='HK')return {kind:'hk',locked:true,targetRequired:false};
+ if(isRepeatedArea(division,activity,u)||isNurseryPopulation(division,activity,u))return {kind:'rutin',locked:true,targetRequired:true};
+ if(u.toLowerCase()==='ha'&&landStage(activity))return {kind:'target',locked:true,targetRequired:true};
+ const kind=choice==='rutin'?'rutin':'target';return {kind,locked:false,targetRequired:kind==='target'};
+}
+// Pilihan awal untuk kegiatan baru di form; kegiatan rutin Infra (operasional alat, mobil support, air, kontrol irigasi).
+export const defaultKind=(division,activity)=>division==='Infra'&&/operasional|mobil support|pengiriman air|pengisian air|kontrol irigasi/i.test(String(activity||''))?'rutin':'target';
 export function groupWork(items=[],totals=[],field='hk_realisasi'){
  const saved=new Map(parseGroups(totals).map(g=>[g.key,g])),map=new Map();
  for(const row of items){const key=activityKey(row.aktivitas,row.satuan);let g=map.get(key);if(!g){g={key,aktivitas:row.aktivitas,satuan:row.satuan,rows:[],hk:'',manual:field==='hk_realisasi'&&items.some(x=>x.id!=null)};map.set(key,g);}g.rows.push({...row});}
- for(const g of map.values()){const old=saved.get(g.key),values=g.rows.filter(x=>x[field]!==''&&x[field]!=null);g.hk=old?.hk??(values.length?values.reduce((s,x)=>s+Number(x[field]||0),0):'');g.manual=old?.manual??g.manual;g.mode=old?.mode||'manual';g.times=old?.times||1;}
+ for(const g of map.values()){const old=saved.get(g.key),values=g.rows.filter(x=>x[field]!==''&&x[field]!=null);g.hk=old?.hk??(values.length?values.reduce((s,x)=>s+Number(x[field]||0),0):'');g.manual=old?.manual??g.manual;g.mode=old?.mode||'manual';g.times=old?.times||1;if(old?.jenis)g.jenis=old.jenis;}
  return [...map.values()];
 }
 export function allocateHK(total,weights){
@@ -34,16 +46,18 @@ export function prepareActual(groups,{complete=false}={}){
  }
  return {items,hk_groups};
 }
-export function validatePlan(groups,locations){
+export function validatePlan(groups,locations,division){
  const items=[],hk_groups=[],seen=new Set(),activityKeys=new Set();const locs=new Map(locations.map(l=>[l.nama,l]));
  for(const g of groups){const groupKey=activityKey(g.aktivitas,g.satuan);if(activityKeys.has(groupKey))throw new Error('Gabungkan blok dengan kegiatan/satuan yang sama dalam satu kartu.');activityKeys.add(groupKey);if(!String(g.aktivitas||'').trim())throw new Error('Pilih kegiatan.');
   const rows=g.rows.filter(r=>r.selected);if(!rows.length)throw new Error('Centang blok untuk '+g.aktivitas+'.');
+  const kind=workKind(division,g.aktivitas,g.satuan,g.jenis),blank=v=>v===''||v==null;
   if(g.hk!==''&&(!Number.isFinite(Number(g.hk))||Number(g.hk)<0))throw new Error('HK rencana harus nol atau lebih.');
   for(const row of rows){if(!locs.has(row.blok)&&!row.id)throw new Error('Pilih blok GIS aktif.');const key=activityKey(g.aktivitas,g.satuan)+'|'+row.blok;if(seen.has(key))throw new Error('Blok/kegiatan yang sama terpilih dua kali.');seen.add(key);
-   if(g.satuan!=='HK'&&(row.target===''||row.target==null||!Number.isFinite(Number(row.target))||Number(row.target)<0))throw new Error('Isi target per blok '+row.blok+'.');
+   if(kind.targetRequired&&blank(row.target))throw new Error('Isi target per blok '+row.blok+'.');
+   if(g.satuan!=='HK'&&!blank(row.target)&&(!Number.isFinite(Number(row.target))||Number(row.target)<0))throw new Error('Target '+row.blok+' harus angka nol atau lebih.');
    if(g.satuan==='ha'&&Number(row.target)>Number(locs.get(row.blok)?.luas_ha||0)*Number(g.times||1)+1e-6&&locs.has(row.blok)&&!(row.id&&Number(row.target)===Number(row._originalTarget)))throw new Error('Target ha melebihi luas GIS dan jumlah pelaksanaan '+row.blok+'.');
-   items.push({...row,aktivitas:g.aktivitas,satuan:g.satuan,target:g.satuan==='HK'?null:row.target,hk_rencana:null});
-  }hk_groups.push({key:activityKey(g.aktivitas,g.satuan),hk:g.hk,manual:false,mode:g.mode,times:g.times});
+   items.push({...row,aktivitas:g.aktivitas,satuan:g.satuan,target:g.satuan==='HK'||blank(row.target)?null:row.target,hk_rencana:null});
+  }hk_groups.push({key:activityKey(g.aktivitas,g.satuan),hk:g.hk,manual:false,mode:g.mode,times:g.times,...(kind.locked?{}:{jenis:kind.kind})});
  }
  if(items.length>200)throw new Error('Maksimal 200 baris blok/kegiatan per minggu.');
  return {items,hk_groups};
@@ -51,11 +65,11 @@ export function validatePlan(groups,locations){
 
 // Daily execution targets must not exhaust the same recurring area/population.
 export function dailyWorkTarget({row,division,plan,previousItems=[]}){
- const repeat=isRepeatedArea(division,row.aktivitas,row.satuan)||isNurseryPopulation(division,row.aktivitas,row.satuan);
+ const group=parseGroups(plan?.hk_kegiatan).find(g=>g.key===activityKey(row.aktivitas,row.satuan)),repeat=workKind(division,row.aktivitas,row.satuan,group?.jenis).kind==='rutin';
  const planned=plan?.items?.find(p=>row.plan_item_id!=null&&Number(p.id)===Number(row.plan_item_id))||plan?.items?.find(p=>p.blok===row.blok&&activityKey(p.aktivitas,p.satuan)===activityKey(row.aktivitas,row.satuan));
  const raw=planned?.target??row.target;if(raw==null||raw===''||!Number.isFinite(Number(raw))||isDryingWork(division,row.aktivitas))return {remaining:null,repeat};
  const target=Number(raw);
- if(repeat){const group=parseGroups(plan?.hk_kegiatan).find(g=>g.key===activityKey(row.aktivitas,row.satuan)),times=Math.max(1,Number(group?.times)||1);return {remaining:Math.max(0,planned?target/times:target),repeat};}
+ if(repeat){const times=Math.max(1,Number(group?.times)||1);return {remaining:Math.max(0,planned?target/times:target),repeat};}
  const prior=previousItems.filter(p=>p.blok===row.blok&&activityKey(p.aktivitas,p.satuan)===activityKey(row.aktivitas,row.satuan)).reduce((s,p)=>s+Number(p.realisasi||0),0);
  return {remaining:Math.max(0,target-prior),repeat};
 }

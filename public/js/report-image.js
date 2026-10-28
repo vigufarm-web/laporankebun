@@ -166,7 +166,7 @@ export function rencanaHarian({ plan, divisi, tanggal, laporan = [] }) {
     return { blok: x.blok, aktivitas: x.aktivitas, satuan: x.satuan || '', keterangan: x.keterangan || '', rutin: !!t.repeat, sisa: t.remaining, target };
   }).filter((x) => x.rutin || x.sisa == null || x.sisa > 0.0001);
 }
-export const targetRencana = (x) => (x.sisa == null ? (x.target == null ? '-' : num(x.target) + ' ' + x.satuan) : x.rutin ? `${num(x.sisa)} ${x.satuan} (rutin)` : `sisa ${num(x.sisa)} ${x.satuan}${x.target != null && x.target - x.sisa > 0.0001 ? ` dari ${num(x.target)}` : ''}`).trim();
+export const targetRencana = (x) => (x.sisa == null ? (x.rutin ? 'rutin' : x.target == null ? '-' : num(x.target) + ' ' + x.satuan) : x.rutin ? `${num(x.sisa)} ${x.satuan} (rutin)` : `sisa ${num(x.sisa)} ${x.satuan}${x.target != null && x.target - x.sisa > 0.0001 ? ` dari ${num(x.target)}` : ''}`).trim();
 export function planShareText({ divisi, tanggal, rows, catatan }) {
   const out = [`*RENCANA KERJA ${String(divisi).toUpperCase()}* — ${tglPanjang(tanggal)}`];
   if (!rows.length) out.push('Belum ada pekerjaan tersisa di rencana minggu ini.');

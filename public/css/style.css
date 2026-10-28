@@ -369,3 +369,5 @@ table.mini td.num, table.mini th.num { text-align: right; font-variant-numeric: 
 .block-quick{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
 .dr-plan-strip{flex-wrap:wrap}.dr-plan-strip #drPlanShare{flex-basis:100%}.dr-plan-weeks{display:grid;gap:6px;justify-items:end}.dr-plan-week{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end}.dr-plan-week>small{margin-right:4px}
 @media (max-width:900px){.dr-plan-weeks{justify-items:start}.dr-plan-week{justify-content:flex-start}}
+.plan-pick{flex-basis:100%;display:grid;gap:8px}.plan-pick-head{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.plan-pick-head span{margin-right:auto;font-weight:600}.plan-pick-group{border:1px solid #e3e9df;border-radius:8px;padding:6px 10px 8px;margin:0;display:flex;flex-wrap:wrap;gap:4px 14px}.plan-pick-group legend{padding:0 4px}.plan-pick label{display:inline-flex;gap:6px;align-items:center;min-height:32px}.plan-pick [data-plan-count]{color:var(--muted)}
+.ww-kind{display:flex;align-items:center;min-height:40px;font-weight:600}

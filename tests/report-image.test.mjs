@@ -71,3 +71,9 @@ test('daily plan for a date: remaining weekly target for one-off work, per-time 
  const t=L.pages.flatMap(texts).join(' ');for(const b of ['Rencana Kerja Pisang','D04','sisa 1,25 ha dari 2','0,6 ha (rutin)','pagi','Catatan rencana'])assert.ok(t.includes(b),b);
  assert.deepEqual(rencanaHarian({plan:null,divisi:'Pisang',tanggal:'2026-10-29'}),[]);
 });
+test('daily plan keeps routine work without a target and labels it as routine',()=>{
+ const plan={divisi:'Infra',hk_kegiatan:JSON.stringify([{key:'pengiriman air|rit',times:5,jenis:'rutin'},{key:'pembuatan parit|meter',times:1,jenis:'target'}]),items:[{id:1,blok:'A01',aktivitas:'Pengiriman air',satuan:'rit',target:null},{id:2,blok:'A01',aktivitas:'Pembuatan parit',satuan:'meter',target:50}]};
+ const laporan=[{divisi:'Infra',status:'Selesai',tanggal:'2026-10-27',items:[{blok:'A01',aktivitas:'Pengiriman air',satuan:'rit',realisasi:6},{blok:'A01',aktivitas:'Pembuatan parit',satuan:'meter',realisasi:50}]}];
+ const rows=rencanaHarian({plan,divisi:'Infra',tanggal:'2026-10-28',laporan});
+ assert.deepEqual(rows.map(r=>[r.aktivitas,targetRencana(r)]),[['Pengiriman air','rutin']],'finished target work hides, routine stays');
+});

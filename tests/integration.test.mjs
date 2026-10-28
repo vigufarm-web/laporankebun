@@ -62,6 +62,12 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   r=await request('/api/daily','POST',{...groupReport,id:groupedId,updated_at:firstGroupVersion});assert.equal(r.status,200);assert.equal(r.body.id,groupedId);const currentGroup=r.body;
   r=await request('/api/daily','POST',{...groupReport,id:groupedId,updated_at:'2000-01-01T00:00:00.000Z',items:[{...groupReport.items[0],realisasi:999}]});assert.equal(r.status,409);
   r=await request('/api/daily','POST',groupReport);assert.equal(r.status,409,'a new form cannot implicitly replace an existing report');
+  // Routine work chosen by the foreman may be planned without a target; the report still records its result.
+  const infraRoutine={workflow_v2:true,week_start:'2002-01-07',divisi:'Infra',status:'Dikirim',hk_groups:[{key:'pengiriman air|rit',hk:2,mode:'manual',times:5,jenis:'rutin'}],items:[{aktivitas:'Pengiriman air',satuan:'rit',blok:'ANAK-1',target:''}]};
+  r=await request('/api/daily/plans','POST',{...infraRoutine,hk_groups:[{...infraRoutine.hk_groups[0],jenis:'target'}]});assert.equal(r.status,400,'target work still needs a target');
+  r=await request('/api/daily/plans','POST',infraRoutine);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].target,null);assert.equal(JSON.parse(r.body.hk_kegiatan)[0].jenis,'rutin');
+  r=await request('/api/daily','POST',{workflow_v2:true,tanggal:'2002-01-08',divisi:'Infra',status:'Selesai',apel_hadir:2,hk_groups:[{key:'pengiriman air|rit',hk:2,manual:false}],items:[{aktivitas:'Pengiriman air',satuan:'rit',blok:'ANAK-1',realisasi:6}]});
+  assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].target,null);assert.equal(r.body.items[0].realisasi,6);
   r=await request('/api/daily','POST',{...groupReport,id:9999999,updated_at:currentGroup.updated_at});assert.equal(r.status,404);
   r=await request('/api/daily?from=2002-01-08&to=2002-01-08&divisi=Pisang');assert.deepEqual(r.body.find(x=>x.id===groupedId).items.map(x=>x.realisasi),[20,60],'rejected saves preserve the current report');
   r=await request('/api/daily','POST',{...groupReport,id:groupedId,updated_at:currentGroup.updated_at,hk_groups:[{key:'bud injection|stem',hk:-1}]});assert.equal(r.status,400);

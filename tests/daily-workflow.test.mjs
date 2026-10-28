@@ -49,3 +49,32 @@ test('new output still consumes weekly targets; drying and missing targets never
  assert.equal(dailyWorkTarget({row:{...row,target:null},division:'Pisang'}).remaining,null);
  assert.equal(dailyWorkTarget({row:{blok:'P01',aktivitas:'Jemur padi',satuan:'kg',target:108},division:'Padi'}).remaining,null);
 });
+import {workKind,defaultKind} from '../public/js/daily-work.js';
+test('activity kind: coverage stays routine, land preparation stays target, others follow the foreman choice',()=>{
+ assert.deepEqual(workKind('Pisang','Herbisida spray','ha','target'),{kind:'rutin',locked:true,targetRequired:true},'coverage measurement keeps routine');
+ assert.deepEqual(workKind('Pisang','Bajak 2','ha','rutin'),{kind:'target',locked:true,targetRequired:true},'land progress keeps target');
+ assert.equal(workKind('Pisang','Ecer Pupuk','ha').kind,'rutin','existing coverage behaviour is unchanged');
+ assert.deepEqual(workKind('Infra','Pengawasan','HK'),{kind:'hk',locked:true,targetRequired:false});
+ assert.deepEqual(workKind('Infra','Pengiriman air','rit','rutin'),{kind:'rutin',locked:false,targetRequired:false});
+ assert.equal(workKind('Infra','Pengiriman air','rit').kind,'target','saved plans without a choice keep their old target behaviour');
+ assert.equal(defaultKind('Infra','Operasional traktor'),'rutin');assert.equal(defaultKind('Infra','Pembuatan parit'),'target');assert.equal(defaultKind('Pisang','Panen'),'target');
+});
+test('routine work may be planned without a target; target work still requires one, in the form and on the server',()=>{
+ const locs=[{nama:'A',luas_ha:1}],row=t=>({blok:'A',selected:true,target:t});
+ const rutin={aktivitas:'Pengiriman air',satuan:'rit',mode:'manual',times:5,hk:2,jenis:'rutin',rows:[row('')]};
+ const plan=validatePlan([rutin],locs,'Infra');assert.equal(plan.items[0].target,null);assert.equal(plan.hk_groups[0].jenis,'rutin');
+ const meta=checkWeeklyWorkflow({...plan,divisi:'Infra'},locs);assert.equal(meta[0].jenis,'rutin');assert.equal(plan.items[0].target,null);
+ assert.throws(()=>validatePlan([{...rutin,jenis:'target'}],locs,'Infra'),/target/);
+ assert.throws(()=>checkWeeklyWorkflow({...plan,divisi:'Infra',hk_groups:[{...plan.hk_groups[0],jenis:'target'}]},locs),/target/);
+ assert.throws(()=>checkWeeklyWorkflow({...plan,divisi:'Infra',hk_groups:[{...plan.hk_groups[0],jenis:undefined}]},locs),/target/,'a missing choice is never treated as routine');
+ assert.throws(()=>validatePlan([{aktivitas:'Herbisida spray',satuan:'ha',mode:'manual',times:1,hk:1,jenis:'rutin',rows:[row('')]}],locs,'Pisang'),/target/,'coverage targets stay required');
+ assert.equal(validatePlan([{aktivitas:'Herbisida spray',satuan:'ha',mode:'manual',times:1,hk:1,rows:[row(1)]}],locs,'Pisang').hk_groups[0].jenis,undefined,'locked kinds are not stored');
+ assert.throws(()=>validatePlan([{...rutin,rows:[row(-1)]}],locs,'Infra'),/angka/);
+});
+test('routine targets are per execution and never exhausted; without a target the routine still shows',()=>{
+ const p=(target,jenis)=>({items:[{id:1,blok:'A',aktivitas:'Pengiriman air',satuan:'rit',target}],hk_kegiatan:JSON.stringify([{key:activityKey('Pengiriman air','rit'),times:5,...(jenis?{jenis}:{})}])});
+ const row={plan_item_id:1,blok:'A',aktivitas:'Pengiriman air',satuan:'rit'},done=[{...row,realisasi:4},{...row,realisasi:4}];
+ assert.deepEqual(dailyWorkTarget({row,division:'Infra',plan:p(20,'rutin'),previousItems:done}),{remaining:4,repeat:true});
+ assert.deepEqual(dailyWorkTarget({row,division:'Infra',plan:p(null,'rutin'),previousItems:done}),{remaining:null,repeat:true});
+ assert.deepEqual(dailyWorkTarget({row,division:'Infra',plan:p(20),previousItems:done}),{remaining:12,repeat:false},'old plans keep consuming the weekly target');
+});
