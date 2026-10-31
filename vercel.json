@@ -18,5 +18,22 @@
   ],
   "regions": [
     "sin1"
+  ],
+  "redirects": [
+    {
+      "source": "/peta",
+      "destination": "https://vigufarm-web.github.io/peta-kebun/",
+      "permanent": false
+    },
+    {
+      "source": "/peta/",
+      "destination": "https://vigufarm-web.github.io/peta-kebun/",
+      "permanent": false
+    },
+    {
+      "source": "/peta.html",
+      "destination": "https://vigufarm-web.github.io/peta-kebun/",
+      "permanent": false
+    }
   ]
 }
