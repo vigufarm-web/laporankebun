@@ -498,6 +498,7 @@ function excelReportTable(rep) {
   return `${(rep.peringatan || []).map((p) => `<div class="card" style="background:#fff7e6;border-color:#f3d6a6;margin-bottom:8px">⚠ ${esc(p)}</div>`).join('')}
     <table class="mini"><tr><th>Sheet</th><th>Status</th><th class="num">Baris di Excel</th><th class="num">Baris baru</th><th class="num">Baris direvisi</th></tr>
     ${rep.sheets.map((s) => `<tr><td><b>${esc(s.sheet)}</b></td><td style="color:${color(s.status)}">${esc(s.status)}</td><td class="num">${fmtNum(s.baris)}</td><td class="num">${s.tambah ? '+' + fmtNum(s.tambah) : ''}</td><td class="num">${s.ubah ? fmtNum(s.ubah) : ''}</td></tr>
+      ${s.changes?.length ? `<tr><td></td><td colspan="4" class="small">${s.changes.map(c=>`Baris ${esc(c.row)} · ${esc(c.field)}: <b>${esc(c.before??'kosong')}</b> → <b>${esc(c.after??'kosong')}</b>`).join('<br>')}</td></tr>` : ''}
       ${s.koreksi?.length ? `<tr><td></td><td colspan="4" class="small" style="color:var(--ok)">✔ Dibetulkan otomatis (beda huruf besar/kecil atau spasi): ${s.koreksi.map(esc).join('; ')}</td></tr>` : ''}
       ${s.peringatan?.length ? `<tr><td></td><td colspan="4" class="small" style="color:var(--warn)">⚠ ${s.peringatan.map(esc).join('<br>⚠ ')}</td></tr>` : ''}
       ${s.jumlahError ? `<tr><td></td><td colspan="4" class="small" style="color:var(--danger)">${s.errors.map((e) => `Baris ${e.row}: ${esc(e.msg)}`).join('<br>')}${s.jumlahError > s.errors.length ? `<br>… dan ${s.jumlahError - s.errors.length} kesalahan lain` : ''}</td></tr>` : ''}`).join('')}
@@ -529,7 +530,7 @@ function excelPanel(el, { tables, kom, label, onDone }) {
       const pv = await go(true);
       const n = pv.sheets.filter((s) => s.status.startsWith('akan')).length;
       const tidakAda = pv.sheets.every((s) => s.status.startsWith('sheet tidak ada'));
-      $('#xpB', md).innerHTML = excelReportTable(pv) + (tidakAda ? '<p style="color:var(--danger)">File ini tidak berisi sheet untuk halaman ini. Pakai file dari tombol "⬇ Excel" di halaman ini.</p>' : n ? '' : '<p class="small muted">Tidak ada perubahan untuk diterapkan.</p>');
+      $('#xpB', md).innerHTML = excelReportTable(pv) + (tidakAda ? '<p style="color:var(--danger)">File ini tidak berisi sheet untuk halaman ini. Pakai file dari tombol "⬇ Excel" di halaman ini.</p>' : n ? '' : `<p class="small muted">${pv.sheets.some(s=>s.jumlahError)?'Ada kesalahan yang perlu diperbaiki; periksa rincian di atas.':'Tidak ada perubahan pada kolom yang dapat diinput; periksa juga status dan peringatan setiap sheet.'}</p>`);
       const ok = $('#xpOk', md);
       ok.disabled = !n; if (n) ok.textContent = `Terapkan ${n} sheet`;
       ok.onclick = async () => {
@@ -580,7 +581,7 @@ async function renderExcel(main) {
     try {
       const pv = await send(true);
       const n = pv.sheets.filter((s) => s.status.startsWith('akan')).length;
-      $('#xP').innerHTML = `${excelReportTable(pv)}<div style="margin-top:10px;display:flex;gap:8px">${n ? `<button class="btn primary" id="xOk">Terapkan ${n} sheet</button>` : '<span class="small muted">Tidak ada perubahan untuk diterapkan.</span>'}<button class="btn" id="xNo">Batal</button></div>`;
+      $('#xP').innerHTML = `${excelReportTable(pv)}<div style="margin-top:10px;display:flex;gap:8px">${n ? `<button class="btn primary" id="xOk">Terapkan ${n} sheet</button>` : `<span class="small muted">${pv.sheets.some(s=>s.jumlahError)?'Ada kesalahan yang perlu diperbaiki; periksa rincian di atas.':'Tidak ada perubahan pada kolom yang dapat diinput; periksa status setiap sheet.'}</span>`}<button class="btn" id="xNo">Batal</button></div>`;
       $('#xNo').onclick = () => { f.value = ''; $('#xP').innerHTML = ''; };
       $('#xOk')?.addEventListener('click', async () => {
         try { await send(false); if(isAdmin(me))await syncAll(); toast('Data dari Excel sudah diterapkan'); renderExcel(main); } catch (e) { toast(e.message, true); }
