@@ -49,3 +49,12 @@ test('Padi migration uses its actual planting and planted-area fields',()=>{
 });
 
 test('banana area follows initial planting density while replanting changes population only',()=>{const {db,registry}=fixture();try{const p=registry.savePlanting({block_id:'gis-A',commodity:'Pisang',population:2000,replacement_plants:50,lost_plants:20,area_ha:999,reason:'Pengukuran'}),state=plantState(p,'2026-10-31');assert.equal(p.area_ha,1);assert.equal(state.current_population,2030);assert.equal(state.area_from_plants_ha,1);assert.throws(()=>registry.savePlanting({...p,expected_version:1,lost_plants:3000,reason:'Salah'}),/melebihi/);}finally{db.close();}});
+
+test('legacy planting follows one explicit merged GIS descendant without rewriting the source',()=>{
+ const {db,registry}=fixture();try{
+ db.exec("INSERT INTO _blocks(id,nama,divisi,active) VALUES('old-E01d','E01d','Pisang',0)");
+ db.prepare('UPDATE _blocks SET nama=?,parents=? WHERE id=?').run('E01c',JSON.stringify(['old-E01d']),'gis-A');
+ db.exec("INSERT INTO pisang_blok VALUES(1,'E01d','old-E01d','2025-05-22',0.1,200,'G9','PC')");
+ const before=db.prepare('SELECT * FROM pisang_blok').get(),p=registry.legacyPreview();assert.equal(p.rows[0].block_id,'gis-A');assert.equal(p.rows[0].label,'Gabungan E01d');registry.importLegacy(p.token);assert.equal(registry.plantings()[0].population,200);assert.deepEqual(db.prepare('SELECT * FROM pisang_blok').get(),before);
+ }finally{db.close();}
+});
