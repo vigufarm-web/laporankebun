@@ -182,6 +182,13 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   r=await request('/api/daily','POST',{...retryBody,apel_hadir:999});assert.equal(r.status,409);
   assert.equal((await request('/api/daily?from=2003-01-07&to=2003-01-07')).body.length,1);
 
+  // Ecer Pupuk remains a normal Daily input, but is absent from admin progress/export.
+  const dailyFertilizer={workflow_v2:true,tanggal:'2005-01-04',divisi:'Pisang',status:'Selesai',apel_hadir:1,hk_groups:[{key:'ecer pupuk|ha',hk:1,manual:false}],items:[{aktivitas:'Ecer Pupuk',satuan:'ha',blok:'ANAK-1',realisasi:.01}]};
+  r=await request('/api/daily','POST',dailyFertilizer);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].aktivitas,'Ecer Pupuk');const fertilizerSaved=r.body;
+  r=await request('/api/daily','POST',{...dailyFertilizer,id:fertilizerSaved.id,updated_at:fertilizerSaved.updated_at,kendala:'Catatan revisi'});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].aktivitas,'Ecer Pupuk');
+  assert.ok(!(await request('/api/t/lahan_harian')).body.some(row=>row.aktivitas==='Ecer Pupuk'));
+  const fertilizerWorkbook=await fetch(base+'/api/excel/download?tables=lahan_harian&panel=Test',{headers:{cookie}}),fertilizerBook=new ExcelJS.Workbook();await fertilizerBook.xlsx.load(Buffer.from(await fertilizerWorkbook.arrayBuffer()));assert.ok(!JSON.stringify(fertilizerBook.getWorksheet('Progres - Harian').getSheetValues()).includes('Ecer Pupuk'));
+  const progressAfter=(await request('/api/kebun-summary')).body;assert.ok(!progressAfter.stages.includes('Ecer Pupuk'));assert.ok(!progressAfter.weekly.some(a=>a.name==='Ecer Pupuk'));
   // A second start reruns migration against existing data without losing IDs or results.
   const exit=once(proc,'exit');proc.kill();await exit;
   proc=spawn(process.execPath,['server.js'],{cwd:root,env:{...isolatedEnv,PORT:String(port),DATA_DIR:path.join(dir,'data'),EXCEL_FILE:path.join(dir,'input.xlsx')},stdio:['ignore','pipe','pipe']});proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b);

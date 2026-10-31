@@ -1,3 +1,4 @@
+import {hiddenActivity} from './activity-visibility.js';
 // =====================================================================
 //  DEFINISI DIVISI & TABEL
 //  File ini dipakai server (membuat/menambah kolom database otomatis)
@@ -706,7 +707,7 @@ export function padiFase(r, c) {
 // urutan aktivitas untuk komoditas tertentu (Pisang / Padi); "Semua" ikut keduanya
 export function aktivitasUntuk(c, kom) {
   const k = kom || 'Pisang';
-  return [...c.rows('lahan_aktivitas')].filter((a) => (a.untuk || 'Pisang') === k || a.untuk === 'Semua').sort((a, b) => n(a.urutan) - n(b.urutan));
+  return [...c.rows('lahan_aktivitas')].filter(a=>!hiddenActivity(a.aktivitas)).filter((a) => (a.untuk || 'Pisang') === k || a.untuk === 'Semua').sort((a, b) => n(a.urutan) - n(b.urutan));
 }
 // rekap iklim harian dari data per 2 jam (aturan sama dengan rekap bulanan stasiun):
 // suhu & kelembapan = sensor luar; hujan = angka kumulatif terbesar hari itu; arah dominan = arah paling sering

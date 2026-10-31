@@ -1,7 +1,7 @@
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num=v=>Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2});
 const key=v=>String(v||'').trim().toLowerCase();
-export const mapStages=['Land Clearing','Bajak 1','Dolomite','Bajak 2','Stik Ridger','Ridger','Install Drip','Stik Tanam','Ecer Pupuk','Tanam'];
+export const mapStages=['Land Clearing','Bajak 1','Dolomite','Bajak 2','Stik Ridger','Ridger','Install Drip','Stik Tanam','Tanam'];
 export function stageLocations(progress,stage){
  return progress.blocks.filter(b=>b.area>0).map(b=>{const a=b.activity.find(a=>a.name===stage),done=Math.min(b.area,Math.max(0,Number(a?.ha)||0)),remaining=Math.max(0,b.area-done);return {name:b.name,area:b.area,done,remaining,complete:remaining<=1e-6};}).sort((a,b)=>a.name.localeCompare(b.name,'id',{numeric:true}));
 }
