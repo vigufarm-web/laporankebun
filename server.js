@@ -698,7 +698,7 @@ async function api(req, res, url) {
     if(m==='OPTIONS')return send(res,200,{ok:true},'application/json',headers);
     const token=String(req.headers.authorization||'').replace(/^Bearer /,''),app=req.headers['x-gis-app'];
     if(m!=='GET'||!gisRegistry.verifyGrant(token,app))return send(res,401,{error:'Hubungkan kembali ke Peta Kebun. Izin referensi belum ada atau telah berakhir.'},'application/json',headers);
-    return send(res,200,gisRegistry.catalog(now().slice(0,10),ownedPlanningLocations()),'application/json',headers);
+    return send(res,200,gisRegistry.catalog(new Date(Date.now()+7*3600000).toISOString().slice(0,10),ownedPlanningLocations()),'application/json',headers);
   }
   const gisEditor=process.env.GIS_EDITOR_URL||(VERCEL?'https://vigufarm-web.github.io/peta-kebun/':null);
   if(parts[1]==='gis-service'&&m==='GET'){const origin=req.headers.origin,headers=origin==='https://vigufarm-web.github.io'?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};return send(res,200,{url:gisEditor||'https://laporankebun.vercel.app'},'application/json',headers);}
@@ -724,7 +724,7 @@ async function api(req, res, url) {
       failed.set(un, { n: f.n + 1, t: Date.now() });
       return send(res, 401, { error: 'Username atau password salah' });
     }
-    if(req.gisClient){if(!isAdmin(publicUser(u)))return send(res,403,{error:'Pengelolaan peta memerlukan akun admin.'});if(parts[1]==='reference-login'){const grant=gisRegistry.grant(b.app);failed.delete(un);return send(res,200,grant);}const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,u.hash);db.prepare('DELETE FROM _gis_editor_sessions WHERE expires < ?').run(now());failed.delete(un);return send(res,200,{user:publicUser(u),token,expires});}
+    if(req.gisClient){if(!isAdmin(publicUser(u)))return send(res,403,{error:'Pengelolaan peta memerlukan akun admin.'});if(parts[1]==='reference-login'){const grant=tx(()=>gisRegistry.grant(b.app,{persistent:b.persistent===true}));failed.delete(un);return send(res,200,grant);}const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,u.hash);db.prepare('DELETE FROM _gis_editor_sessions WHERE expires < ?').run(now());failed.delete(un);return send(res,200,{user:publicUser(u),token,expires});}
     failed.delete(un); startSession(res, u.id);
     return send(res, 200, { user: publicUser(u) });
   }
@@ -857,7 +857,8 @@ async function api(req, res, url) {
   if(parts[1]==='gis-registry') {
     if(!isAdmin(user))return send(res,403,{error:'Pengelolaan data induk GIS khusus admin.'});
     const at=url.searchParams.get('at')||now().slice(0,10);
-    if(m==='POST'&&parts[2]==='grants'){const body=await readBody(req);return send(res,200,tx(()=>gisRegistry.grant(body.app)));}
+    if(m==='DELETE'&&parts[2]==='grants'){const body=await readBody(req);tx(()=>gisRegistry.revokeGrant(body.token));return send(res,200,{ok:true});}
+    if(m==='POST'&&parts[2]==='grants'){const body=await readBody(req);return send(res,200,tx(()=>gisRegistry.grant(body.app,{persistent:body.persistent===true})));}
     if(m==='GET'&&!parts[2])return send(res,200,gisRegistry.catalog(at,ownedPlanningLocations()));
     if(m==='GET'&&parts[2]==='history')return send(res,200,gisRegistry.history(parts[3]));
     if(parts[2]==='migration'&&m==='GET')return send(res,200,gisRegistry.legacyPreview());
@@ -1518,7 +1519,8 @@ function readScope(req,url){
   if(p==='/api/gis-reference')return [...authTables,...gisTables];
   if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
 
-  if((req.method==='POST'&&['/api/login','/api/reference-login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
+  if(p==='/api/reference-login'&&req.method==='POST')return [...authTables,'_gis_reference_tokens'];
+  if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
   if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
