@@ -714,7 +714,7 @@ async function api(req, res, url) {
     currentUser = publicUser(db.prepare('SELECT * FROM _users WHERE id=?').get(id)); log('buat admin', '_users', id, { username: b.username });
     return send(res, 200, { ok: true });
   }
-  if (parts[1] === 'login' && m === 'POST') {
+  if ((parts[1] === 'login'||req.gisClient&&parts[1]==='reference-login') && m === 'POST') {
     const b = await readBody(req);
     const un = String(b.username || '').trim().toLowerCase();
     const f = failed.get(un) || { n: 0, t: 0 };
@@ -724,7 +724,7 @@ async function api(req, res, url) {
       failed.set(un, { n: f.n + 1, t: Date.now() });
       return send(res, 401, { error: 'Username atau password salah' });
     }
-    if(req.gisClient){if(!isAdmin(publicUser(u)))return send(res,403,{error:'Pengelolaan peta memerlukan akun admin.'});const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,u.hash);db.prepare('DELETE FROM _gis_editor_sessions WHERE expires < ?').run(now());failed.delete(un);return send(res,200,{user:publicUser(u),token,expires});}
+    if(req.gisClient){if(!isAdmin(publicUser(u)))return send(res,403,{error:'Pengelolaan peta memerlukan akun admin.'});if(parts[1]==='reference-login'){const grant=gisRegistry.grant(b.app);failed.delete(un);return send(res,200,grant);}const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,u.hash);db.prepare('DELETE FROM _gis_editor_sessions WHERE expires < ?').run(now());failed.delete(un);return send(res,200,{user:publicUser(u),token,expires});}
     failed.delete(un); startSession(res, u.id);
     return send(res, 200, { user: publicUser(u) });
   }
@@ -1518,7 +1518,7 @@ function readScope(req,url){
   if(p==='/api/gis-reference')return [...authTables,...gisTables];
   if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
 
-  if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
+  if((req.method==='POST'&&['/api/login','/api/reference-login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
   if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
@@ -1573,7 +1573,7 @@ async function handler(req, res) {
   dailyTargetCache=new Map();
   const url = new URL(req.url, 'http://x');
   try {
-    if(url.pathname.startsWith('/api/gis-client/')){const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin||''));if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');if(req.method==='OPTIONS')return send(res,200,{ok:true});const target='/api/'+url.pathname.slice('/api/gis-client/'.length);if(!/^\/api\/(?:login|logout|me|blocks|gis(?:\/.*)?|gis-registry(?:\/.*)?)$/.test(target))return send(res,404,{error:'Endpoint Peta tidak tersedia.'});req.gisClient=true;url.pathname=target;}
+    if(url.pathname.startsWith('/api/gis-client/')){const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin||''));if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');if(req.method==='OPTIONS')return send(res,200,{ok:true});const target='/api/'+url.pathname.slice('/api/gis-client/'.length);if(!/^\/api\/(?:login|reference-login|logout|me|blocks|gis(?:\/.*)?|gis-registry(?:\/.*)?)$/.test(target))return send(res,404,{error:'Endpoint Peta tidak tersedia.'});req.gisClient=true;url.pathname=target;}
     if(VERCEL&&/^\/peta\/?$/.test(url.pathname)){res.writeHead(302,{Location:process.env.GIS_EDITOR_URL||'https://vigufarm-web.github.io/peta-kebun/','Cache-Control':'no-store'});return res.end();}
     if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/daily' || url.pathname === '/daily/')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
     if (!VERCEL && (url.pathname === '/daily' || url.pathname === '/daily/')) return serveFile(res, path.join(ROOT, 'public', 'index.html'));
