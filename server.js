@@ -1505,6 +1505,10 @@ function holdResponse(res) {
 function readScope(req,url){
   if(!VERCEL)return null;
   const p=url.pathname;
+  const gisTables=['_blocks','gis_layer','_gis_block_versions','_gis_plantings','_gis_planting_revisions','_gis_reference_tokens','_gis_commodities'];
+  if(p==='/api/gis-reference')return [...authTables,...gisTables];
+  if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
+
   if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
   if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
   if(req.method!=='GET')return null;
