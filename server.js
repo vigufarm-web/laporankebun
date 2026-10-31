@@ -28,6 +28,7 @@ import { copyCloudSnapshot, mergeSnapshotTables } from './lib/cloud-snapshot.js'
 import { photoExpiresAt, photoExpired } from './lib/photo-retention.js';
 import { createReadModels } from './lib/read-models.js';
 import { createBlockRegistry, isBlockLayer } from './lib/blocks.js';
+import {createGISRegistry} from './lib/gis-registry.js';
 // Server lokal Monitoring Kebun â€” Node.js (tanpa dependensi server) + SQLite bawaan Node.
 // Jalankan: node server.js   lalu buka http://localhost:3000
 import http from 'node:http';
@@ -411,6 +412,7 @@ function insertRow(table, row, doLog = true) {
   row = blocks.canonical(table, row);
   const r = clean(table, TABLES[table].lengkapi ? TABLES[table].lengkapi(row) : row); // mis. Penjualan: isi otomatis Bentuk/Kelas/Kondisi â‡„ Jenis Barang
   if (row.block_id) { r.block_id = row.block_id; r.block_name_snapshot = row.block_name_snapshot; }
+  if(row.block_refs_snapshot)r.block_refs_snapshot=row.block_refs_snapshot;
   const cols = Object.keys(r);
   const sql = `INSERT INTO ${q(table)} (created_at, updated_at${cols.map((c) => ', ' + q(c)).join('')}) VALUES (?, ?${cols.map(() => ', ?').join('')})`;
   const t = now();
@@ -455,12 +457,16 @@ function tx(fn) {
   try { const v = fn(); db.exec('COMMIT'); return v; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-const blocks = createBlockRegistry({db,TABLES,cascadeRename,log,clock:now,bootstrapGIS:!cloud});
+const blocks = createBlockRegistry({db,TABLES,cascadeRename,log,clock:now,snapshotForBlock:id=>gisRegistry.snapshot(id),bootstrapGIS:!cloud});
 blocks.migrate();
+const gisRegistry=createGISRegistry({db,blocks,clock:now,actor:()=>currentUser?.nama||currentUser?.username||'Sistem'});
+gisRegistry.migrate();
 db.exec('CREATE TABLE IF NOT EXISTS _import_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT,table_name TEXT,row_id INTEGER,before_json TEXT,created_at TEXT)');
 const reads = createReadModels({db,TABLES,nominalJual,isJual,iklimHarian});
 
 function validateOperationalBlock(table,row,old=null) {
+  const fields=table==='pisang_blok'?['tanggal_tanam','luas_ha','pokok_tanam','klon','status']:table==='padi_tanam'?['tgl_tanam','luas_tanam_ha','varietas']:[];
+  if(old&&fields.some(k=>k in row&&String(row[k]??'')!==String(old[k]??''))&&gisRegistry.plantings().some(p=>p.source_key===table+':'+old.id)){const e=new Error('Data tanaman sudah dikelola di Peta Kebun. Ubah tanggal, luas tanam dan kelompok tanaman dari sana.');e.status=409;throw e;}
   const registry=blocks.list(),masterFields={lahan_blok:'blok',pisang_blok:'nama_blok',padi_petak:'nama_petak'};
   if(masterFields[table]){
     if(!old){const e=new Error('Blok baru dibuat melalui GIS; gunakan baris induk yang dihasilkan GIS.');e.status=409;throw e;}
@@ -683,6 +689,15 @@ async function api(req, res, url) {
   const user = sessionUser(req);
   currentUser = user;
 
+  if(parts[1]==='gis-reference'){
+    const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin||''));
+    if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});
+    const headers={'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, OPTIONS','Access-Control-Allow-Headers':'Authorization, X-GIS-App','Vary':'Origin','Cache-Control':'no-store'};
+    if(m==='OPTIONS')return send(res,200,{ok:true},'application/json',headers);
+    const token=String(req.headers.authorization||'').replace(/^Bearer /,''),app=req.headers['x-gis-app'];
+    if(m!=='GET'||!gisRegistry.verifyGrant(token,app))return send(res,401,{error:'Hubungkan kembali ke Peta Kebun. Izin referensi belum ada atau telah berakhir.'},'application/json',headers);
+    return send(res,200,gisRegistry.catalog(now().slice(0,10),ownedPlanningLocations()),'application/json',headers);
+  }
   // --- akun pertama (admin) & login
   if (parts[1] === 'me' && m === 'GET') return send(res, 200, { user, setup: userCount() === 0, roles: ROLES, online: !!cloud, vercel: VERCEL });
   if (parts[1] === 'setup' && m === 'POST') {
@@ -832,6 +847,34 @@ async function api(req, res, url) {
     return send(res,200,reads.records(t,url.searchParams));
   }
   if(parts[1]==='nursery-summary'&&m==='GET'){if(!isAdmin(user))return send(res,403,{error:'Khusus admin'});const {nurserySummary}=await import('./lib/nursery-summary.js');return send(res,200,nurserySummary(db));}
+  if(parts[1]==='gis-registry') {
+    if(!isAdmin(user))return send(res,403,{error:'Pengelolaan data induk GIS khusus admin.'});
+    const at=url.searchParams.get('at')||now().slice(0,10);
+    if(m==='POST'&&parts[2]==='grants'){const body=await readBody(req);return send(res,200,tx(()=>gisRegistry.grant(body.app)));}
+    if(m==='GET'&&!parts[2])return send(res,200,gisRegistry.catalog(at,ownedPlanningLocations()));
+    if(m==='GET'&&parts[2]==='history')return send(res,200,gisRegistry.history(parts[3]));
+    if(parts[2]==='migration'&&m==='GET')return send(res,200,gisRegistry.legacyPreview());
+    if(parts[2]==='migration'&&m==='POST'){const body=await readBody(req);return send(res,200,tx(()=>{const result=gisRegistry.importLegacy(body.token);log('migrasi data induk tanaman','_gis_plantings',null,result);return result;}));}
+    if(parts[2]==='layers'&&m==='POST'){
+      const body=await readBody(req),old=body.layerId?db.prepare('SELECT * FROM gis_layer WHERE id=?').get(Number(body.layerId)):null;
+      if(body.layerId&&!old)return send(res,404,{error:'Layer tidak ditemukan.'});
+      const layer={...old,...clean('gis_layer',body.layer||{})};if(isBlockLayer(layer))return send(res,400,{error:'Blok Tanam harus melalui pratinjau identitas blok.'});
+      if(!['Persil Lahan','Jalan'].includes(layer.jenis))return send(res,400,{error:'Pilih jenis Persil Lahan atau Jalan.'});
+      let fc;try{fc=JSON.parse(layer.geojson);}catch{return send(res,400,{error:'GeoJSON tidak valid.'});}
+      if(fc?.type!=='FeatureCollection'||!Array.isArray(fc.features)||!fc.features.length)return send(res,400,{error:'Layer harus berisi FeatureCollection.'});
+      const token=crypto.createHash('sha256').update(JSON.stringify({old,layer})).digest('hex');
+      const summary={type:'layer',kind:layer.jenis,name:layer.nama,old_features:old?JSON.parse(old.geojson).features.length:0,new_features:fc.features.length,source:body.source||null};
+      if(body.mode!=='apply')return send(res,200,{token,summary});if(body.token!==token)return send(res,409,{error:'Layer berubah sejak pratinjau. Periksa ulang.'});
+      return send(res,200,tx(()=>{
+        const before=new Map(ownedPlanningLocations().map(b=>[b.id,b.luas_ha]));for(const b of blocks.list())gisRegistry.recordBlock(b.id,'Sebelum revisi '+layer.jenis,before.get(b.id)??null);
+        let id=old?.id;if(id){const vals=clean('gis_layer',layer),keys=Object.keys(vals);db.prepare('UPDATE gis_layer SET updated_at=?,'+keys.map(k=>q(k)+'=?').join(',')+' WHERE id=?').run(now(),...keys.map(k=>vals[k]),id);}else id=insertRow('gis_layer',layer);
+        const after=new Map(ownedPlanningLocations().map(b=>[b.id,b.luas_ha]));for(const b of blocks.list())gisRegistry.recordBlock(b.id,'Revisi '+layer.jenis,after.get(b.id)??null);
+        db.prepare('INSERT INTO _gis_revisions(layer_id,before_json,after_json,summary,oleh,created_at) VALUES(?,?,?,?,?,?)').run(id,old?.geojson||null,layer.geojson,JSON.stringify(summary),user.nama||user.username,now());log('revisi layer GIS','gis_layer',id,summary);return {id,summary};
+      }));
+    }
+    if(parts[2]==='plantings'&&m==='POST'){const body=await readBody(req);return send(res,200,tx(()=>{const result=gisRegistry.savePlanting(body);log('ubah kelompok tanam','_gis_plantings',null,{id:result.id,block_id:result.block_id,version:result.version});return result;}));}
+    return send(res,404,{error:'Endpoint pusat GIS tidak ditemukan.'});
+  }
   if(parts[1]==='blocks' && m==='GET') {
     if(parts[2] && parts[3]==='history') {if(!user)return send(res,401,{error:'Silakan login.'});return send(res,200,blocks.history(parts[2]));}
     return send(res,200,verifiedOverviewBlocks());
@@ -852,12 +895,14 @@ async function api(req, res, url) {
     if(!body.token||body.token!==preview.token)return send(res,409,{error:'Pratinjau sudah berubah. Periksa kembali sebelum menerapkan.'});
     if(preview.errors.length)return send(res,400,{error:preview.errors.join('\n')});
     const result=tx(()=>{
+      for(const change of preview.changes)if(change.id&&blocks.list().some(b=>b.id===change.id))gisRegistry.recordBlock(change.id,'Sebelum revisi GIS');
       const id=old?.id||insertRow('gis_layer',{...layer,geojson:preview.geojson});
       // New IDs from this exact reviewed proposal are carried into apply.
       const applied=blocks.apply({...layer,id,geojson:preview.geojson},{mappings:body.mappings||{}});
       const values=clean('gis_layer',{...layer,geojson:applied.geojson}),cols=Object.keys(values);db.prepare('UPDATE gis_layer SET updated_at=?'+cols.map(k=>', '+q(k)+'=?').join('')+' WHERE id=?').run(now(),...cols.map(k=>values[k]),id);
       db.prepare('INSERT INTO _gis_revisions (layer_id,before_json,after_json,summary,oleh,created_at) VALUES (?,?,?,?,?,?)').run(id,old?.geojson||null,applied.geojson,JSON.stringify(preview.changes),user.nama||user.username,now());
-      capLandRows(db,now);
+      for(const change of applied.changes)gisRegistry.recordBlock(change.id,'Revisi GIS');
+      // A boundary revision must never rewrite previously recorded work quantities.
       log('revisi GIS','gis_layer',id,{changes:preview.changes});return {id,changes:preview.changes};
     });
     return send(res,200,result);
@@ -1038,7 +1083,8 @@ async function api(req, res, url) {
           const inserted = insert.run(now(), now(), reportId, numberOrNull(x.plan_item_id), x.di_luar_rencana ? 1 : 0, i + 1, aktivitas, textLimit(x.blok, 200), numberOrNull(x.target), numberOrNull(x.realisasi), null, textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), numberOrNull(x.hk_realisasi), textLimit(x.alat, 200), numberOrNull(x.meter_awal), numberOrNull(x.meter_akhir), numberOrNull(x.ritase), textLimit(x.keterangan, 1000));
           const historical = previousItems.find(p=>Number(p.id)===Number(x.id) && util.key(p.blok)===util.key(x.blok));
           db.prepare('UPDATE daily_item SET realisasi_input=? WHERE id=?').run(historical&&Number(x.realisasi)===Number(historical.realisasi)?historical.realisasi_input??numberOrNull(x.realisasi):numberOrNull(x.realisasi),Number(inserted.lastInsertRowid));
-          if(historical) db.prepare('UPDATE daily_item SET block_id=?,block_name_snapshot=? WHERE id=?').run(historical.block_id,historical.block_name_snapshot,Number(inserted.lastInsertRowid));
+          if(historical) db.prepare('UPDATE daily_item SET block_id=?,block_name_snapshot=?,block_refs_snapshot=? WHERE id=?').run(historical.block_id,historical.block_name_snapshot,historical.block_refs_snapshot||null,Number(inserted.lastInsertRowid));
+          else {const ref=blocks.canonical('daily_item',{blok:x.blok});if(ref.block_refs_snapshot)db.prepare('UPDATE daily_item SET block_refs_snapshot=? WHERE id=?').run(ref.block_refs_snapshot,Number(inserted.lastInsertRowid));}
         }
         db.prepare('UPDATE daily_report SET hk_kegiatan=? WHERE id=?').run(activityGroups?JSON.stringify(activityGroups):null,reportId);
         landResult=saveDailyLand(db,reportId,now,insertRow);
@@ -1173,7 +1219,9 @@ async function api(req, res, url) {
       if(table==='gis_layer' && body.geojson && isBlockLayer({...old,...body})) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
       validateOperationalBlock(table,body,old);
-      let r = clean(table, blocks.canonical(table, table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body));
+      const canonical=blocks.canonical(table,table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
+      let r = clean(table,canonical);
+      if(canonical.block_id&&canonical.block_id!==old.block_id){r.block_id=canonical.block_id;r.block_name_snapshot=canonical.block_name_snapshot;r.block_refs_snapshot=canonical.block_refs_snapshot;}
       if (TABLES[table].lengkapi && old) { const L = clean(table, TABLES[table].lengkapi({ ...old, ...r }, old)); for (const [k, v] of Object.entries(L)) if (k in r || (v ?? null) !== (old[k] ?? null)) r[k] = v; } // hanya kolom yang diubah / terisi otomatis
       const cols = Object.keys(r);
       let related = 0;
@@ -1375,9 +1423,10 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
       if(hiddenActivity(input.aktivitas)){s.peringatan.push('Baris '+input.__baris+': kegiatan tidak digunakan untuk input admin; data lama tetap disimpan.');continue;}
       const id=Number(input._record_id)||null,previous=id?cur.find(x=>x.id===id):null;
       if(t==='lahan_harian'&&previous?.daily_report_id){s.peringatan.push('Baris '+input.__baris+': mengikuti Daily Report; revisi melalui Daily, tidak diinput ulang.');continue;}
-      let row;try{row=blocks.canonical(t,prepareExcelInput(t,input,previous,{findBlock:blocks.find,targets:rowsOf('lahan_target')}));}catch(e){s.errors.push({row:input.__baris,msg:e.message});continue;}
+      let row;try{row=blocks.canonical(t,prepareExcelInput(t,input,previous,{findBlock:blocks.find,targets:rowsOf('lahan_target')}));validateOperationalBlock(t,row,previous);}catch(e){s.errors.push({row:input.__baris,msg:e.message});continue;}
       const cleaned=clean(t,TABLES[t].lengkapi?TABLES[t].lengkapi(row,previous):row);
       if(row.block_id){cleaned.block_id=row.block_id;cleaned.block_name_snapshot=row.block_name_snapshot;}
+      if(row.block_refs_snapshot)cleaned.block_refs_snapshot=previous?.block_id===row.block_id?previous.block_refs_snapshot||row.block_refs_snapshot:row.block_refs_snapshot;
       if(id) {
         const old=cur.find(x=>x.id===id);
         if(!old||seenIds.has(id)){s.errors.push({row:input.__baris,msg:'ID baris tidak ditemukan dalam halaman ini atau digunakan dua kali.'});continue;}seenIds.add(id);
@@ -1457,21 +1506,21 @@ function readScope(req,url){
   if(!VERCEL)return null;
   const p=url.pathname;
   if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
-  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
+  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
   if(p==='/api/tables')return authTables;
-  const raw=p.match(/^\/api\/t\/([a-z_]+)$/);if(raw&&TABLES[raw[1]])return [...authTables,raw[1]];
+  const raw=p.match(/^\/api\/t\/([a-z_]+)$/);if(raw&&TABLES[raw[1]])return req.method==='GET'?[...authTables,raw[1]]:null;
   const page=p.match(/^\/api\/records\/([a-z_]+)$/);if(page&&TABLES[page[1]]){const dependencies={pisang_blok:['pisang_panen_pkk'],padi_tanam:['padi_panen'],padi_panen:['padi_petak'],infra_proyek:['infra_progress'],lahan_blok:['lahan_harian','lahan_aktivitas']};return [...authTables,page[1],...(dependencies[page[1]]||[])];}
-  if(p==='/api/padi-summary')return [...authTables,'padi_petak','padi_tanam','padi_panen','padi_giling','padi_benih','_blocks','gis_layer'];
+  if(p==='/api/padi-summary')return [...authTables,'_gis_plantings','padi_petak','padi_tanam','padi_panen','padi_giling','padi_benih','_blocks','gis_layer'];
   if(p==='/api/nursery-summary')return [...authTables,'pisang_bibit'];
   if(/^\/api\/blocks\/[^/]+\/history$/.test(p))return [...authTables,'_blocks','_block_links',...Object.keys(TABLES).filter(t=>!['gis_layer','daily_photo','iklim'].includes(t))];
   if(p==='/api/blocks')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/summary-periods')return authTables;
-  if(p==='/api/kebun-plan')return [...authTables,...land,'pisang_bibit','pisang_box','pisang_estimasi','_blocks','gis_layer','_land_week_plan_snapshots'];
+  if(p==='/api/kebun-plan')return [...authTables,'_gis_plantings',...land,'pisang_bibit','pisang_box','pisang_estimasi','_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/kebun-plan/map')return [...authTables,'_blocks','gis_layer'];
   if(p==='/api/overview')return authTables;
-  if(p==='/api/kebun-summary')return [...authTables,...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
+  if(p==='/api/kebun-summary')return [...authTables,'_gis_plantings',...land,'_blocks','gis_layer','_land_week_plan_snapshots'];
   if(p==='/api/kebun')return [...authTables,...land];
   if(/^\/api\/daily\/public\/photo\/\d+$/.test(p))return [...authTables,'daily_photo','daily_report'];
   if(p==='/api/daily/hk-summary')return [...authTables,'daily_report','daily_item'];
@@ -1522,7 +1571,7 @@ async function handler(req, res) {
       if (req.method !== 'GET' && url.pathname.startsWith('/api/t/') && res.statusCode < 300 && EXCEL_TABLES.has(t)) scheduleExcelWrite();
       return;
     }
-    const rel = url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
+    const rel = /^\/peta\/?$/.test(url.pathname) ? 'peta.html' : url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname.slice(1));
     const f = safeJoin(path.join(ROOT, 'public'), rel);
     return f ? serveFile(res, f) : send(res, 403, 'Forbidden', 'text/plain');
   } catch (e) {
@@ -1554,6 +1603,7 @@ export default async function serve(req,res){
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});
     return res.end(fs.readFileSync(new URL('./public/index.html',import.meta.url)));
   }
+  if(process.env.VERCEL&&/^\/peta\/?$/.test(pathname)){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(fs.readFileSync(new URL('./public/peta.html',import.meta.url)));}
   if(process.env.VERCEL&&(pathname==='/kebun'||pathname==='/kebun/')){
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});
     return res.end(fs.readFileSync(new URL('./public/kebun.html',import.meta.url)));
