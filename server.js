@@ -1,3 +1,4 @@
+import {saveWeeklyItems} from './lib/weekly-plan-store.js';
 import {prepareExcelInput,referenceSheets,capExcelLandChanges} from './lib/excel-input-policy.js';
 import {padiSummary} from './lib/padi-summary.js';
 import {inputRows,inputSummary} from './lib/input-summary.js';
@@ -157,6 +158,9 @@ function migrate() {
   for(const [table,T] of Object.entries(TABLES)) for(const f of T.f.filter(f=>f.t==='ref'||f.k===T.date)) db.exec('CREATE INDEX IF NOT EXISTS '+q('idx_'+table+'_'+f.k)+' ON '+q(table)+'('+q(f.k)+')');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS daily_report_hari_divisi ON daily_report(tanggal, divisi)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS daily_week_plan_minggu_divisi ON daily_week_plan(week_start, divisi)');
+  if(!db.prepare('PRAGMA table_info(daily_week_item)').all().some(c=>c.name==='retired'))db.exec('ALTER TABLE daily_week_item ADD COLUMN retired INTEGER DEFAULT 0');
+  db.exec('CREATE TABLE IF NOT EXISTS _weekly_revisions(id INTEGER PRIMARY KEY,plan_id INTEGER,created_at TEXT,actor TEXT,before_json TEXT)');
+  db.exec('CREATE TABLE IF NOT EXISTS _daily_submissions(request_key TEXT PRIMARY KEY,user_id INTEGER,payload_hash TEXT,response_json TEXT,created_at TEXT)');
   db.exec('CREATE INDEX IF NOT EXISTS daily_week_item_plan ON daily_week_item(plan_id)');
   db.exec('CREATE INDEX IF NOT EXISTS daily_item_report ON daily_item(report_id)');
   db.exec('CREATE INDEX IF NOT EXISTS daily_photo_expire ON daily_photo(expires_at, deleted_at)');
@@ -238,7 +242,7 @@ function weekBounds(value) {
 
 function weeklyPlanPayload(plan) {
   if (!plan) return null;
-  return { ...plan, items: db.prepare('SELECT * FROM daily_week_item WHERE plan_id=? ORDER BY urutan, id').all(plan.id) };
+  return { ...plan, items: db.prepare('SELECT * FROM daily_week_item WHERE plan_id=? AND COALESCE(retired,0)=0 ORDER BY urutan, id').all(plan.id) };
 }
 
 let parcelLocations;
@@ -907,14 +911,16 @@ async function api(req, res, url) {
         const occupied = db.prepare('SELECT id, status FROM daily_week_plan WHERE week_start=? AND divisi=?').get(bounds.start, divisi);
         if (occupied && (!b.id || Number(occupied.id) !== Number(b.id))) return send(res, 409, { error: `Rencana ${divisi} minggu ${bounds.start} sudah ada (${occupied.status}). Buka rencana itu dari daftar untuk melanjutkan atau merevisi.` });
       }
+      if(old&&b.workflow_v2&&(!b.updated_at||b.updated_at!==old.updated_at))return send(res,409,{error:'Rencana telah diperbarui dari tempat lain. Tutup dan buka kembali rencana agar versi terbaru tidak tertimpa.'});
+      if(!Array.isArray(b.items)||!b.items.length)return send(res,400,{error:'Isi minimal satu kegiatan dan blok.'});
       const weeklyGroups=b.workflow_v2?checkWeeklyWorkflow(b,ownedDailyLocations(),old?db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(old.id):[]):null;
       const status = b.status === 'Dikirim' ? 'Dikirim' : 'Draf', penginput = user.nama || user.username;
       let planId;
       tx(() => {
-        if (old) { planId = old.id; db.prepare('UPDATE daily_week_plan SET updated_at=?, week_start=?, week_end=?, divisi=?, status=?, catatan=?, dikirim_at=?, dibuat_oleh=? WHERE id=?').run(now(), bounds.start, bounds.end, divisi, status, textLimit(b.catatan, 2000), status === 'Dikirim' ? old.dikirim_at || now() : old.dikirim_at || null, penginput, planId); db.prepare('DELETE FROM daily_week_item WHERE plan_id=?').run(planId); }
+        if(old)db.prepare('INSERT INTO _weekly_revisions(plan_id,created_at,actor,before_json) VALUES(?,?,?,?)').run(old.id,now(),penginput,JSON.stringify(weeklyPlanPayload(old)));
+        if (old) { planId = old.id; db.prepare('UPDATE daily_week_plan SET updated_at=?, week_start=?, week_end=?, divisi=?, status=?, catatan=?, dikirim_at=?, dibuat_oleh=? WHERE id=?').run(now(), bounds.start, bounds.end, divisi, status, textLimit(b.catatan, 2000), status === 'Dikirim' ? old.dikirim_at || now() : old.dikirim_at || null, penginput, planId); }
         else { const r = db.prepare('INSERT INTO daily_week_plan (created_at, updated_at, week_start, week_end, divisi, status, catatan, dikirim_at, dibuat_oleh) VALUES (?,?,?,?,?,?,?,?,?)').run(now(), now(), bounds.start, bounds.end, divisi, status, textLimit(b.catatan, 2000), status === 'Dikirim' ? now() : null, penginput); planId = Number(r.lastInsertRowid); }
-        const insert = db.prepare('INSERT INTO daily_week_item (created_at, updated_at, plan_id, urutan, blok, aktivitas, target, satuan, hk_rencana, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?)');
-        for (const [i, x] of (Array.isArray(b.items) ? b.items : []).slice(0, 200).entries()) { const blok = textLimit(x.blok, 200), aktivitas = textLimit(x.aktivitas, 300); if (!blok || !aktivitas) continue; insert.run(now(), now(), planId, i + 1, blok, aktivitas, numberOrNull(x.target), textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), textLimit(x.keterangan, 1000)); }
+        saveWeeklyItems(db,planId,b.items.map(x=>({...x,blok:textLimit(x.blok,200),aktivitas:textLimit(x.aktivitas,300),satuan:textLimit(x.satuan,30),keterangan:textLimit(x.keterangan,1000)})),now());
         db.prepare('UPDATE daily_week_plan SET hk_kegiatan=? WHERE id=?').run(weeklyGroups?JSON.stringify(weeklyGroups):null,planId);
       });
       blocks.linkTable('daily_week_item');
@@ -989,6 +995,10 @@ async function api(req, res, url) {
       if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.tanggal || ''))) return send(res, 400, { error: 'Tanggal wajib diisi' });
       if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${divisi}` });
+      const submissionKey=b.request_key?String(b.request_key):null;
+      if(submissionKey&&!/^[a-zA-Z0-9-]{16,80}$/.test(submissionKey))return send(res,400,{error:'Nomor kiriman tidak valid.'});
+      const {request_key,...submissionBody}=b,submissionHash=crypto.createHash('sha256').update(JSON.stringify(submissionBody)).digest('hex');
+      if(submissionKey){const prior=db.prepare('SELECT * FROM _daily_submissions WHERE request_key=?').get(submissionKey);if(prior){if(prior.user_id!==user.id||prior.payload_hash!==submissionHash)return send(res,409,{error:'Nomor kiriman sudah digunakan untuk isian berbeda. Muat ulang laporan.'});return send(res,200,JSON.parse(prior.response_json));}}
       let old = b.id ? db.prepare('SELECT * FROM daily_report WHERE id=?').get(Number(b.id)) : db.prepare('SELECT * FROM daily_report WHERE tanggal=? AND divisi=?').get(b.tanggal, divisi);
       if (old && !canDaily(user, old.divisi)) return send(res, 403, { error: 'Tidak diizinkan mengubah laporan ini' });
       if(b.workflow_v2){
@@ -1021,7 +1031,7 @@ async function api(req, res, url) {
           reportId = Number(r.lastInsertRowid);
         }
         const insert = db.prepare('INSERT INTO daily_item (created_at, updated_at, report_id, plan_item_id, di_luar_rencana, urutan, aktivitas, blok, target, realisasi, hasil_sdhi, satuan, hk_rencana, hk_realisasi, alat, meter_awal, meter_akhir, ritase, keterangan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
-        for (const [i, x] of (Array.isArray(b.items) ? b.items : []).slice(0, 100).entries()) {
+        for (const [i, x] of (Array.isArray(b.items) ? b.items : []).entries()) {
           const aktivitas = textLimit(x.aktivitas, 300); if (!aktivitas) continue;
           const inserted = insert.run(now(), now(), reportId, numberOrNull(x.plan_item_id), x.di_luar_rencana ? 1 : 0, i + 1, aktivitas, textLimit(x.blok, 200), numberOrNull(x.target), numberOrNull(x.realisasi), null, textLimit(x.satuan, 30), numberOrNull(x.hk_rencana), numberOrNull(x.hk_realisasi), textLimit(x.alat, 200), numberOrNull(x.meter_awal), numberOrNull(x.meter_akhir), numberOrNull(x.ritase), textLimit(x.keterangan, 1000));
           const historical = previousItems.find(p=>Number(p.id)===Number(x.id) && util.key(p.blok)===util.key(x.blok));
@@ -1034,7 +1044,9 @@ async function api(req, res, url) {
       });
       blocks.linkTable('daily_item');blocks.linkTable('lahan_harian');
       log(old ? 'ubah' : 'tambah', 'daily_report', reportId, { tanggal: b.tanggal, divisi, status, jumlah_kegiatan: (b.items || []).length });
-      return send(res, 200, {...dailyPayload(db.prepare('SELECT * FROM daily_report WHERE id=?').get(reportId)),adjusted_land_items:landResult.adjusted});
+      const savedResponse={...dailyPayload(db.prepare('SELECT * FROM daily_report WHERE id=?').get(reportId)),adjusted_land_items:landResult.adjusted};
+      if(submissionKey)db.prepare('INSERT INTO _daily_submissions VALUES(?,?,?,?,?)').run(submissionKey,user.id,submissionHash,JSON.stringify(savedResponse),now());
+      return send(res,200,savedResponse);
     }
     return send(res, 404, { error: 'Alamat Daily Report tidak dikenal' });
   }
@@ -1349,7 +1361,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
   const rep={waktu:now(),sumber,preview,oleh,panel:panel?.label||null,sheets:[],backup:null,peringatan:['Mode aman: baris yang hilang dari file tetap disimpan. Gunakan ID dan versi baris untuk merevisi data lama.']},todo=[];
   for(const p of parsed) {
     const t=p.cfg.table,all=db.prepare('SELECT * FROM '+q(t)).all(),scope=panel?scopeOf(t,panel.kom):null,cur=scope?all.filter(scope):all;
-    const s={sheet:p.cfg.sheet,tabel:TABLES[t].title,baris:p.rows.length,sebelum:cur.length,tambah:0,ubah:0,hapus:0,status:'tidak berubah',koreksi:p.koreksi||[],peringatan:p.peringatan||[],errors:p.errors.slice(0,30),jumlahError:p.errors.length,layoutBeda:!!p.layoutBeda};rep.sheets.push(s);
+    const s={sheet:p.cfg.sheet,tabel:TABLES[t].title,baris:p.rows.length,sebelum:cur.length,tambah:0,ubah:0,hapus:0,changes:[],status:'tidak berubah',koreksi:p.koreksi||[],peringatan:p.peringatan||[],errors:p.errors.slice(0,30),jumlahError:p.errors.length,layoutBeda:!!p.layoutBeda};rep.sheets.push(s);
     if(!p.found){s.status='sheet tidak ada — dilewati';continue;}
     if(referenceSheets.has(t)){s.status='referensi otomatis — tidak diinput ulang';s.errors=[];s.jumlahError=0;continue;}
     if(p.kosong){s.status='permintaan kosong diabaikan — data lama dipertahankan';continue;}
@@ -1360,6 +1372,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
       if(t==='lahan_harian'&&previous?.daily_report_id){s.peringatan.push('Baris '+input.__baris+': mengikuti Daily Report; revisi melalui Daily, tidak diinput ulang.');continue;}
       let row;try{row=blocks.canonical(t,prepareExcelInput(t,input,previous,{findBlock:blocks.find,targets:rowsOf('lahan_target')}));}catch(e){s.errors.push({row:input.__baris,msg:e.message});continue;}
       const cleaned=clean(t,TABLES[t].lengkapi?TABLES[t].lengkapi(row,previous):row);
+      if(row.block_id){cleaned.block_id=row.block_id;cleaned.block_name_snapshot=row.block_name_snapshot;}
       if(id) {
         const old=cur.find(x=>x.id===id);
         if(!old||seenIds.has(id)){s.errors.push({row:input.__baris,msg:'ID baris tidak ditemukan dalam halaman ini atau digunakan dua kali.'});continue;}seenIds.add(id);
@@ -1367,7 +1380,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
         if(!input._row_updated_at){s.errors.push({row:input.__baris,msg:'Versi baris wajib untuk merevisi data lama. Download template terbaru.'});continue;}
         const masterField=({lahan_blok:'blok',pisang_blok:'nama_blok',padi_petak:'nama_petak'})[t];
         if(masterField&&cleaned[masterField]!==old[masterField]){s.errors.push({row:input.__baris,msg:'Ubah nama blok melalui GIS.'});continue;}
-        if(Object.entries(cleaned).some(([k,v])=>!samaNilai(v,old[k]))) {ops.push({id,old,row:cleaned});s.ubah++;}
+        if(Object.entries(cleaned).some(([k,v])=>!samaNilai(v,old[k]))) {ops.push({id,old,row:cleaned});s.ubah++;for(const f of sheetFields(TABLES,p.cfg)){if(!f.k.startsWith('_')&&!samaNilai(cleaned[f.k],old[f.k])&&s.changes.length<100)s.changes.push({row:input.__baris,field:f.l,before:old[f.k]??null,after:cleaned[f.k]??null});}}
       } else {
         const sigKey=sig(t,p.cfg,row);if(existing.get(sigKey)){existing.set(sigKey,existing.get(sigKey)-1);continue;}
         const display=TABLES[t].display;
@@ -1439,7 +1452,7 @@ function readScope(req,url){
   if(!VERCEL)return null;
   const p=url.pathname;
   if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
-  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item'];
+  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
   if(p==='/api/tables')return authTables;
