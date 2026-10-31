@@ -9,6 +9,7 @@ test('last year is a full distinct calendar year across year/week boundaries',()
 });
 test('harvest plan uses full monthly estimate and submitted weekly box plans, excluding drafts and tandan',()=>{
  const db=new DatabaseSync(':memory:');for(const t of ['pisang_estimasi','daily_week_plan','daily_week_item','pisang_box'])db.exec(`CREATE TABLE ${t}(id INTEGER PRIMARY KEY,${TABLES[t].f.filter(f=>f.t!=='calc').map(f=>f.k+' TEXT').join(',')})`);
+ db.exec('ALTER TABLE daily_week_item ADD COLUMN retired INTEGER DEFAULT 0');
  db.exec("INSERT INTO pisang_estimasi(id,bulan,box) VALUES(1,'2026-10-31',1000),(2,'2026-11-01',2000);INSERT INTO daily_week_plan(id,week_start,divisi,status) VALUES(1,'2026-10-26','Pisang','Dikirim'),(2,'2026-10-26','Pisang','Draf');INSERT INTO daily_week_item(id,plan_id,aktivitas,target,satuan) VALUES(1,1,'Panen',100,'box'),(2,1,'Panen',900,'tandan'),(3,2,'Panen',800,'box')");
  const get=date=>harvestPlanValues(harvestPlanQueries(date).map(q=>db.prepare(q.sql).get(...q.args)));
  assert.deepEqual(get('2026-10-26'),{planBoxes:1000,weeklyPlanBoxes:100,previousWeekBoxes:0});

@@ -9,6 +9,15 @@ Aplikasi Pisang, Padi, Infra, Daily Report, iklim, penjualan, dan GIS. Node.js +
 3. Buka `http://localhost:3000`. Instalasi baru menyediakan pembuatan admin pertama.
 4. Komputer/HP di WiFi yang sama dapat memakai alamat jaringan yang dicetak oleh server.
 
+## Pembaruan keandalan input
+
+- Revisi blok transaksi melalui Excel memperbarui ID dan tautan blok tujuan. Pratinjau menampilkan nilai sebelum dan sesudah.
+- Rencana mingguan dan realisasi tidak lagi dipotong pada 200/100 baris. Ukuran kiriman tetap mengikuti batas teknis layanan; kegagalan tidak dianggap tersimpan.
+- Revisi rencana memeriksa versi terakhir dan mempertahankan ID rincian. Rincian yang dihapus dari rencana tetap tersimpan untuk riwayat realisasi.
+- Kiriman Daily memakai nomor unik agar pengulangan respons jaringan tidak membuat laporan baru.
+- Antrean foto dan keterangannya disimpan di IndexedDB per akun/tanggal/divisi, lalu dilanjutkan saat formulir dibuka kembali. Jika penyimpanan perangkat tidak tersedia atau penuh, tampil peringatan. Menghapus data browser juga menghapus draf dan foto yang belum diunggah.
+- Ringkasan, laporan selesai, dan foto publik tetap dapat dibuka tanpa login.
+
 ## Pembaruan 1.1
 
 - Ringkasan owner dan modul memakai respons ringkas. Transaksi ditampilkan 50 baris per halaman, dengan filter tanggal dan pencarian dari server.
@@ -65,7 +74,7 @@ Import repo ke Vercel dengan Framework Preset Other. Hubungkan database Turso da
 - `BLOB_READ_WRITE_TOKEN`
 - `CRON_SECRET` untuk pembersihan foto
 
-Redeploy setelah variabel diatur. Jangan mengganti database Turso saat hanya memperbarui kode. Pengaturan dan akun tetap berasal dari database yang sama. Foto mengikuti kebijakan retensi aplikasi (7 hari berdasarkan tanggal laporan, WIB; foto asli dan thumbnail dihapus otomatis); teks laporan tetap disimpan.
+Redeploy setelah variabel diatur. Jangan mengganti database Turso saat hanya memperbarui kode. Pengaturan dan akun tetap berasal dari database yang sama. Foto mengikuti kebijakan retensi aplikasi (14 hari berdasarkan tanggal laporan, WIB; foto asli dan thumbnail dihapus otomatis); teks laporan tetap disimpan.
 
 Opsional lokal: `PORT`, `DATA_DIR`, `EXCEL_FILE`, atau `data/online.json` untuk memakai database online dari komputer kantor. Jangan commit kredensial atau folder data.
 

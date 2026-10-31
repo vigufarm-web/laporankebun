@@ -64,7 +64,7 @@ export function validatePlan(groups,locations,division){
    items.push({...row,aktivitas:g.aktivitas,satuan:g.satuan,target:g.satuan==='HK'||blank(row.target)?null:row.target,hk_rencana:null});
   }hk_groups.push({key:groupKey,hk:g.hk,manual:false,mode:g.mode,times:g.times,...(kind.locked?{}:{jenis:kind.kind})});
  });
- if(items.length>200)problems.push({message:'Maksimal 200 baris blok/kegiatan per minggu.'});
+
  if(problems.length){const e=new Error(problems.length===1?problems[0].message:`${problems.length} isian belum lengkap. Pertama: ${problems[0].message}`);e.problems=problems;throw e;}
  return {items,hk_groups};
 }

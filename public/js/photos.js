@@ -8,7 +8,7 @@ export async function compressPhoto(file,max=1280,budget=350000) {
 // meta = { caption, jenis }: keterangan yang ditulis mandor. Nama file kamera tidak lagi dipakai sebagai keterangan.
 export async function uploadPhoto(file,reportId,progress=()=>{},existingId=null,meta={}) {
   let id=existingId;
-  const post=async(url,blob)=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':blob.type},body:blob});const j=await r.json();if(!r.ok)throw new Error(j.error||'Unggah foto gagal');return j;};
+  const post=async(url,blob)=>{const r=await fetch(url,{method:'POST',headers:{'Content-Type':blob.type},body:blob,signal:AbortSignal.timeout(45000)});const j=await r.json();if(!r.ok)throw new Error(j.error||'Unggah foto gagal');return j;};
   try{
     if(!id){progress('Mengompres foto…');const photo=await compressPhoto(file);progress('Mengunggah foto…');const saved=await post('/api/daily/photo?'+new URLSearchParams({report:reportId,jenis:['Apel','Kegiatan','Kendala'].includes(meta.jenis)?meta.jenis:'Kegiatan',caption:String(meta.caption||'').trim().slice(0,200)}),photo);id=saved.id;}
     progress('Menyiapkan thumbnail…');const thumb=await compressPhoto(file,420,50000);await post(`/api/daily/photo/${id}/thumbnail?report=${reportId}`,thumb);return id;
@@ -17,10 +17,10 @@ export async function uploadPhoto(file,reportId,progress=()=>{},existingId=null,
 const escH=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Keterangan per foto sebelum diunggah: foto kecil + kolom keterangan dengan pilihan cepat dari kegiatan laporan (mis. "P12 · Panen padi").
 // queue = [{file, caption}] — keterangan disimpan di item antrean sehingga tetap ada bila form digambar ulang.
-export function photoCaptionInputs(host,queue,saran=[]){
+export function photoCaptionInputs(host,queue,saran=[],onChange=()=>{}){
   if(!host)return;
   const id='fotoKet'+Math.random().toString(36).slice(2,8);
   for(const p of queue)p.preview??=URL.createObjectURL(p.file);
   host.innerHTML=queue.length?`<datalist id="${id}">${[...new Set(saran.map(s=>String(s||'').trim()).filter(Boolean))].slice(0,80).map(s=>`<option value="${escH(s)}">`).join('')}</datalist><div class="photo-captions">${queue.map((p,i)=>`<label class="photo-caption"><img src="${p.preview}" alt=""><span>Keterangan foto ${i+1}<input data-cap="${i}" list="${id}" maxlength="200" value="${escH(p.caption||'')}" placeholder="pilih kegiatan atau ketik, mis. Panen P12"></span></label>`).join('')}</div>`:'';
-  host.querySelectorAll('[data-cap]').forEach(el=>el.oninput=()=>{queue[el.dataset.cap].caption=el.value.trim();});
+  host.querySelectorAll('[data-cap]').forEach(el=>el.oninput=()=>{queue[el.dataset.cap].caption=el.value.trim();onChange();});
 }
