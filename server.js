@@ -1,3 +1,4 @@
+import {withGeneralDailyLocations} from './public/js/daily-locations.js';
 import {hiddenActivity,visibleActivityRows} from './public/js/activity-visibility.js';
 import {saveWeeklyItems} from './lib/weekly-plan-store.js';
 import {prepareExcelInput,referenceSheets,capExcelLandChanges} from './lib/excel-input-policy.js';
@@ -887,7 +888,7 @@ async function api(req, res, url) {
     if(!isAdmin(user)&&!dailyOnly(user))return send(res,403,{error:'Daily Report hanya untuk admin dan mandor sesuai divisinya.'});
     if (m === 'GET' && parts[2] === 'locations') {
       if (!user) return send(res, 401, { error: 'Silakan login untuk memilih lokasi Daily Report' });
-      return send(res,200,ownedDailyLocations());
+      return send(res,200,withGeneralDailyLocations(ownedDailyLocations()));
     }
     if (m === 'GET' && parts[2] === 'plans') {
       const selected = url.searchParams.get('week') || now().slice(0, 10), bounds = weekBounds(selected);
@@ -899,7 +900,7 @@ async function api(req, res, url) {
     }
     if (m === 'POST' && parts[2] === 'plans') {
       const b = await readBody(req), divisi = String(b.divisi || ''), bounds = weekBounds(b.week_start);
-      const ownedNames = new Set(ownedDailyLocations().map(x=>util.key(x.nama)));
+      const ownedNames = new Set(withGeneralDailyLocations(ownedDailyLocations()).map(x=>util.key(x.nama)));
       if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)))) return send(res,400,{error:'Pilih blok GIS aktif yang tersedia.'});
       if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
       if (!bounds) return send(res, 400, { error: 'Minggu pelaksanaan wajib diisi' });
@@ -914,7 +915,7 @@ async function api(req, res, url) {
       }
       if(old&&b.workflow_v2&&(!b.updated_at||b.updated_at!==old.updated_at))return send(res,409,{error:'Rencana telah diperbarui dari tempat lain. Tutup dan buka kembali rencana agar versi terbaru tidak tertimpa.'});
       if(!Array.isArray(b.items)||!b.items.length)return send(res,400,{error:'Isi minimal satu kegiatan dan blok.'});
-      const weeklyGroups=b.workflow_v2?checkWeeklyWorkflow(b,ownedDailyLocations(),old?db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(old.id):[]):null;
+      const weeklyGroups=b.workflow_v2?checkWeeklyWorkflow(b,withGeneralDailyLocations(ownedDailyLocations()),old?db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(old.id):[]):null;
       const status = b.status === 'Dikirim' ? 'Dikirim' : 'Draf', penginput = user.nama || user.username;
       let planId;
       tx(() => {
@@ -992,7 +993,7 @@ async function api(req, res, url) {
     }
     if (m === 'POST' && !parts[2]) {
       const b = await readBody(req), divisi = String(b.divisi || '');
-      const ownedNames = new Set(ownedDailyLocations().map(x=>util.key(x.nama)));
+      const ownedNames = new Set(withGeneralDailyLocations(ownedDailyLocations()).map(x=>util.key(x.nama)));
       if (!DAILY_DIVISI.includes(divisi)) return send(res, 400, { error: 'Divisi harus Pisang, Padi, atau Infra' });
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b.tanggal || ''))) return send(res, 400, { error: 'Tanggal wajib diisi' });
       if (!canDaily(user, divisi)) return send(res, 403, { error: `Akun ini tidak boleh mengubah Daily Report ${divisi}` });
