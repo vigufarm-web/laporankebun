@@ -30,7 +30,7 @@ test('legacy migration is previewed, stale-safe, idempotent and leaves source qu
 test('plant groups enforce combined area, version conflicts and dated cycle overrides',()=>{
  const {db,registry}=fixture();try{
  const p=registry.savePlanting({block_id:'gis-A',commodity:'Pisang',planted_on:'2025-05-22',area_ha:1.2,population:2400,reason:'Tanam kelompok pertama'});
- assert.throws(()=>registry.savePlanting({block_id:'gis-A',area_ha:1,reason:'Kelompok kedua'}),/melebihi/);
+ assert.throws(()=>registry.savePlanting({block_id:'gis-A',population:2000,reason:'Kelompok kedua'}),/melebihi/);
  const next=registry.savePlanting({...p,expected_version:1,cycle_override:'R2',cycle_effective_on:'2026-10-31',reason:'Verifikasi lapangan'});
  assert.equal(plantState(next,'2026-10-30').cycle,'R1');assert.equal(plantState(next,'2026-10-31').cycle,'R2');
  assert.throws(()=>registry.savePlanting({...p,expected_version:1,reason:'Form lama'}),/berubah/);
@@ -47,3 +47,5 @@ test('read grants are hashed, application scoped and expire without granting edi
 test('Padi migration uses its actual planting and planted-area fields',()=>{
  const {db,registry}=fixture();try{db.exec("INSERT INTO _blocks(id,nama,divisi,active,layer_id,luas_ha) VALUES('gis-P','P01','Padi',1,1,1);INSERT INTO padi_tanam VALUES(1,'P01','gis-P','2026-10-01',0.8,'Inpari 32','MT2',2026)");const p=registry.legacyPreview();assert.equal(p.rows[0].planted_on,'2026-10-01');assert.equal(p.rows[0].area_ha,.8);registry.importLegacy(p.token);assert.equal(registry.plantings()[0].season,'MT2 2026');}finally{db.close();}
 });
+
+test('banana area follows initial planting density while replanting changes population only',()=>{const {db,registry}=fixture();try{const p=registry.savePlanting({block_id:'gis-A',commodity:'Pisang',population:2000,replacement_plants:50,lost_plants:20,area_ha:999,reason:'Pengukuran'}),state=plantState(p,'2026-10-31');assert.equal(p.area_ha,1);assert.equal(state.current_population,2030);assert.equal(state.area_from_plants_ha,1);assert.throws(()=>registry.savePlanting({...p,expected_version:1,lost_plants:3000,reason:'Salah'}),/melebihi/);}finally{db.close();}});
