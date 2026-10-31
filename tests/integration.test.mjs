@@ -21,12 +21,23 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
  try{
   let ready=false;for(let i=0;i<240;i++){if(proc.exitCode!=null)throw Error(output);try{const r=await fetch(base+'/api/me');if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,250));}assert.ok(ready,'server starts: '+output);
   const request=async(p,method='GET',body)=>{const r=await fetch(base+p,{method,headers:{cookie,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return {status:r.status,body:await r.json()};};
+  const discovery=await fetch(base+'/api/gis-service',{headers:{Origin:'https://vigufarm-web.github.io'}});assert.equal(discovery.status,200);assert.equal(discovery.headers.get('access-control-allow-origin'),'https://vigufarm-web.github.io');assert.deepEqual(Object.keys(await discovery.json()),['url']);
   const initial=await request('/api/records/pisang_penjualan?limit=50');assert.equal(initial.status,401);
   const publicSettings=await request('/api/settings');assert.deepEqual(Object.keys(publicSettings.body),['nama']);assert.equal((await request('/api/log')).status,401);
   const kebun=await request('/api/kebun');assert.equal(kebun.status,401);const summary=await request('/api/kebun-summary');assert.equal(summary.status,200);assert.ok(!JSON.stringify(summary.body).includes('geojson'));assert.ok(!JSON.stringify(summary.body).includes('pembeli'));
   const riceSummary=await request('/api/padi-summary');assert.equal(riceSummary.status,200);assert.ok(Math.abs(riceSummary.body.area-riceSummary.body.plantedHa-riceSummary.body.harvestedHa-riceSummary.body.otherHa)<1e-8);assert.ok(!JSON.stringify(riceSummary.body).includes('geojson'));
   const overview=await request('/api/overview?from=2026-10-01&to=2026-10-24');assert.equal(overview.status,200);assert.equal(overview.body.climate.observations>0,true);assert.ok(JSON.stringify(overview.body).length<80000,'small overview response');
-  let r=await request('/api/setup','POST',{username:'test-admin',nama:'Integration test',password:crypto.randomUUID()});assert.equal(r.status,200);
+  const adminPassword=crypto.randomUUID();let r=await request('/api/setup','POST',{username:'test-admin',nama:'Integration test',password:adminPassword});assert.equal(r.status,200);
+  const origin='https://vigufarm-web.github.io';
+  const cors=await fetch(base+'/api/gis-client/login',{method:'OPTIONS',headers:{Origin:origin}});assert.equal(cors.status,200);assert.equal(cors.headers.get('access-control-allow-origin'),origin);
+  const gisLogin=await fetch(base+'/api/gis-client/login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({username:'test-admin',password:adminPassword})});assert.equal(gisLogin.status,200);assert.equal(gisLogin.headers.get('set-cookie'),null);const gisAuth=await gisLogin.json();assert.match(gisAuth.token,/^[a-f0-9]{64}$/);
+  const gisHeaders={Origin:origin,Authorization:'Bearer '+gisAuth.token,'Content-Type':'application/json'};
+  const gisRead=await fetch(base+'/api/gis-client/gis-registry',{headers:gisHeaders});assert.equal(gisRead.status,200);assert.equal((await gisRead.json()).schema,1);
+  assert.equal((await fetch(base+'/api/gis-client/users',{headers:gisHeaders})).status,404);
+  assert.equal((await fetch(base+'/api/users',{headers:gisHeaders})).status,401,'GIS bearer cannot access general admin APIs');
+  assert.equal((await fetch(base+'/api/gis-client/gis-registry',{headers:{...gisHeaders,Origin:'https://untrusted.invalid'}})).status,403);
+  assert.equal((await fetch(base+'/api/gis-client/gis-registry/grants',{method:'POST',headers:gisHeaders,body:JSON.stringify({app:'gudang'})})).status,200,'scoped GIS session can write GIS grants');
+  const revoked=await fetch(base+'/api/gis-client/logout',{method:'POST',headers:gisHeaders,body:'{}'});assert.equal(revoked.status,200);assert.equal((await fetch(base+'/api/gis-client/gis-registry',{headers:gisHeaders})).status,401);
   assert.equal((await fetch(base+'/api/gis-registry')).status,401);
   const preflight=await fetch(base+'/api/gis-reference',{method:'OPTIONS',headers:{Origin:'https://vigufarm-web.github.io','Access-Control-Request-Headers':'authorization,x-gis-app'}});assert.equal(preflight.status,200);assert.equal(preflight.headers.get('access-control-allow-origin'),'https://vigufarm-web.github.io');
   const access=(await request('/api/gis-registry/grants','POST',{app:'payrol'})).body;const reference=await fetch(base+'/api/gis-reference',{headers:{Origin:'https://vigufarm-web.github.io',Authorization:'Bearer '+access.token,'X-GIS-App':'payrol'}});assert.equal(reference.status,200);assert.equal((await reference.json()).schema,1);assert.equal((await fetch(base+'/api/gis-reference',{headers:{Origin:'https://untrusted.invalid',Authorization:'Bearer '+access.token,'X-GIS-App':'payrol'}})).status,403);
