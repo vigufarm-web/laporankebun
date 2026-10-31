@@ -58,3 +58,7 @@ test('legacy planting follows one explicit merged GIS descendant without rewriti
  const before=db.prepare('SELECT * FROM pisang_blok').get(),p=registry.legacyPreview();assert.equal(p.rows[0].block_id,'gis-A');assert.equal(p.rows[0].label,'Gabungan E01d');registry.importLegacy(p.token);assert.equal(registry.plantings()[0].population,200);assert.deepEqual(db.prepare('SELECT * FROM pisang_blok').get(),before);
  }finally{db.close();}
 });
+
+test('persistent read-only grants survive daily opening, remain app scoped and can be revoked',()=>{
+ const {db,blocks,registry}=fixture();try{const grant=registry.grant('payrol',{persistent:true});assert.equal(grant.expires,null);const later=createGISRegistry({db,blocks,clock:()=>'2030-01-01T00:00:00.000Z'});assert.equal(later.verifyGrant(grant.token,'payrol'),true);assert.equal(later.verifyGrant(grant.token,'gudang'),false);registry.revokeGrant(grant.token);assert.equal(later.verifyGrant(grant.token,'payrol'),false);}finally{db.close();}
+});

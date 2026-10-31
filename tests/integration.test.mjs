@@ -33,7 +33,14 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   const gisLogin=await fetch(base+'/api/gis-client/login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({username:'test-admin',password:adminPassword})});assert.equal(gisLogin.status,200);assert.equal(gisLogin.headers.get('set-cookie'),null);const gisAuth=await gisLogin.json();assert.match(gisAuth.token,/^[a-f0-9]{64}$/);
   const gisHeaders={Origin:origin,Authorization:'Bearer '+gisAuth.token,'Content-Type':'application/json'};
   const readLogin=await fetch(base+'/api/gis-client/reference-login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({username:'test-admin',password:adminPassword,app:'payrol'})});assert.equal(readLogin.status,200);const readGrant=await readLogin.json();assert.equal(readGrant.app,'payrol');assert.equal((await fetch(base+'/api/gis-client/gis-registry',{headers:{Origin:origin,Authorization:'Bearer '+readGrant.token}})).status,401,'reference login cannot edit GIS');
-  const gisRead=await fetch(base+'/api/gis-client/gis-registry',{headers:gisHeaders});assert.equal(gisRead.status,200);assert.equal((await gisRead.json()).schema,1);
+  const persistentLogin=await fetch(base+'/api/gis-client/reference-login',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({username:'test-admin',password:adminPassword,app:'gudang',persistent:true})});assert.equal(persistentLogin.status,200);const persistentGrant=await persistentLogin.json();assert.equal(persistentGrant.expires,null);assert.equal(persistentGrant.persistent,true);
+    const refHeaders={Origin:origin,Authorization:'Bearer '+persistentGrant.token,'X-GIS-App':'gudang'};
+    assert.equal((await fetch(base+'/api/gis-reference',{headers:refHeaders})).status,200);
+    assert.equal((await fetch(base+'/api/gis-reference',{headers:{...refHeaders,'X-GIS-App':'payrol'}})).status,401);
+    assert.equal((await fetch(base+'/api/gis-client/gis-registry',{method:'POST',headers:{...gisHeaders,Authorization:'Bearer '+persistentGrant.token},body:'{}'})).status,401);
+    assert.equal((await request('/api/gis-registry/grants','DELETE',{token:persistentGrant.token})).status,200);
+    assert.equal((await fetch(base+'/api/gis-reference',{headers:refHeaders})).status,401);
+    const gisRead=await fetch(base+'/api/gis-client/gis-registry',{headers:gisHeaders});assert.equal(gisRead.status,200);assert.equal((await gisRead.json()).schema,1);
   assert.equal((await fetch(base+'/api/gis-client/users',{headers:gisHeaders})).status,404);
   assert.equal((await fetch(base+'/api/users',{headers:gisHeaders})).status,401,'GIS bearer cannot access general admin APIs');
   assert.equal((await fetch(base+'/api/gis-client/gis-registry',{headers:{...gisHeaders,Origin:'https://untrusted.invalid'}})).status,403);
