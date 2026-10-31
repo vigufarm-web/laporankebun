@@ -74,6 +74,11 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   // Existing historical locations remain editable, while new unowned locations stay blocked.
   r=await request('/api/daily','POST',{id:reportId,tanggal:report.tanggal,divisi:report.divisi,status:'Selesai',items:report.items});assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items[0].realisasi,500);
   r=await request('/api/daily','POST',{tanggal:'2026-10-26',divisi:'Pisang',status:'Draf',items:[{blok:'ANAK-1',aktivitas:'Belum ada hasil',satuan:'ha',hk_realisasi:1}]});assert.equal(r.status,200);assert.equal(r.body.items[0].realisasi,null);assert.equal(r.body.items[0].hasil_sdhi,null);assert.equal(r.body.items[0].target,null);
+  // Daily HI remains the mandor's original quantity even when GIS accounting caps the effective area.
+  r=await request('/api/daily','POST',{tanggal:'2004-01-01',divisi:'Pisang',status:'Selesai',items:[{blok:'ANAK-1',aktivitas:'Install Drip',realisasi:100,satuan:'ha',hk_realisasi:1}]});assert.equal(r.status,200,JSON.stringify(r.body));const cappedDaily=r.body;
+  assert.equal(cappedDaily.items[0].realisasi,100);assert.ok(cappedDaily.items[0].realisasi_efektif<100);assert.equal(cappedDaily.items[0].hasil_sdhi,100);
+  r=await request('/api/daily?from=2004-01-01&to=2004-01-01');assert.equal(r.body[0].items[0].realisasi,100);
+  const publicCapped=await(await fetch(base+'/api/daily/public?from=2004-01-01&to=2004-01-01')).json();assert.equal(publicCapped.reports[0].items[0].realisasi,100);
   // Explicit historical transfer is previewed, version checked, and idempotent.
   r=await request('/api/daily?from=2026-10-24&to=2026-10-24');const transferReport=r.body.find(x=>x.id===reportId);
   const transferBody={reports:[transferReport,{tanggal:'2001-01-01',divisi:'Pisang',status:'Selesai',items:[{aktivitas:'Riwayat lama',blok:'LOKASI-HISTORIS',realisasi:2,satuan:'ha',hk_realisasi:1}]}]};
