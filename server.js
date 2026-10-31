@@ -28,7 +28,7 @@ import { copyCloudSnapshot, mergeSnapshotTables } from './lib/cloud-snapshot.js'
 import { photoExpiresAt, photoExpired } from './lib/photo-retention.js';
 import { createReadModels } from './lib/read-models.js';
 import { createBlockRegistry, isBlockLayer } from './lib/blocks.js';
-// Server lokal Monitoring Kebun — Node.js (tanpa dependensi server) + SQLite bawaan Node.
+// Server lokal Monitoring Kebun â€” Node.js (tanpa dependensi server) + SQLite bawaan Node.
 // Jalankan: node server.js   lalu buka http://localhost:3000
 import http from 'node:http';
 import fs from 'node:fs';
@@ -56,7 +56,7 @@ const { TABLES, SEED, SEED_SEKALI, KECEPATAN_AWAL, liburDefault, alatDefault, ru
 const { buildWorkbook, parseWorkbook, sheetFields, simpleWorkbook } = await import('./lib/excel.js');
 const { turso, onlineConfig } = await import('./lib/turso.js');
 
-// ---------- database online (Turso) — dari variabel lingkungan (Vercel) atau file data/online.json {url, token}
+// ---------- database online (Turso) â€” dari variabel lingkungan (Vercel) atau file data/online.json {url, token}
 const ONLINE = (() => {
   const env = onlineConfig(process.env);
   if (env) return env;
@@ -103,7 +103,7 @@ async function flush() {
     ver = nv;
   } catch (e) { await loadCloud(); throw e; } // salinan di memori disamakan lagi dengan isi online
 }
-// ada perubahan dari tempat lain (perangkat/instance lain)? → muat ulang salinan
+// ada perubahan dari tempat lain (perangkat/instance lain)? â†’ muat ulang salinan
 async function syncCloud(photoReportId = null,tables=null) {
   if (!cloud) return false;
   const [[r]] = await cloud.query(['SELECT MAX(v) v FROM _ver']);
@@ -149,7 +149,7 @@ function migrate() {
   for (const [name, t] of Object.entries(TABLES)) {
     const have = new Set(db.prepare(`PRAGMA table_info(${q(name)})`).all().map((c) => c.name));
     if (!have.size) db.exec(`CREATE TABLE IF NOT EXISTS ${q(name)} (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, updated_at TEXT)`);
-    const baru = have.size === 0; // tabel baru dibuat — tidak perlu daftar kolom
+    const baru = have.size === 0; // tabel baru dibuat â€” tidak perlu daftar kolom
     for (const f of t.f) {
       if (f.t !== 'calc' && !have.has(f.k)) {
         db.exec(`ALTER TABLE ${q(name)} ADD COLUMN ${q(f.k)} ${colType(f)}`);
@@ -170,7 +170,7 @@ function migrate() {
 migrate();
 
 // ---------- backup otomatis (simpan 10 terakhir; saat start hanya bila ada perubahan sejak backup terakhir)
-// backup disimpan terkompres (.db.gz, ±5× lebih kecil). Memulihkan: ekstrak dengan 7-Zip/WinRAR → ganti data/kebun.db
+// backup disimpan terkompres (.db.gz, Â±5Ã— lebih kecil). Memulihkan: ekstrak dengan 7-Zip/WinRAR â†’ ganti data/kebun.db
 const BACKUP_KEEP = 10;
 const backupFiles = () => fs.readdirSync(BACKUP_DIR).filter((f) => /\.db(\.gz)?$/.test(f))
   .map((f) => ({ f, t: fs.statSync(path.join(BACKUP_DIR, f)).mtimeMs })).sort((a, b) => a.t - b.t);
@@ -186,7 +186,7 @@ function backup(tag = 'auto', { gzip = true } = {}) {
   return out;
 }
 if (!VERCEL) try {
-  // backup lama yang belum dikompres → dikompres (isi sama persis, ukuran ±5× lebih kecil)
+  // backup lama yang belum dikompres â†’ dikompres (isi sama persis, ukuran Â±5Ã— lebih kecil)
   for (const { f } of backupFiles().filter((x) => x.f.endsWith('.db'))) {
     const src = path.join(BACKUP_DIR, f), st = fs.statSync(src);
     fs.writeFileSync(src + '.gz', zlib.gzipSync(fs.readFileSync(src), { level: 9 }));
@@ -275,7 +275,7 @@ function dailyPayload(report) {
   const plan = db.prepare('SELECT * FROM daily_week_plan WHERE week_start=? AND divisi=?').get(weekStart, report.divisi);
   const plannedById = plan ? db.prepare('SELECT * FROM daily_week_item WHERE plan_id=?').all(plan.id) : [];
   let coverageLocations;
-  const cumulative = db.prepare(`SELECT SUM(di.realisasi) total, MAX(CASE WHEN dr.status='Selesai' THEN di.realisasi END) coverage_total, MAX(NULLIF(di.target,0)) weekly_target
+  const cumulative = db.prepare(`SELECT SUM(COALESCE(di.realisasi_input,di.realisasi)) total, MAX(CASE WHEN dr.status='Selesai' THEN COALESCE(di.realisasi_input,di.realisasi) END) coverage_total, MAX(NULLIF(di.target,0)) weekly_target
     FROM daily_item di JOIN daily_report dr ON dr.id=di.report_id
     WHERE dr.divisi=? AND dr.tanggal BETWEEN ? AND ?
       AND lower(replace(di.aktivitas,' ',''))=lower(replace(?,' ',''))
@@ -298,7 +298,7 @@ function dailyPayload(report) {
       const coverage=isRepeatedArea(report.divisi,item.aktivitas,item.satuan),population=isNurseryPopulation(report.divisi,item.aktivitas,item.satuan),drying=isDryingWork(report.divisi,item.aktivitas);
       let coverageSDHI=null;
       if(coverage||population){coverageLocations ||= ownedDailyLocations();const location=coverageLocations.find(l=>item.block_id?Number(l.id)===Number(item.block_id):util.key(l.nama)===util.key(item.blok));const times=Number(parseGroups(plan?.hk_kegiatan).find(g=>g.key===activityKey(item.aktivitas,item.satuan))?.times)||1;target=cappedCoverage(target==null?null:target/times,population?null:location?.luas_ha);coverageSDHI=coverage&&unresolvedCoverage(item)?null:cappedCoverage(sum.coverage_total??item.realisasi,population?null:location?.luas_ha);}
-      return { ...item, satuan:population?'pokok':item.satuan, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target, target_hk_minggu:targetHK, target_basis:planned?'Rencana mingguan':landTarget>0?'Rencana land preparation':null, hasil_sdhi: drying?null:(coverage||population)?coverageSDHI:item.hasil_sdhi ?? sum.total ?? null };
+      return { ...item, realisasi_efektif:item.realisasi, realisasi:item.realisasi_input??item.realisasi, satuan:population?'pokok':item.satuan, plan_item_id: item.plan_item_id ?? planned?.id ?? null, di_luar_rencana: outside, target, target_hk_minggu:targetHK, target_basis:planned?'Rencana mingguan':landTarget>0?'Rencana land preparation':null, hasil_sdhi: drying?null:(coverage||population)?coverageSDHI:sum.total ?? item.hasil_sdhi ?? null };
     });
   const photos = db.prepare('SELECT * FROM daily_photo WHERE report_id=? ORDER BY id').all(report.id)
     .map((p) => {const expired=photoExpired(p);return { ...p, deleted_at:p.deleted_at || (expired?p.expires_at:null), thumbnail_url: !expired&&!p.deleted_at&&p.thumb_lokasi ? `/api/daily/photo/${p.id}?thumb=1` : null, url: p.deleted_at||expired ? null : `/api/daily/photo/${p.id}` };});
@@ -350,8 +350,8 @@ async function cleanupDailyPhotos() {
   return deleted;
 }
 
-// ---------- riwayat perubahan blok (lampiran GIS di Laporan Owner): satu catatan per blok — blok baru, dihapus, ganti nama,
-// atau kolom penting berubah (nilai lama → baru). Dipanggil dari form (tambah/ubah/hapus), upload Excel, dan upload peta Blok Tanam.
+// ---------- riwayat perubahan blok (lampiran GIS di Laporan Owner): satu catatan per blok â€” blok baru, dihapus, ganti nama,
+// atau kolom penting berubah (nilai lama â†’ baru). Dipanggil dari form (tambah/ubah/hapus), upload Excel, dan upload peta Blok Tanam.
 const BLOK_T = {
   pisang_blok: { k: 'nama_blok', f: ['luas_ha', 'pokok_tanam', 'tanggal_tanam', 'status', 'kehilangan', 'sulam'] },
   lahan_blok: { k: 'blok', f: ['luas_ha', 'peruntukan', 'tahap'] },
@@ -375,7 +375,7 @@ function catatBlok(tabel, lama, baru, extra = {}) {
   for (const o of out) log('perubahan blok', tabel, null, { ...o, ...extra });
   return out.length;
 }
-// fitur peta Blok Tanam → baris { nama, luas_ha, lahan, status } (luas: Area_New > Shape_Area, m² → ha)
+// fitur peta Blok Tanam â†’ baris { nama, luas_ha, lahan, status } (luas: Area_New > Shape_Area, mÂ² â†’ ha)
 function fiturBlok(geojson) {
   let F = []; try { F = JSON.parse(geojson || '{}').features || []; } catch {}
   return F.map((f) => { const p = f.properties || {}, m2 = Number(p.Area_New) > 0 ? Number(p.Area_New) : Number(p.Shape_Area) > 0 ? Number(p.Shape_Area) : null;
@@ -409,7 +409,7 @@ const cleanPeran = (p) => JSON.stringify((Array.isArray(p) ? p : []).filter((r) 
 const failed = new Map(); // percobaan login gagal per username (cegah tebak password)
 function insertRow(table, row, doLog = true) {
   row = blocks.canonical(table, row);
-  const r = clean(table, TABLES[table].lengkapi ? TABLES[table].lengkapi(row) : row); // mis. Penjualan: isi otomatis Bentuk/Kelas/Kondisi ⇄ Jenis Barang
+  const r = clean(table, TABLES[table].lengkapi ? TABLES[table].lengkapi(row) : row); // mis. Penjualan: isi otomatis Bentuk/Kelas/Kondisi â‡„ Jenis Barang
   if (row.block_id) { r.block_id = row.block_id; r.block_name_snapshot = row.block_name_snapshot; }
   const cols = Object.keys(r);
   const sql = `INSERT INTO ${q(table)} (created_at, updated_at${cols.map((c) => ', ' + q(c)).join('')}) VALUES (?, ?${cols.map(() => ', ?').join('')})`;
@@ -422,7 +422,7 @@ function insertRow(table, row, doLog = true) {
 }
 // ---------- keterhubungan data (field bertipe ref menyimpan nama induk, mis. nama blok)
 const refsTo = (table) => Object.entries(TABLES).flatMap(([t, T]) => T.f.filter((f) => f.t === 'ref' && f.ref === table).map((f) => ({ t, k: f.k })));
-// ganti nama induk → perbarui semua anak (berantai, mis. petak → musim tanam → panen)
+// ganti nama induk â†’ perbarui semua anak (berantai, mis. petak â†’ musim tanam â†’ panen)
 function cascadeRename(table, oldVal, newVal, depth = 0) {
   let total = 0;
   for (const { t, k } of refsTo(table)) {
@@ -508,7 +508,7 @@ function seed() {
     if (db.prepare(`SELECT COUNT(*) c FROM ${q(name)}`).get().c === 0) for (const r of rows) insertRow(name, r, false);
     db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(flag, now());
   }
-  // kecepatan kerja (hari/ha), jumlah tim & hari libur per kegiatan pisang — diisi sekali bila masih kosong (dipakai Rencana Kerja)
+  // kecepatan kerja (hari/ha), jumlah tim & hari libur per kegiatan pisang â€” diisi sekali bila masih kosong (dipakai Rencana Kerja)
   if (!db.prepare('SELECT 1 FROM _settings WHERE k=?').get('isi:kecepatan')) {
     for (const a of db.prepare(`SELECT id, aktivitas, hari_per_ha, tim, libur FROM lahan_aktivitas WHERE untuk='Pisang'`).all()) {
       const v = { hari_per_ha: a.hari_per_ha ?? KECEPATAN_AWAL[a.aktivitas] ?? null, tim: a.tim ?? 1, libur: a.libur || liburDefault(a.aktivitas) };
@@ -518,30 +518,30 @@ function seed() {
   }
   const tandai = (k) => db.prepare('INSERT INTO _settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, now());
   const sudah = (k) => !!db.prepare('SELECT 1 FROM _settings WHERE k=?').get(k);
-  // alat bersama (user): Bajak 1 & Bajak 2 = 1 traktor, Land Clearing = 1 alat — diisi sekali bila kosong
+  // alat bersama (user): Bajak 1 & Bajak 2 = 1 traktor, Land Clearing = 1 alat â€” diisi sekali bila kosong
   if (!sudah('isi:alat')) {
     for (const a of db.prepare(`SELECT id, aktivitas, alat FROM lahan_aktivitas WHERE untuk='Pisang'`).all())
       if (!a.alat && alatDefault(a.aktivitas)) db.prepare('UPDATE lahan_aktivitas SET alat=?, updated_at=? WHERE id=?').run(alatDefault(a.aktivitas), now(), a.id);
     tandai('isi:alat');
   }
-  // urutan blok (user): Land Clearing pindah ke blok terdekat di peta (rotasi alat) — diisi sekali bila kosong
+  // urutan blok (user): Land Clearing pindah ke blok terdekat di peta (rotasi alat) â€” diisi sekali bila kosong
   if (!sudah('isi:rute')) {
     for (const a of db.prepare(`SELECT id, aktivitas, rute FROM lahan_aktivitas WHERE untuk='Pisang'`).all())
       if (!a.rute && ruteDefault(a.aktivitas)) db.prepare('UPDATE lahan_aktivitas SET rute=?, updated_at=? WHERE id=?').run(ruteDefault(a.aktivitas), now(), a.id);
     tandai('isi:rute');
   }
-  // prioritas blok (user): A01a paling akhir — terpisah ±1 km di utara, kerjakan kelompok blok utama dulu
+  // prioritas blok (user): A01a paling akhir â€” terpisah Â±1 km di utara, kerjakan kelompok blok utama dulu
   if (!sudah('isi:prioritas_a01a')) {
     db.prepare(`UPDATE lahan_target SET prioritas=9, updated_at=? WHERE blok='A01a' AND prioritas IS NULL`).run(now());
     tandai('isi:prioritas_a01a');
   }
-  // rencana awal (user): Stik Tanam & Tanam masing-masing 2 tim — diisi sekali
+  // rencana awal (user): Stik Tanam & Tanam masing-masing 2 tim â€” diisi sekali
   if (!sudah('isi:tim2')) {
     db.prepare(`UPDATE lahan_aktivitas SET tim=2, updated_at=? WHERE untuk='Pisang' AND aktivitas IN ('Stik Tanam', 'Tanam')`).run(now());
     tandai('isi:tim2');
   }
   // Rencana Kerja dibuat otomatis SEKALI (permintaan user): dari progres saat ini, mulai hari ini (WIB).
-  // v3 = alat bersama + Stik Tanam & Tanam 2 tim → rencana otomatis versi sebelumnya diganti sekali;
+  // v3 = alat bersama + Stik Tanam & Tanam 2 tim â†’ rencana otomatis versi sebelumnya diganti sekali;
   // rencana yang sudah disusun/diubah admin (ada di riwayat) tidak disentuh.
   // Susun ulang berikutnya lewat tombol "Susun rencana kerja" di halaman Progres Tanam (admin).
   if (!sudah('seed:lahan_rencana_v3')) {
@@ -588,7 +588,7 @@ for(const photo of db.prepare('SELECT p.id,p.expires_at,r.tanggal FROM daily_pho
   if(photo.expires_at!==expiry)db.prepare('UPDATE daily_photo SET expires_at=? WHERE id=?').run(expiry,photo.id);
 }
 // mode online: tabel/kolom baru & data awal ikut dibuat di database online.
-// Dua salinan aplikasi menyala bersamaan → yang kalah memuat ulang isi online lalu cek lagi (tidak berhenti/crash).
+// Dua salinan aplikasi menyala bersamaan â†’ yang kalah memuat ulang isi online lalu cek lagi (tidak berhenti/crash).
 for (let i = 0; ; i++) {
   try { await flush(); break; } catch (e) { if (!e.conflict || i >= 4) throw e; migrate(); blocks.migrate(); seed(); blocks.boot(); }
 }
@@ -626,7 +626,7 @@ function restoreFrom(file, keepUser) {
 
 // ---------- HTTP
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon', '.map': 'application/json' };
-// kirim respons; teks/JSON > 1 KB dikompres gzip (data jadi ±5–10× lebih kecil di jaringan)
+// kirim respons; teks/JSON > 1 KB dikompres gzip (data jadi Â±5â€“10Ã— lebih kecil di jaringan)
 const canGzip = (res, type) => /json|text|javascript|css|svg/.test(type) && /\bgzip\b/.test(res.req?.headers['accept-encoding'] || '');
 function send(res, code, body, type = 'application/json; charset=utf-8', extra = {}) {
   let buf = Buffer.isBuffer(body) ? body : Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
@@ -652,7 +652,7 @@ function readRaw(req) {
   });
 }
 // file statis: pustaka /vendor disimpan browser 30 hari; file aplikasi dicek ulang (304 bila tidak berubah)
-const gzCache = new Map(); // file → { etag, gz }
+const gzCache = new Map(); // file â†’ { etag, gz }
 function serveFile(res, file) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) return send(res, 404, 'Tidak ditemukan', 'text/plain');
@@ -1090,7 +1090,7 @@ async function api(req, res, url) {
 
   // --- Excel input
   if (parts[1] === 'excel') {
-    // Excel per halaman: ?tables=iklim,lahan_blok&kom=Pisang&panel=Iklim → hanya sheet tabel itu (lahan_* hanya baris komoditas itu)
+    // Excel per halaman: ?tables=iklim,lahan_blok&kom=Pisang&panel=Iklim â†’ hanya sheet tabel itu (lahan_* hanya baris komoditas itu)
     const panel = panelOf(url) || (!isAdmin(user) ? {tables:editableExcelTables(user),kom:null,label:'Data sesuai akses'} : null);
     if(panel && !panel.tables.every(t=>canEdit(user,t)))return send(res,403,{error:'Akun Anda tidak punya izin mengakses sheet ini'});
     if (panel && !panel.tables.length) return send(res, 400, { error: 'Tabel tidak dikenal untuk Excel' });
@@ -1132,7 +1132,7 @@ async function api(req, res, url) {
     if (dailyOnly(user)) return send(res, 403, { error: 'Akun mandor hanya dapat membuka Daily Report miliknya' });
     if (table.startsWith('daily_') && (!user || dailyOnly(user))) return send(res, 403, { error: 'Gunakan halaman Daily Report' });
     const id = parts[3] ? Number(parts[3]) : null;
-    // ?jenis=Blok Tanam → satu layer peta saja (halaman Tim Kebun di HP tidak perlu mengunduh semua layer)
+    // ?jenis=Blok Tanam â†’ satu layer peta saja (halaman Tim Kebun di HP tidak perlu mengunduh semua layer)
     if (m === 'GET' && table === 'gis_layer' && url.searchParams.get('jenis')) { const j = url.searchParams.get('jenis'); return send(res, 200, db.prepare('SELECT * FROM gis_layer WHERE jenis=? OR nama=? ORDER BY id').all(j, j)); }
     if (m === 'GET') return send(res, 200, db.prepare(`SELECT * FROM ${q(table)}${table==='lahan_harian'?' WHERE COALESCE(diganti_aktual,0)=0':''} ORDER BY id`).all().filter(r=>!hiddenActivity(r.aktivitas)));
     if (!canEdit(user, table)) return send(res, 403, { error: `Anda tidak punya izin mengubah "${TABLES[table].title}"` });
@@ -1180,7 +1180,7 @@ async function api(req, res, url) {
       if(old && ['lahan_blok','pisang_blok','padi_petak'].includes(table) && TABLES[table].display && body[TABLES[table].display] && body[TABLES[table].display]!==old[TABLES[table].display]) return send(res,409,{error:'Ubah nama blok melalui revisi GIS agar ID dan seluruh riwayat tetap terhubung.'});
       tx(() => {
         if (cols.length) db.prepare(`UPDATE ${q(table)} SET updated_at=?${cols.map((c) => `, ${q(c)}=?`).join('')} WHERE id=?`).run(now(), ...cols.map((c) => r[c]), id);
-        // nama induk berubah → ikut ganti di semua data yang merujuk (mis. nama blok di panen/progres)
+        // nama induk berubah â†’ ikut ganti di semua data yang merujuk (mis. nama blok di panen/progres)
         const nu = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
         if (old && nu && TABLES[table].display) {
           const a = displayOf(table, old), b = displayOf(table, nu);
@@ -1229,7 +1229,7 @@ async function api(req, res, url) {
   }
   if ((parts[1] === 'backup' || parts[1] === 'backups') && !isAdmin(user)) return send(res, 403, { error: 'Khusus admin' });
   if (parts[1] === 'backup') {
-    if (m === 'POST') return VERCEL ? send(res, 400, { error: 'Versi online tidak menyimpan file backup — pakai "Download backup database".' }) : send(res, 200, { file: path.basename(backup('manual')) });
+    if (m === 'POST') return VERCEL ? send(res, 400, { error: 'Versi online tidak menyimpan file backup â€” pakai "Download backup database".' }) : send(res, 200, { file: path.basename(backup('manual')) });
     if (m === 'GET') {
       // salinan database siap pakai (tidak dikompres), langsung dikirim lalu dihapus dari server
       const file = path.join(DATA_DIR, `kebun_download_${Date.now()}.db`);
@@ -1239,7 +1239,7 @@ async function api(req, res, url) {
       return res.end(buf);
     }
   }
-  // pulihkan / pindahkan database: unggah file .db (boleh dikompres .gz) → seluruh isi diganti
+  // pulihkan / pindahkan database: unggah file .db (boleh dikompres .gz) â†’ seluruh isi diganti
   if (parts[1] === 'restore' && m === 'POST') {
     if (!isAdmin(user)) return send(res, 403, { error: 'Khusus admin' });
     let buf = await readRaw(req);
@@ -1262,13 +1262,13 @@ async function api(req, res, url) {
 }
 
 // ======================================================================= EXCEL INPUT
-// File Excel di folder aplikasi = jalur input. Disimpan → otomatis dibaca & database disamakan dengan isinya.
-// Data diubah lewat aplikasi → file Excel ditulis ulang (kalau sedang tidak dibuka di Excel).
+// File Excel di folder aplikasi = jalur input. Disimpan â†’ otomatis dibaca & database disamakan dengan isinya.
+// Data diubah lewat aplikasi â†’ file Excel ditulis ulang (kalau sedang tidak dibuka di Excel).
 const EXCEL_FILE = process.env.EXCEL_FILE || path.join(process.env.DATA_DIR ? DATA_DIR : ROOT, 'Input Data Kebun.xlsx');
 const EXCEL_TABLES = new Set(EXCEL_SHEETS.map((s) => s.table));
 const xl = { lastWriteMtime: 0, stale: false, staleSince: null, lastReport: null, timer: null, busy: false };
 const sortRows = (table, rows) => {
-  // di Excel: tabel bertanggal diurut lama → baru (input baru ditulis di bawah); lainnya ikut urutan tabel
+  // di Excel: tabel bertanggal diurut lama â†’ baru (input baru ditulis di bawah); lainnya ikut urutan tabel
   const T = TABLES[table];
   const s = T.date || T.sort || 'id', desc = !T.date && s.startsWith('-'), k = s.replace(/^-/, '');
   return [...rows].sort((a, b) => { const c = String(a[k] ?? '').localeCompare(String(b[k] ?? ''), 'id', { numeric: true }); return (desc ? -c : c) || a.id - b.id; });
@@ -1283,7 +1283,7 @@ function panelOf(url) {
   const kom = ['Pisang', 'Padi'].includes(url.searchParams.get('kom')) ? url.searchParams.get('kom') : null;
   return { tables, kom, label: String(url.searchParams.get('panel') || tables.map((t) => TABLES[t].title).join(', ')).slice(0, 60) };
 }
-// tabel progres tanam dipakai bersama pisang & padi → di halaman satu komoditas hanya barisnya yang diambil/diganti
+// tabel progres tanam dipakai bersama pisang & padi â†’ di halaman satu komoditas hanya barisnya yang diambil/diganti
 // (aturan sama dengan tampilan di halaman Progres Tanam)
 function scopeOf(table, kom) {
   if (!kom) return null;
@@ -1311,7 +1311,7 @@ const makeWorkbook = (panel = null) => {
 const excelLocked = () => fs.existsSync(path.join(path.dirname(EXCEL_FILE), '~$' + path.basename(EXCEL_FILE)));
 function excelStatus() {
   const laporan = xl.lastReport || JSON.parse(getSetting('excel_laporan') || 'null');
-  if (VERCEL) return { online: true, ada: false, laporan }; // online: tidak ada file Excel di server — pakai download & upload
+  if (VERCEL) return { online: true, ada: false, laporan }; // online: tidak ada file Excel di server â€” pakai download & upload
   let mtime = null; try { mtime = fs.statSync(EXCEL_FILE).mtime.toISOString(); } catch {}
   return { file: EXCEL_FILE, ada: !!mtime, diubah: mtime, sedangDibuka: excelLocked(), stale: xl.stale, staleSince: xl.staleSince, laporan };
 }
@@ -1330,9 +1330,9 @@ if (!VERCEL) setInterval(() => { if (xl.stale && !excelLocked()) writeExcelFile(
 
 const sig = (table, cfg, r) => { const c = clean(table, r); return JSON.stringify(sheetFields(TABLES, cfg).map((f) => (c[f.k] == null ? null : c[f.k]))); };
 // Nama induk di Excel (aktivitas, blok, dll.) dicocokkan dengan daftarnya tanpa peduli huruf besar/kecil, spasi & tanda baca:
-//  • beda tulisan saja (mis. "land clearing", "LandClearing") → dibetulkan otomatis ke nama di daftar;
-//  • aktivitas yang tidak ada di daftar → KESALAHAN (sheet ditahan) karena barisnya tidak akan terhitung di progres;
-//  • nama lain yang tidak ada di daftar (mis. blok baru) → peringatan saja, data tetap masuk.
+//  â€¢ beda tulisan saja (mis. "land clearing", "LandClearing") â†’ dibetulkan otomatis ke nama di daftar;
+//  â€¢ aktivitas yang tidak ada di daftar â†’ KESALAHAN (sheet ditahan) karena barisnya tidak akan terhitung di progres;
+//  â€¢ nama lain yang tidak ada di daftar (mis. blok baru) â†’ peringatan saja, data tetap masuk.
 const kunciNama = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 function cekNamaInduk(parsed) {
   const cache = {};
@@ -1349,12 +1349,12 @@ function cekNamaInduk(parsed) {
       for (const r of p.rows) {
         const v = r[f.k]; if (v == null || v === '') continue;
         const hit = m.get(kunciNama(v));
-        if (hit != null) { if (hit !== String(v)) { const kk = `${f.l} "${v}" → "${hit}"`; kor.set(kk, [...(kor.get(kk) || []), r.__baris]); r[f.k] = hit; } }
-        else if (f.ref === 'lahan_aktivitas') p.errors.push({ row: r.__baris, msg: `${f.l} "${v}" tidak ada di daftar ${TABLES[f.ref].title} (cek ejaan) — kalau dibiarkan tidak akan terhitung di progres` });
+        if (hit != null) { if (hit !== String(v)) { const kk = `${f.l} "${v}" â†’ "${hit}"`; kor.set(kk, [...(kor.get(kk) || []), r.__baris]); r[f.k] = hit; } }
+        else if (f.ref === 'lahan_aktivitas') p.errors.push({ row: r.__baris, msg: `${f.l} "${v}" tidak ada di daftar ${TABLES[f.ref].title} (cek ejaan) â€” kalau dibiarkan tidak akan terhitung di progres` });
         else { const kk = `${f.l} "${v}" tidak ada di ${TABLES[f.ref].title}`; asing.set(kk, [...(asing.get(kk) || []), r.__baris]); }
       }
     }
-    const fmt = (m) => [...m].map(([k, b]) => `${k} (${b.length} baris: ${b.slice(0, 6).join(', ')}${b.length > 6 ? ', …' : ''})`).slice(0, 20);
+    const fmt = (m) => [...m].map(([k, b]) => `${k} (${b.length} baris: ${b.slice(0, 6).join(', ')}${b.length > 6 ? ', â€¦' : ''})`).slice(0, 20);
     p.koreksi = fmt(kor); p.peringatan = fmt(asing);
     if (p.otomatis) p.koreksi.unshift(`${p.otomatis} baris: kolom kosong diisi otomatis dari Jenis Barang / Bentuk-Kelas-Kondisi`);
   }
@@ -1366,9 +1366,9 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
   for(const p of parsed) {
     const t=p.cfg.table,all=db.prepare('SELECT * FROM '+q(t)).all(),scope=panel?scopeOf(t,panel.kom):null,cur=scope?all.filter(scope):all;
     const s={sheet:p.cfg.sheet,tabel:TABLES[t].title,baris:p.rows.length,sebelum:cur.length,tambah:0,ubah:0,hapus:0,changes:[],status:'tidak berubah',koreksi:p.koreksi||[],peringatan:p.peringatan||[],errors:p.errors.slice(0,30),jumlahError:p.errors.length,layoutBeda:!!p.layoutBeda};rep.sheets.push(s);
-    if(!p.found){s.status='sheet tidak ada — dilewati';continue;}
-    if(referenceSheets.has(t)){s.status='referensi otomatis — tidak diinput ulang';s.errors=[];s.jumlahError=0;continue;}
-    if(p.kosong){s.status='permintaan kosong diabaikan — data lama dipertahankan';continue;}
+    if(!p.found){s.status='sheet tidak ada â€” dilewati';continue;}
+    if(referenceSheets.has(t)){s.status='referensi otomatis â€” tidak diinput ulang';s.errors=[];s.jumlahError=0;continue;}
+    if(p.kosong){s.status='permintaan kosong diabaikan â€” data lama dipertahankan';continue;}
     const ops=[],seenIds=new Set(),existing=new Map();
     for(const row of cur){const sigKey=sig(t,p.cfg,row);existing.set(sigKey,(existing.get(sigKey)||0)+1);}
     for(const input of p.rows) {
@@ -1395,7 +1395,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
     }
     if(t==='lahan_harian'&&ops.length&&!s.errors.length)try{s.peringatan.push(...capExcelLandChanges(ops,all,blocks.find));}catch(e){s.errors.push({row:0,msg:e.message});}
     s.jumlahError=s.errors.length;
-    if(s.jumlahError){s.status='ada kesalahan — tidak diproses';s.tambah=s.ubah=0;continue;}
+    if(s.jumlahError){s.status='ada kesalahan â€” tidak diproses';s.tambah=s.ubah=0;continue;}
     if(ops.length){s.status=preview?'akan diperbarui':'diperbarui';todo.push({t,ops});}
   }
   if(!preview&&todo.length) {
@@ -1409,7 +1409,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
   if(!preview){xl.lastReport=rep;db.prepare('INSERT INTO _settings (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('excel_laporan',JSON.stringify(rep));}
   return rep;
 }
-// pantau file Excel: setiap disimpan → sinkron otomatis
+// pantau file Excel: setiap disimpan â†’ sinkron otomatis
 async function onExcelChanged() {
   if (xl.busy) return; xl.busy = true;
   try {
@@ -1422,7 +1422,7 @@ async function onExcelChanged() {
     const ub = rep.sheets.filter((s) => s.status === 'diperbarui'), er = rep.sheets.filter((s) => s.jumlahError);
     console.log(`  Excel disinkron: ${ub.length} sheet diperbarui${er.length ? `, ${er.length} sheet ada kesalahan` : ''}`);
     xl.lastWriteMtime = st.mtimeMs;
-    // format kolom di file sudah lama (ada kolom yang dihapus/ditambah) → tulis ulang file dengan format terbaru
+    // format kolom di file sudah lama (ada kolom yang dihapus/ditambah) â†’ tulis ulang file dengan format terbaru
     if (rep.sheets.some((s) => s.layoutBeda) && !rep.sheets.some((s) => s.jumlahError)) scheduleExcelWrite(1500);
   } catch (e) { console.warn('Sinkron Excel gagal:', e.message); xl.lastReport = { waktu: now(), gagal: e.message, sheets: [] }; }
   finally { xl.busy = false; }
@@ -1432,17 +1432,17 @@ if (!VERCEL) fs.watchFile(EXCEL_FILE, { interval: 2000 }, (cur, prev) => {
   if (!cur.mtimeMs || cur.mtimeMs === prev.mtimeMs) return;
   clearTimeout(watchTimer); watchTimer = setTimeout(onExcelChanged, 2500);
 });
-// komputer lokal yang memakai database online: cek perubahan dari online tiap menit → file Excel ikut diperbarui
+// komputer lokal yang memakai database online: cek perubahan dari online tiap menit â†’ file Excel ikut diperbarui
 if (cloud && !VERCEL) setInterval(() => serial(async () => { if (await syncCloud()) scheduleExcelWrite(1000); }).catch((e) => console.warn('Cek database online gagal:', e.message)), 60e3).unref();
 if (VERCEL) { /* online: tanpa file Excel */ }
 else if (!fs.existsSync(EXCEL_FILE)) writeExcelFile().then((ok) => ok && console.log('  File Excel input dibuat:', EXCEL_FILE)).catch((e) => console.warn('Buat Excel gagal:', e.message));
 else {
-  // saat start: mana yang lebih baru — data di aplikasi atau file Excel?
+  // saat start: mana yang lebih baru â€” data di aplikasi atau file Excel?
   const fileTime = fs.statSync(EXCEL_FILE).mtime.toISOString();
   const dbTime = [...EXCEL_TABLES].map((t) => db.prepare(`SELECT MAX(updated_at) u FROM ${q(t)}`).get().u || '').sort().pop() || '';
   const last = JSON.parse(getSetting('excel_laporan') || 'null')?.waktu || '';
-  if (dbTime > fileTime && dbTime > last) writeExcelFile().catch(() => {});            // aplikasi lebih baru → perbarui file (atau tunggu sampai file ditutup)
-  else if (fileTime > last) setTimeout(onExcelChanged, 1500);                          // file diubah saat server mati → baca file
+  if (dbTime > fileTime && dbTime > last) writeExcelFile().catch(() => {});            // aplikasi lebih baru â†’ perbarui file (atau tunggu sampai file ditutup)
+  else if (fileTime > last) setTimeout(onExcelChanged, 1500);                          // file diubah saat server mati â†’ baca file
 }
 
 // mode online: respons ditahan sampai perubahan benar-benar tersimpan di database online
@@ -1495,7 +1495,7 @@ async function apiRequest(req, res, url) {
     try { await api(req, res, url); await flush(); hold.release(); }
     catch (e) {
       hold.discard(); txMark = -1;
-      if (pend.length) { pend.length = 0; await loadCloud(); } // perubahan setengah jalan dibatalkan → samakan lagi dengan isi online
+      if (pend.length) { pend.length = 0; await loadCloud(); } // perubahan setengah jalan dibatalkan â†’ samakan lagi dengan isi online
       if (!e.conflict) throw e;
       send(res, 409, { error: 'Data baru saja diubah dari tempat lain. Muat ulang halaman lalu ulangi.' });
     }
@@ -1517,7 +1517,7 @@ async function handler(req, res) {
     if (BELUM_ONLINE && url.pathname.startsWith('/api/')) return send(res, 503, { error: 'Penyimpanan online belum disambungkan. Admin perlu mengatur penyimpanan GitHub atau database online pada proyek Vercel.' });
     if (url.pathname.startsWith('/api/')) {
       await apiRequest(req, res, url);
-      // perubahan lewat aplikasi → samakan file Excel
+      // perubahan lewat aplikasi â†’ samakan file Excel
       const t = url.pathname.split('/')[3];
       if (req.method !== 'GET' && url.pathname.startsWith('/api/t/') && res.statusCode < 300 && EXCEL_TABLES.has(t)) scheduleExcelWrite();
       return;
@@ -1536,7 +1536,7 @@ if (!VERCEL) http.createServer(handler).listen(PORT, '0.0.0.0', () => {
   console.log(`   Komputer ini : http://localhost:${PORT}`);
   for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs || [])
     if (i.family === 'IPv4' && !i.internal) console.log(`   Jaringan/HP  : http://${i.address}:${PORT}`);
-  console.log(`   Database     : ${cloud ? 'ONLINE ('+(GITHUB_DATA?'GitHub':'Turso')+') — data sama dengan versi internet' : DB_FILE}\n   Excel input  : ${EXCEL_FILE}\n   Tutup jendela ini untuk menghentikan server.\n`);
+  console.log(`   Database     : ${cloud ? 'ONLINE ('+(GITHUB_DATA?'GitHub':'Turso')+') â€” data sama dengan versi internet' : DB_FILE}\n   Excel input  : ${EXCEL_FILE}\n   Tutup jendela ini untuk menghentikan server.\n`);
 });
 
 // Saat lokal tidak ada Vercel Cron; bersihkan saat start dan setiap 24 jam.
