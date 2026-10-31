@@ -123,7 +123,7 @@ async function syncCloud(photoReportId = null,tables=null) {
 let lock = Promise.resolve();
 const serial = (fn) => { const p = lock.then(fn, fn); lock = p.catch(() => {}); return p; };
 
-const authTables=['_ver','_users','_sessions','_settings'];
+const authTables=['_ver','_users','_sessions','_gis_editor_sessions','_settings'];
 if (cloud) { await cloud.batch(['CREATE TABLE IF NOT EXISTS _ver (v INTEGER PRIMARY KEY)']); await loadCloud(VERCEL?authTables:null); }
 else if (BELUM_ONLINE) raw = new DatabaseSync(':memory:');
 else {
@@ -140,6 +140,7 @@ const existingCloud=cloud&&!!raw.prepare("SELECT name FROM sqlite_master WHERE t
 // ---------- migrasi otomatis: buat tabel & tambah kolom baru sesuai schema.js
 const colType = (f) => (f.t === 'int' ? 'INTEGER' : f.t === 'num' || f.t === 'money' ? 'REAL' : 'TEXT');
 function migrate() {
+  db.exec('CREATE TABLE IF NOT EXISTS _gis_editor_sessions (hash TEXT PRIMARY KEY,user_id INTEGER,expires TEXT,auth_hash TEXT)');
   db.exec('CREATE TABLE IF NOT EXISTS _import_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT,table_name TEXT,row_id INTEGER,before_json TEXT,created_at TEXT)');
   const ada = (n) => !!raw.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(n);
   if (!ada('_log')) db.exec(`CREATE TABLE IF NOT EXISTS _log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, aksi TEXT, tabel TEXT, row_id INTEGER, data TEXT)`);
@@ -391,6 +392,7 @@ function setPassword(id, pw) { const salt = crypto.randomBytes(16).toString('hex
 function publicUser(u) { return u && { id: u.id, username: u.username, nama: u.nama, peran: JSON.parse(u.peran || '[]'), aktif: u.aktif, last_login: u.last_login }; }
 function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((x) => x[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))])); }
 function sessionUser(req) {
+  if(req.gisClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);return u&&u.hash===session.auth_hash&&isAdmin(publicUser(u))?publicUser(u):null;}
   const tok = cookies(req).kebun_sid; if (!tok) return null;
   const s = db.prepare('SELECT * FROM _sessions WHERE token=?').get(tok);
   if (!s || s.expires < now()) return null;
@@ -698,9 +700,9 @@ async function api(req, res, url) {
     if(m!=='GET'||!gisRegistry.verifyGrant(token,app))return send(res,401,{error:'Hubungkan kembali ke Peta Kebun. Izin referensi belum ada atau telah berakhir.'},'application/json',headers);
     return send(res,200,gisRegistry.catalog(now().slice(0,10),ownedPlanningLocations()),'application/json',headers);
   }
-  const gisEditor=process.env.GIS_EDITOR_URL;
-  if(parts[1]==='gis-service'&&m==='GET')return send(res,200,{url:gisEditor||'https://laporankebun.vercel.app'});
-  if(gisEditor&&['gis','gis-registry'].includes(parts[1])&&m!=='GET')return send(res,409,{error:'Pengelolaan GIS sudah dipindahkan. Buka Peta Kebun untuk memperbarui data.',editor:gisEditor});
+  const gisEditor=process.env.GIS_EDITOR_URL||(VERCEL?'https://vigufarm-web.github.io/peta-kebun/':null);
+  if(parts[1]==='gis-service'&&m==='GET'){const origin=req.headers.origin,headers=origin==='https://vigufarm-web.github.io'?{'Access-Control-Allow-Origin':origin,'Vary':'Origin'}:{};return send(res,200,{url:gisEditor||'https://laporankebun.vercel.app'},'application/json',headers);}
+  if(gisEditor&&!req.gisClient&&['gis','gis-registry'].includes(parts[1])&&m!=='GET')return send(res,409,{error:'Pengelolaan GIS sudah dipindahkan. Buka Peta Kebun untuk memperbarui data.',editor:gisEditor});
   // --- akun pertama (admin) & login
   if (parts[1] === 'me' && m === 'GET') return send(res, 200, { user, setup: userCount() === 0, roles: ROLES, online: !!cloud, vercel: VERCEL });
   if (parts[1] === 'setup' && m === 'POST') {
@@ -722,10 +724,12 @@ async function api(req, res, url) {
       failed.set(un, { n: f.n + 1, t: Date.now() });
       return send(res, 401, { error: 'Username atau password salah' });
     }
+    if(req.gisClient){if(!isAdmin(publicUser(u)))return send(res,403,{error:'Pengelolaan peta memerlukan akun admin.'});const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,u.hash);db.prepare('DELETE FROM _gis_editor_sessions WHERE expires < ?').run(now());failed.delete(un);return send(res,200,{user:publicUser(u),token,expires});}
     failed.delete(un); startSession(res, u.id);
     return send(res, 200, { user: publicUser(u) });
   }
   if (parts[1] === 'logout' && m === 'POST') {
+    if(req.gisClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');db.prepare('DELETE FROM _gis_editor_sessions WHERE hash=?').run(crypto.createHash('sha256').update(token).digest('hex'));return send(res,200,{ok:true});}
     const tok = cookies(req).kebun_sid; if (tok) db.prepare('DELETE FROM _sessions WHERE token=?').run(tok);
     res.setHeader('Set-Cookie', 'kebun_sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
     return send(res, 200, { ok: true });
@@ -1569,6 +1573,8 @@ async function handler(req, res) {
   dailyTargetCache=new Map();
   const url = new URL(req.url, 'http://x');
   try {
+    if(url.pathname.startsWith('/api/gis-client/')){const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin||''));if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');if(req.method==='OPTIONS')return send(res,200,{ok:true});const target='/api/'+url.pathname.slice('/api/gis-client/'.length);if(!/^\/api\/(?:login|logout|me|blocks|gis(?:\/.*)?|gis-registry(?:\/.*)?)$/.test(target))return send(res,404,{error:'Endpoint Peta tidak tersedia.'});req.gisClient=true;url.pathname=target;}
+    if(VERCEL&&/^\/peta\/?$/.test(url.pathname)){res.writeHead(302,{Location:process.env.GIS_EDITOR_URL||'https://vigufarm-web.github.io/peta-kebun/','Cache-Control':'no-store'});return res.end();}
     if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/daily' || url.pathname === '/daily/')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
     if (!VERCEL && (url.pathname === '/daily' || url.pathname === '/daily/')) return serveFile(res, path.join(ROOT, 'public', 'index.html'));
     if (url.pathname === '/kebun' || url.pathname === '/kebun/') return VERCEL ? send(res, 200, KEBUN_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' }) : serveFile(res, path.join(ROOT, 'public', 'kebun.html'));
