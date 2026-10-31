@@ -1,3 +1,4 @@
+import {hiddenActivity,visibleActivityRows} from './public/js/activity-visibility.js';
 import {saveWeeklyItems} from './lib/weekly-plan-store.js';
 import {prepareExcelInput,referenceSheets,capExcelLandChanges} from './lib/excel-input-policy.js';
 import {padiSummary} from './lib/padi-summary.js';
@@ -817,7 +818,7 @@ async function api(req, res, url) {
   if(parts[1]==='kebun-summary'&&m==='GET')return send(res,200,kebunSummary(db,url.searchParams.get('kom')==='Padi'?ownedDailyLocations():ownedPlanningLocations(),new Date(Date.now()+7*3600e3).toISOString().slice(0,10),url.searchParams.get('kom')==='Padi'?'Padi':'Pisang'));
   if(parts[1]==='kebun'&&m==='GET'){
     const tables=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
-    const data=Object.fromEntries(tables.map(t=>[t,db.prepare('SELECT * FROM '+q(t)).all().map(({created_at,updated_at,block_name_snapshot,...r})=>r)]));
+    const data=Object.fromEntries(tables.map(t=>[t,db.prepare('SELECT * FROM '+q(t)).all().filter(r=>!hiddenActivity(r.aktivitas)).map(({created_at,updated_at,block_name_snapshot,...r})=>r)]));
     return send(res,200,{data,settings:Object.fromEntries(db.prepare('SELECT * FROM _settings').all().map(r=>[r.k,r.v]))});
   }
   if (parts[1]==='overview' && m==='GET') {
@@ -1132,7 +1133,7 @@ async function api(req, res, url) {
     const id = parts[3] ? Number(parts[3]) : null;
     // ?jenis=Blok Tanam → satu layer peta saja (halaman Tim Kebun di HP tidak perlu mengunduh semua layer)
     if (m === 'GET' && table === 'gis_layer' && url.searchParams.get('jenis')) { const j = url.searchParams.get('jenis'); return send(res, 200, db.prepare('SELECT * FROM gis_layer WHERE jenis=? OR nama=? ORDER BY id').all(j, j)); }
-    if (m === 'GET') return send(res, 200, db.prepare(`SELECT * FROM ${q(table)}${table==='lahan_harian'?' WHERE COALESCE(diganti_aktual,0)=0':''} ORDER BY id`).all());
+    if (m === 'GET') return send(res, 200, db.prepare(`SELECT * FROM ${q(table)}${table==='lahan_harian'?' WHERE COALESCE(diganti_aktual,0)=0':''} ORDER BY id`).all().filter(r=>!hiddenActivity(r.aktivitas)));
     if (!canEdit(user, table)) return send(res, 403, { error: `Anda tidak punya izin mengubah "${TABLES[table].title}"` });
     if (m === 'POST' && parts[3] === 'hapus') {
       if(['lahan_blok','pisang_blok','padi_petak','gis_layer'].includes(table))return send(res,409,{error:'Data induk blok/peta dipertahankan. Nonaktifkan melalui revisi GIS.'});
@@ -1147,6 +1148,7 @@ async function api(req, res, url) {
     }
     if (m === 'POST') {
       const body = await readBody(req);
+      if((Array.isArray(body)?body:[body]).some(row=>hiddenActivity(row.aktivitas)))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if (Array.isArray(body)) {
         if(table==='gis_layer')return send(res,400,{error:'Unggah layer melalui pratinjau GIS.'});
         for(const row of body)validateOperationalBlock(table,row);
@@ -1166,6 +1168,7 @@ async function api(req, res, url) {
     }
     if (m === 'PUT' && id) {
       const body = await readBody(req), old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
+      if(hiddenActivity(body.aktivitas))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if(table==='gis_layer' && body.geojson && isBlockLayer({...old,...body})) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
       validateOperationalBlock(table,body,old);
@@ -1269,7 +1272,7 @@ const sortRows = (table, rows) => {
   const s = T.date || T.sort || 'id', desc = !T.date && s.startsWith('-'), k = s.replace(/^-/, '');
   return [...rows].sort((a, b) => { const c = String(a[k] ?? '').localeCompare(String(b[k] ?? ''), 'id', { numeric: true }); return (desc ? -c : c) || a.id - b.id; });
 };
-const rowsOf = (t) => sortRows(t, db.prepare(`SELECT * FROM ${q(t)}`).all());
+const rowsOf = (t) => sortRows(t,visibleActivityRows(db.prepare(`SELECT * FROM ${q(t)}`).all()));
 const getSetting = (k) => db.prepare('SELECT v FROM _settings WHERE k=?').get(k)?.v;
 // ---- Excel per halaman
 const editableExcelTables = user => [...EXCEL_TABLES].filter(t=>canEdit(user,t));
@@ -1295,7 +1298,7 @@ function scopeOf(table, kom) {
 const makeWorkbook = (panel = null) => {
   const SHEETS = panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS;
   const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)).map(r=>{const field=({pisang_blok:'nama_blok',padi_petak:'nama_petak',lahan_blok:'blok'})[t],b=field&&blocks.find(r[field]);return b?{...r,luas_ha:b.luas_ha,...(t==='lahan_blok'?{kepemilikan:b.ownership,peruntukan:b.divisi,target_tanam:rowsOf('lahan_target').find(x=>util.key(x.blok)===util.key(b.nama))?.bulan||r.target_tanam}:{} )}:r;}); return f ? rows.filter(f) : rows; };
-  const refNames = (t) => (TABLES[t]?.display ? db.prepare(`SELECT * FROM ${q(t)}`).all().map((r) => displayOf(t, r)) : []);
+  const refNames = (t) => (TABLES[t]?.display ? db.prepare(`SELECT * FROM ${q(t)}`).all().filter(r=>!hiddenActivity(r.aktivitas)).map((r) => displayOf(t, r)) : []);
   return buildWorkbook({ TABLES, SHEETS, rowsOf: scoped, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA', panel: panel?.label, refNames }).then(wb=>{
     const data=inputSummary({tables:SHEETS.map(s=>s.table),rowsOf:scoped,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())});
     const ws=wb.addWorksheet('Ringkasan Input',{views:[{state:'frozen',ySplit:1}]});
@@ -1368,6 +1371,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
     const ops=[],seenIds=new Set(),existing=new Map();
     for(const row of cur){const sigKey=sig(t,p.cfg,row);existing.set(sigKey,(existing.get(sigKey)||0)+1);}
     for(const input of p.rows) {
+      if(hiddenActivity(input.aktivitas)){s.peringatan.push('Baris '+input.__baris+': kegiatan tidak digunakan untuk input admin; data lama tetap disimpan.');continue;}
       const id=Number(input._record_id)||null,previous=id?cur.find(x=>x.id===id):null;
       if(t==='lahan_harian'&&previous?.daily_report_id){s.peringatan.push('Baris '+input.__baris+': mengikuti Daily Report; revisi melalui Daily, tidak diinput ulang.');continue;}
       let row;try{row=blocks.canonical(t,prepareExcelInput(t,input,previous,{findBlock:blocks.find,targets:rowsOf('lahan_target')}));}catch(e){s.errors.push({row:input.__baris,msg:e.message});continue;}
