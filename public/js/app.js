@@ -1,3 +1,5 @@
+import {createResourceLoader} from './resource-loader.js';
+const loadResource=createResourceLoader();
 import {cropLabel} from './crop-labels.js';
 import { DIVISIONS, TABLES, ROLES, util, displayOf, canEdit, isAdmin, EXCEL_SHEETS } from './schema.js';
 import { KOM, RECORD_ROUTES } from './navigation.js';
@@ -31,7 +33,8 @@ const api = {
 };
 const cache = {};      // tabel -> rows
 const stamp = {};      // tabel -> "count|max(updated_at)"
-async function loadTable(t) { cache[t] = await api.get(`/api/t/${t}`); }
+const tableJobs=new Map();
+async function loadTable(t) {const actor=me?.id||'',key=actor+'|'+t;if(tableJobs.has(key))return tableJobs.get(key);const job=api.get(`/api/t/${t}`).then(rows=>{if((me?.id||'')===actor)cache[t]=rows;return rows;}).finally(()=>tableJobs.delete(key));tableJobs.set(key,job);return job;}
 function neededTables(route) {
   if(!route || ['hub','records','blocks','daily','pengguna','riwayat','excel','pengaturan'].includes(route.split('/')[0]))return [];
   if(route.startsWith('k/pisang'))return Object.keys(TABLES).filter(t=>t.startsWith('pisang_')||t.startsWith('lahan_'));
@@ -108,13 +111,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#mod
 const LIBS = { leaflet: ['/vendor/leaflet.css', '/vendor/leaflet.js'], chart: ['/vendor/chart.umd.js'], shp: ['/vendor/shp.min.js'] };
 const libPromise = {};
 function loadLib(name) {
-  return (libPromise[name] ??= Promise.all(LIBS[name].map((src) => new Promise((ok, fail) => {
-    const el = src.endsWith('.css') ? Object.assign(document.createElement('link'), { rel: 'stylesheet', href: src }) : Object.assign(document.createElement('script'), { src });
-    el.onload = ok; el.onerror = () => fail(new Error('Gagal memuat ' + src));
-    document.head.appendChild(el);
-  }))).then(() => {
-    if (name === 'chart') { Chart.defaults.font.family = '"Segoe UI", system-ui, sans-serif'; Chart.defaults.color = '#66756c'; }
-  }));
+ return (libPromise[name]??=Promise.all(LIBS[name].map(loadResource)).then(()=>{if(name==='chart'){Chart.defaults.font.family='"Segoe UI", system-ui, sans-serif';Chart.defaults.color='#66756c';}}).catch(e=>{delete libPromise[name];throw e;}));
 }
 let charts = [];
 async function chart(canvas, cfg) {
@@ -131,12 +128,12 @@ async function downloadXlsx(filename, sheets) {
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 // layer peta disimpan di memori; diambil ulang hanya bila berubah
-let gisCache = null;
-async function gisLayers() {
-  const s = stamp.gis_layer;
-  if (gisCache && gisCache.s === s) return gisCache.rows;
-  const rows = await api.get('/api/t/gis_layer');
-  gisCache = { s, rows }; return rows;
+let gisCache=null;const gisJobs=new Map();
+async function gisLayers(){
+ const actor=me?.id||'',s=stamp.gis_layer,key=actor+'|'+s;
+ if(gisCache?.key===key)return gisCache.rows;
+ if(gisJobs.has(key))return gisJobs.get(key);
+ const job=api.get('/api/t/gis_layer').then(rows=>{if((me?.id||'')===actor&&stamp.gis_layer===s)gisCache={key,rows};return rows;}).finally(()=>gisJobs.delete(key));gisJobs.set(key,job);return job;
 }
 
 const emptyBox = (msg) => `<div class="empty"><div class="big">📭</div>${msg}</div>`;
