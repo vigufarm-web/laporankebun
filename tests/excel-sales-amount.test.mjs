@@ -17,3 +17,12 @@ test('sales downloads show explicit and calculated rupiah without turning totals
  const parsed=await parseWorkbook(Buffer.from(await wb.xlsx.writeBuffer()),{TABLES,SHEETS});
  for(const sheet of parsed){assert.equal(sheet.errors.length,0);assert.equal(sheet.layoutBeda,false);assert.equal(sheet.rows[0].nominal,null);assert.equal(Object.hasOwn(sheet.rows[0],'total'),false);}
 });
+
+test('Jenis Barang is a visible yellow input and export/import completes its classification',async()=>{
+ const SHEETS=EXCEL_SHEETS.filter(c=>c.table==='pisang_penjualan'),cfg=SHEETS[0],fields=sheetFields(TABLES,cfg),input={id:1,tanggal:'2026-10-30',jenis_barang:'PISANG CAVENDISH FH A MATANG',jumlah_box:2,harga:30000};
+ const wb=await buildWorkbook({TABLES,SHEETS,rowsOf:()=>[input]}),ws=wb.getWorksheet(cfg.sheet),col=k=>fields.findIndex(f=>f.k===k)+1;
+ assert.equal(!!ws.getColumn(col('jenis_barang')).hidden,false);assert.equal(ws.getCell(2,col('jenis_barang')).fill.fgColor.argb,'FFFFF7D6');
+ assert.equal(ws.getCell(2,col('bentuk')).value,'FH');assert.equal(ws.getCell(2,col('kelas')).value,'A');assert.equal(ws.getCell(2,col('kondisi')).value,'Matang');assert.equal(input.bentuk,undefined);
+ for(const k of ['bentuk','kelas','kondisi'])ws.getCell(2,col(k)).value=null;
+ const parsed=await parseWorkbook(Buffer.from(await wb.xlsx.writeBuffer()),{TABLES,SHEETS});assert.equal(parsed[0].errors.length,0);assert.equal(parsed[0].rows[0].bentuk,'FH');assert.equal(parsed[0].rows[0].kelas,'A');assert.equal(parsed[0].rows[0].kondisi,'Matang');
+});
