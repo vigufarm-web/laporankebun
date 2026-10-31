@@ -15,5 +15,7 @@ test('banana detail reconciles hectares once per GIS block, keeps nursery and fi
  assert.equal(d.area,3.5);assert.equal(d.plantedHa,1.8);assert.equal(d.plantedPokok,1200);assert.equal(d.population,1185);assert.equal(d.missingPokok,1);assert.equal(d.nursery.balance,848);assert.equal(d.nursery.planted,1212);assert.equal(d.nursery.negativeBatches,1);
  assert.deepEqual(d.harvestMonths.map(m=>[m.month,m.plan,m.actual]),[['2026-11',250,null],['2026-10',200,50],['2026-09',100,110],['2025-12',null,20]]);
  assert.ok(Math.abs(d.harvestMonths[2].achievement-110)<1e-9);assert.equal(d.harvestMonths[2].remaining,0);assert.deepEqual(db.prepare('SELECT * FROM pisang_blok').all(),before);
+ const densityMarkup=bananaDetailMarkup({...d,plantedHa:17.28,plantedPokok:28900,population:28806});
+ assert.match(densityMarkup,/17,28 ha/);assert.match(densityMarkup,/Luas dari pokok tanam: 14,45 ha/);assert.match(densityMarkup,/2\.000 pokok\/ha/);assert.equal(d.plantedPokok,1200);
  assert.match(bananaDetailMarkup(d),/Persediaan bibit Pisang/);assert.match(bananaDetailMarkup(d),/November 2026/i);assert.ok(!JSON.stringify(d).includes('90000'));db.close();
 });
