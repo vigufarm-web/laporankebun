@@ -163,7 +163,7 @@ function renderSidebar(info, route) {
     if (tabs.length > 1) h += `<div class="nav-sub">${tabs.map((t) => nav(RECORD_ROUTES[k]?.[t.k] ? 'records/'+RECORD_ROUTES[k][t.k] : `k/${k}/${t.k}`, '', t.l, route === `k/${k}/${t.k}` || route.startsWith(`k/${k}/${t.k}/`))).join('')}</div>`;
     h += '</div>';
   }
-  h += nav('gis', '🗺️', 'Peta & Lahan', route === 'gis');
+  h += '<a class="nav-item" href="/peta" target="_blank" rel="noopener">Peta Kebun ↗</a>';
   h += nav('excel', '📥', 'Input Excel', route === 'excel');
   if (me) h += `<div class="nav-label">Sistem</div>${nav('riwayat', '🕘', 'Riwayat Perubahan', route === 'riwayat')}${isAdmin(me) ? nav('pengguna', '👥', 'Pengguna & Akses', route === 'pengguna') + nav('pengaturan', '⚙️', 'Pengaturan & Backup', route === 'pengaturan') : ''}`;
   $('#sidebar').innerHTML = h;
@@ -252,7 +252,7 @@ async function route() {
   if (a === 'k' && KOM[b]) return renderKomoditas(main, App, b, c, d);
   if (a === 'pengguna' && isAdmin(me)) return renderUsers(main);
   if (a === 't' && TABLES[b]) return renderTable(main, b);
-  if (a === 'gis') return renderGIS(main, App);
+  if (a === 'gis') {location.assign('/peta');return;}
   if (a === 'riwayat' && me) return renderLog(main);
   if (a === 'excel') return renderExcel(main);
   if (a === 'pengaturan' && isAdmin(me)) return renderSettings(main);
