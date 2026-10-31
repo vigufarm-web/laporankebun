@@ -856,7 +856,7 @@ async function api(req, res, url) {
   if(parts[1]==='nursery-summary'&&m==='GET'){if(!isAdmin(user))return send(res,403,{error:'Khusus admin'});const {nurserySummary}=await import('./lib/nursery-summary.js');return send(res,200,nurserySummary(db));}
   if(parts[1]==='gis-registry') {
     if(!isAdmin(user))return send(res,403,{error:'Pengelolaan data induk GIS khusus admin.'});
-    const at=url.searchParams.get('at')||now().slice(0,10);
+    const at=url.searchParams.get('at')||new Date(Date.now()+7*3600000).toISOString().slice(0,10);
     if(m==='DELETE'&&parts[2]==='grants'){const body=await readBody(req);tx(()=>gisRegistry.revokeGrant(body.token));return send(res,200,{ok:true});}
     if(m==='POST'&&parts[2]==='grants'){const body=await readBody(req);return send(res,200,tx(()=>gisRegistry.grant(body.app,{persistent:body.persistent===true})));}
     if(m==='GET'&&!parts[2])return send(res,200,gisRegistry.catalog(at,ownedPlanningLocations()));
