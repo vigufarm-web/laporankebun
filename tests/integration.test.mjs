@@ -159,6 +159,29 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   assert.equal((await request('/api/t/iklim')).status,403);assert.equal((await request('/api/users')).status,403);
   cookie=adminCookie;assert.ok((await request('/api/t/padi_penjualan')).body.some(r=>r.id===hiddenRiceId&&r.berat_kg===123.45),'hidden transfer survives reupload');after=await request('/api/t/pisang_penjualan');assert.equal(after.body.find(x=>x.id===id).dibayar,12346);
   r=await request('/api/t/pisang_penjualan/'+id,'PUT',{...after.body.find(x=>x.id===id),dibayar:12345});assert.equal(r.status,200);
+  // Regression: move an existing Excel transaction between blocks, keeping its row ID.
+  r=await request('/api/t/lahan_harian','POST',{tanggal:'2004-02-03',aktivitas:'Bajak 2',blok:'ANAK-1',hasil_ha:.01});assert.equal(r.status,200,JSON.stringify(r.body));const moveId=r.body.id;
+  const moveDownload=await fetch(base+'/api/excel/download?tables=lahan_harian&panel=Test',{headers:{cookie}}),moveBook=new ExcelJS.Workbook();await moveBook.xlsx.load(Buffer.from(await moveDownload.arrayBuffer()));
+  const moveSheet=moveBook.getWorksheet('Progres - Harian'),moveValues=[];moveSheet.eachRow((row,n)=>{if(n>1&&Number(row.getCell(1).value)===moveId)moveValues.push([...row.values]);});assert.equal(moveValues.length,1);
+  const singleMoveBook=new ExcelJS.Workbook(),singleMoveSheet=singleMoveBook.addWorksheet('Progres - Harian');singleMoveSheet.addRow(moveSheet.getRow(1).values.slice(1));singleMoveSheet.addRow(moveValues[0].slice(1));const blockColumn=moveSheet.getRow(1).values.findIndex(v=>String(v).replace('*','').trim()==='Blok');singleMoveSheet.getCell(2,blockColumn).value='ANAK-2';
+  const moveBytes=Buffer.from(await singleMoveBook.xlsx.writeBuffer());
+  const moveUpload=async preview=>{const res=await fetch(base+'/api/excel/upload?tables=lahan_harian&panel=Test'+(preview?'&preview=1':''),{method:'POST',headers:{cookie,'Content-Type':'application/octet-stream'},body:moveBytes});return {status:res.status,body:await res.json()};};
+  let moved=await moveUpload(true);assert.equal(moved.status,200);assert.equal(moved.body.sheets[0].ubah,1,JSON.stringify(moved.body));assert.ok(moved.body.sheets[0].changes.some(c=>c.before==='ANAK-1'&&c.after==='ANAK-2'));
+  moved=await moveUpload(false);assert.equal(moved.body.sheets[0].ubah,1,JSON.stringify(moved.body));
+  const movedRow=(await request('/api/t/lahan_harian')).body.find(x=>x.id===moveId);assert.equal(movedRow.blok,'ANAK-2');assert.equal(movedRow.block_id,'test-child-2');assert.equal(movedRow.block_name_snapshot,'ANAK-2');assert.equal(movedRow.hasil_ha,.01);
+  // Regression: a real save of 230 plan rows, stable IDs, and stale revision rejection.
+  const bigItems=Array.from({length:230},(_,i)=>({blok:'ANAK-1',aktivitas:'Uji rencana '+i,satuan:'stem',target:100}));
+  const bigBody={workflow_v2:true,week_start:'2003-01-06',divisi:'Pisang',status:'Dikirim',items:bigItems,hk_groups:bigItems.map(i=>({key:i.aktivitas.toLowerCase()+'|stem',hk:0,mode:'manual',times:1}))};
+  r=await request('/api/daily/plans','POST',bigBody);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items.length,230);const bigPlan=r.body;
+  r=await request('/api/daily/plans','POST',{...bigBody,id:bigPlan.id,updated_at:bigPlan.updated_at,items:bigPlan.items.map((i,n)=>({...i,target:n===0?111:100}))});assert.equal(r.status,200,JSON.stringify(r.body));assert.deepEqual(r.body.items.map(i=>i.id),bigPlan.items.map(i=>i.id));assert.equal(r.body.items[0].target,111);
+  r=await request('/api/daily/plans','POST',{...bigBody,id:bigPlan.id,updated_at:bigPlan.updated_at});assert.equal(r.status,409);
+  // Regression: retry exactly the same daily submission after a lost response.
+  const manyActual=bigItems.slice(0,130).map(i=>({...i,realisasi:1})),retryBody={workflow_v2:true,request_key:crypto.randomUUID(),tanggal:'2003-01-07',divisi:'Pisang',status:'Selesai',apel_hadir:130,items:manyActual,hk_groups:manyActual.map(i=>({key:i.aktivitas.toLowerCase()+'|stem',hk:1,manual:false}))};
+  r=await request('/api/daily','POST',retryBody);assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.items.length,130);const retrySaved=r.body;
+  r=await request('/api/daily','POST',retryBody);assert.equal(r.status,200);assert.deepEqual(r.body,retrySaved);
+  r=await request('/api/daily','POST',{...retryBody,apel_hadir:999});assert.equal(r.status,409);
+  assert.equal((await request('/api/daily?from=2003-01-07&to=2003-01-07')).body.length,1);
+
   // A second start reruns migration against existing data without losing IDs or results.
   const exit=once(proc,'exit');proc.kill();await exit;
   proc=spawn(process.execPath,['server.js'],{cwd:root,env:{...isolatedEnv,PORT:String(port),DATA_DIR:path.join(dir,'data'),EXCEL_FILE:path.join(dir,'input.xlsx')},stdio:['ignore','pipe','pipe']});proc.stdout.on('data',b=>output+=b);proc.stderr.on('data',b=>output+=b);

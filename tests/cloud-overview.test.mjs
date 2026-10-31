@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {TABLES} from '../public/js/schema.js';import {summaryPeriods} from '../lib/summary-periods.js';import {cloudOverview,cloudOverviewPeriods} from '../lib/cloud-overview.js';
 test('public SQL overview preserves revenue definitions, periods and GKG stage separation',async()=>{
  const db=new DatabaseSync(':memory:');for(const [t,T] of Object.entries(TABLES))db.exec(`CREATE TABLE ${t}(id INTEGER PRIMARY KEY,${T.f.filter(f=>f.t!=='calc').map(f=>f.k+' '+(f.t==='num'||f.t==='money'?'REAL':f.t==='int'?'INTEGER':'TEXT')).join(',')})`);
+ db.exec('ALTER TABLE daily_week_item ADD COLUMN retired INTEGER DEFAULT 0');
  const add=(t,r)=>db.prepare(`INSERT INTO ${t}(${Object.keys(r).join(',')}) VALUES(${Object.keys(r).map(()=>'?').join(',')})`).run(...Object.values(r));
  add('pisang_penjualan',{tanggal:'2026-10-22',harga:10,jumlah_box:2,berat_kg:200,dibayar:5});add('pisang_penjualan',{tanggal:'2026-10-23',nominal:15.5,harga:99,jumlah_box:2,dibayar:7});add('pisang_penjualan',{tanggal:'2026-09-30',nominal:30});add('pisang_penjualan',{tanggal:'2026-10-22',tipe:'Mutasi Internal',nominal:999});add('pisang_penjualan',{tanggal:'2026-10-22',tipe:'Ongkir',nominal:50});
  add('padi_penjualan',{tanggal:'2026-10-22',tipe:'Penjualan',berat_kg:3,harga_kg:8});add('padi_penjualan',{tanggal:'2026-10-22',tipe:'Mutasi Internal',jenis:'GKG',berat_kg:375.62,nominal:999});add('padi_panen',{tanggal:'2026-10-22',petak:'P06a',gkp_kg:576.9,gkg_kg:502.06,gkg_basis:'Estimasi'});
