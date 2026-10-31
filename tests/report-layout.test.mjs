@@ -33,3 +33,12 @@ test('weekly banana cards compare actual boxes while monthly keeps its own plan,
  const make=(now,previous)=>harvestSummaryMarkup({periods:[{key:'week',from:'2026-10-26',to:'2026-10-26',pisang:{boxes:now,previousWeekBoxes:previous}},{key:'month',from:'2026-10-01',to:'2026-10-26',pisang:{planBoxes:1050,boxes:719}}]});
  assert.match(make(10,5),/↑/);assert.match(make(5,10),/↓/);assert.match(make(0,0),/→/);assert.match(make(10,0),/Naik 10 box/);assert.ok(!make(10,0).includes('Infinity'));assert.match(make(10,5),/1.050/);assert.match(make(10,5),/331/);assert.match(make(10,5),/68,48%/);assert.match(make(10,5),/2026-10-19 – 2026-10-25/);
 });
+
+ test('half month periods partition current month without including future dates',()=>{
+ for(const today of ['2026-10-01','2026-10-15','2026-10-16','2026-10-31','2028-02-29']){
+ const ps=summaryPeriods(today),first=ps.find(p=>p.key==='monthFirst'),second=ps.find(p=>p.key==='monthSecond');
+ assert.equal(first.from,today.slice(0,7)+'-01');assert.equal(first.to,today.slice(8)<='15'?today:today.slice(0,7)+'-15');assert.equal(second.from,today.slice(0,7)+'-16');assert.equal(second.to,today);
+ const dates=Array.from({length:Number(today.slice(8))},(_,i)=>today.slice(0,7)+'-'+String(i+1).padStart(2,'0'));
+ assert.equal(dates.filter(d=>d>=first.from&&d<=first.to).length+dates.filter(d=>d>=second.from&&d<=second.to).length,dates.length);
+ }
+ });

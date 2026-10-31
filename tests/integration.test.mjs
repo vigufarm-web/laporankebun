@@ -94,7 +94,7 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   const publicRead=await fetch(base+'/api/daily/public?from=2026-10-19&to=2026-10-24');assert.equal(publicRead.status,200);const publicData=await publicRead.json(),infra=publicData.reports.find(x=>x.id===publicInfra.body.id);assert.equal(infra.items[0].realisasi,237);assert.equal(infra.photos.length,0);assert.ok(!JSON.stringify(publicData).includes('lokasi'));assert.ok(!publicData.reports.some(r=>r.id===retryReportId));
   assert.equal((await fetch(base+'/api/daily/public/photo/'+firstPhoto.id)).status,404,'draft photograph stays private');
   assert.equal((await fetch(base+'/api/daily/public',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
-  const publicPeriods=await (await fetch(base+'/api/summary-periods')).json();assert.deepEqual(publicPeriods.periods.map(p=>p.key),['week','month','year','lastYear','all']);
+  const publicPeriods=await (await fetch(base+'/api/summary-periods')).json();assert.deepEqual(publicPeriods.periods.map(p=>p.key),['week','month','year','lastYear','all','monthFirst','monthSecond']);
   assert.equal((await fetch(base+'/api/kebun-plan')).status,200);
   // Expired originals and thumbnails are removed; text and quantities survive.
   const photoDir=path.join(dir,'data','daily-photos');fs.mkdirSync(photoDir,{recursive:true});
