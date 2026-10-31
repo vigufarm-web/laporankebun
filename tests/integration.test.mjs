@@ -160,7 +160,8 @@ test('migrasi, GIS, riwayat selesai, pagination, iklim dan impor Excel aman', {t
   assert.equal((await fetch(base+'/api/excel/upload?tables=pisang_penjualan,iklim',{method:'POST',headers:{cookie},body:Buffer.from(await roleBook.xlsx.writeBuffer())})).status,403);
   assert.ok(roleBook.getWorksheet('Ringkasan Input'));
   const riceSheet=roleBook.getWorksheet('Padi - Penjualan Beras');assert.ok(!riceSheet.getColumn(1).values.includes(hiddenRiceId),'process transfer hidden from sales workbook');
-  const inputStats=await request('/api/excel/summary');assert.equal(inputStats.status,200);assert.deepEqual(inputStats.body.tables.map(t=>t.table).sort(),['padi_penjualan','pisang_penjualan']);
+  assert.equal((await fetch(base+'/api/excel/summary')).status,401);
+  const inputStats=await request('/api/excel/summary');assert.equal(inputStats.status,200);assert.deepEqual(inputStats.body.tables.map(t=>t.table).sort(),['padi_penjualan','pisang_penjualan']);assert.ok(inputStats.body.tables.every(t=>t.receivables&&Array.isArray(t.receivables.buyers)));assert.equal((await request('/api/excel/summary?tables=iklim')).status,403);assert.ok(!('receivables' in (await request('/api/overview')).body));
   const roleSheet=roleBook.getWorksheet('Pisang - Penjualan');roleSheet.getCell(2,amountColumn).value=12346;
   const roleBytes=Buffer.from(await roleBook.xlsx.writeBuffer());
   for(const preview of [true,false]){const rr=await fetch(base+'/api/excel/upload'+(preview?'?preview=1':''),{method:'POST',headers:{cookie,'Content-Type':'application/octet-stream'},body:roleBytes});assert.equal(rr.status,200,await rr.text());}

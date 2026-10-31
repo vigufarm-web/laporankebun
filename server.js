@@ -698,6 +698,9 @@ async function api(req, res, url) {
     if(m!=='GET'||!gisRegistry.verifyGrant(token,app))return send(res,401,{error:'Hubungkan kembali ke Peta Kebun. Izin referensi belum ada atau telah berakhir.'},'application/json',headers);
     return send(res,200,gisRegistry.catalog(now().slice(0,10),ownedPlanningLocations()),'application/json',headers);
   }
+  const gisEditor=process.env.GIS_EDITOR_URL;
+  if(parts[1]==='gis-service'&&m==='GET')return send(res,200,{url:gisEditor||'https://laporankebun.vercel.app'});
+  if(gisEditor&&['gis','gis-registry'].includes(parts[1])&&m!=='GET')return send(res,409,{error:'Pengelolaan GIS sudah dipindahkan. Buka Peta Kebun untuk memperbarui data.',editor:gisEditor});
   // --- akun pertama (admin) & login
   if (parts[1] === 'me' && m === 'GET') return send(res, 200, { user, setup: userCount() === 0, roles: ROLES, online: !!cloud, vercel: VERCEL });
   if (parts[1] === 'setup' && m === 'POST') {
@@ -1506,6 +1509,8 @@ function readScope(req,url){
   if(!VERCEL)return null;
   const p=url.pathname;
   const gisTables=['_blocks','gis_layer','_gis_block_versions','_gis_plantings','_gis_planting_revisions','_gis_reference_tokens','_gis_commodities'];
+  if(p==='/api/excel/summary')return [...authTables,...editableExcelTables(sessionUser(req))];
+  if(p==='/api/gis-service')return authTables;
   if(p==='/api/gis-reference')return [...authTables,...gisTables];
   if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
 
@@ -1607,6 +1612,7 @@ export default async function serve(req,res){
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});
     return res.end(fs.readFileSync(new URL('./public/index.html',import.meta.url)));
   }
+  if(process.env.VERCEL&&/^\/peta\/?$/.test(pathname)&&process.env.GIS_EDITOR_URL){res.writeHead(302,{Location:process.env.GIS_EDITOR_URL});return res.end();}
   if(process.env.VERCEL&&/^\/peta\/?$/.test(pathname)){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(fs.readFileSync(new URL('./public/peta.html',import.meta.url)));}
   if(process.env.VERCEL&&(pathname==='/kebun'||pathname==='/kebun/')){
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-cache'});
