@@ -75,6 +75,7 @@ export function bacaJenisBarang(teks) { // → { tipe, bentuk, kelas, kondisi } 
   o.kondisi = reject ? 'Reject' : KATA_KONDISI.find(([, d]) => ada(d))?.[0];
   return o;
 }
+export function gudangDariSJ(value){const parts=String(value||'').toUpperCase().split(/[^A-Z0-9]+/),codes=new Set(parts.map(p=>p==='SMG'||p==='SEMARANG'?'SMG':p==='TGL'||p==='TEGAL'?'TGL':null).filter(Boolean));return codes.size===1?[...codes][0]:null;}
 export function lengkapiJual(row, lama) { // lama = isi sebelum diedit (form / PUT) → kolom yang dulu terisi otomatis ikut menyesuaikan
   const r = { ...row }, kosong = (v) => v == null || v === '';
   if (lama) {
@@ -82,6 +83,8 @@ export function lengkapiJual(row, lama) { // lama = isi sebelum diedit (form / P
     if (!sm(r.jenis_barang, lama.jenis_barang)) { const dulu = lengkapiJual({ jenis_barang: lama.jenis_barang, pembeli: lama.pembeli }); for (const k of K) if (sm(r[k], lama[k]) && sm(lama[k], dulu[k])) r[k] = null; } // Jenis Barang diganti → isian otomatis lama dihitung ulang
     else if (K.some((k) => !sm(r[k], lama[k])) && sm(lama.jenis_barang, lengkapiJual({ ...lama, jenis_barang: null }).jenis_barang)) r.jenis_barang = null; // Bentuk/Kelas/Kondisi diganti & Jenis dulu otomatis → dibuat ulang
   }
+  const inferred=gudangDariSJ(r.no_sj),previous=lama&&gudangDariSJ(lama.no_sj);
+  if(kosong(r.gudang)||(lama&&r.no_sj!==lama.no_sj&&r.gudang===lama.gudang&&lama.gudang===previous))r.gudang=inferred||null;
   for (const k of Object.keys(OPSI_JUAL)) r[k] = rapikanPilihan(k, r[k]);
   if (!kosong(r.jenis_barang)) { const b = bacaJenisBarang(r.jenis_barang); for (const k of ['tipe', 'bentuk', 'kelas', 'kondisi']) if (kosong(r[k]) && b[k]) r[k] = b[k]; }
   if (kosong(r.tipe)) r.tipe = /RIPENING/.test(String(r.pembeli || '').toUpperCase()) ? 'Mutasi Internal' : 'Penjualan';
@@ -217,7 +220,7 @@ export const TABLES = {
     f: [
       { k: 'tanggal', l: 'Tanggal SJ', t: 'date', req: true },
       { k: 'no_sj', l: 'No. Surat Jalan', t: 'text' },
-      { k: 'gudang', l: 'Asal Gudang', t: 'text', sug: ['TGL', 'SMG'] },
+      { k: 'gudang', l: 'Asal Gudang', t: 'text', sug: ['TGL', 'SMG'],hint:'Boleh kosong bila nomor SJ memuat kode SMG/TGL atau Semarang/Tegal yang jelas. Nomor lain perlu diperiksa.' },
       { k: 'pembeli', l: 'Pembeli', t: 'text' },
       { k: 'tipe', l: 'Tipe', t: 'select', opt: TIPE_JUAL, req: true, hint: 'Boleh dikosongkan: terbaca dari Jenis Barang (ONGKIR/RETUR/SAMPEL), selain itu Penjualan' },
       { k: 'jenis_barang', l: 'Jenis Barang', t: 'text', sembunyi: true, hint: 'Isi ini SAJA (mis. pisang cavendish fh a matang) → Bentuk/Kelas/Kondisi terisi otomatis; atau pilih Bentuk/Kelas/Kondisi → kolom ini terisi otomatis' },
