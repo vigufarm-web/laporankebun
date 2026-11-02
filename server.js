@@ -257,7 +257,7 @@ function ownedDailyLocations() {
 let planningParcelLocations;
 function ownedPlanningLocations(){planningParcelLocations ||= createParcelLocations(db,blocks,{includePartial:true});return planningParcelLocations();}
 let planningMapLocations;
-function ownedPlanningMap(){planningMapLocations ||= createParcelLocations(db,blocks,{includePartial:true,includeGeometry:true});return {type:'FeatureCollection',features:planningMapLocations().filter(b=>b.divisi==='Pisang'&&b.geometry).map(b=>({type:'Feature',geometry:b.geometry,properties:{id:b.id,name:b.nama}}))};}
+function ownedPlanningMap(){planningMapLocations ||= createParcelLocations(db,blocks,{includePartial:true,includeGeometry:true});return {type:'FeatureCollection',features:planningMapLocations().filter(b=>b.divisi==='Pisang'&&b.geometry).map(b=>({type:'Feature',geometry:b.geometry,properties:{id:b.id,name:b.nama}})),context:{type:'FeatureCollection',features:db.prepare('SELECT nama,jenis,field_nama,geojson FROM gis_layer WHERE tampil=1 ORDER BY id').all().filter(l=>/blok|jalan/i.test(l.jenis+' '+l.nama)).flatMap(l=>{try{return (JSON.parse(l.geojson||'{}').features||[]).filter(f=>f.geometry).map(f=>({type:'Feature',geometry:f.geometry,properties:{name:String(f.properties?.[l.field_nama]||f.properties?.Nama_Blok||f.properties?.Nama_Jalan||l.nama),kind:/jalan/i.test(l.jenis+' '+l.nama)?'road':'block'}}));}catch{return [];}})}};}
 
 let dailyTargetCache=new Map();
 function dailyLandTargets(date){
