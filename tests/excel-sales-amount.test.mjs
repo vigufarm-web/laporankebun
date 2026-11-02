@@ -9,7 +9,7 @@ test('sales downloads show explicit and calculated rupiah without turning totals
  const wb=await buildWorkbook({TABLES,SHEETS,rowsOf:t=>data[t]||[]});
  for(const cfg of SHEETS){
   const ws=wb.getWorksheet(cfg.sheet),fields=sheetFields(TABLES,cfg),amount=fields.findIndex(f=>f.k==='nominal')+1;
-  assert.equal(!!ws.getColumn(amount).hidden,false);
+  assert.equal(!!ws.getColumn(amount).hidden,false);assert.equal(ws.getCell(2,amount).value.result,cfg.table==='pisang_penjualan'?60000:600000);assert.ok(ws.getCell(2,amount).value.formula);if(cfg.table==='pisang_penjualan')assert.equal(ws.getCell(3,amount).value,55000);
   const total=fields.length+1;assert.equal(ws.getCell(1,total).value,'Total (Rp)');assert.equal(ws.getColumn(total).numFmt,'#,##0');
   assert.equal(ws.getCell(2,total).value,cfg.table==='pisang_penjualan'?60000:600000);
   if(cfg.table==='pisang_penjualan'){assert.equal(ws.getCell(3,total).value,55000);assert.equal(ws.getCell(4,total).value,-30000);}

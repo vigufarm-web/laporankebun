@@ -9,3 +9,10 @@ test('rice sales hide process transfers without deleting originals; summary peri
 test('non-sales input summaries count records without inventing sums of balances or repeated areas',()=>{
  const d=inputSummary({tables:['work'],rowsOf:()=>[{tanggal:'2026-10-26',luas:5},{tanggal:'2026-10-27',luas:5}],TABLES:{work:{date:'tanggal',title:'Work'}},today:'2026-10-27'}).tables[0];assert.equal(d.periods[0].rows,2);assert.deepEqual(d.metrics,[]);assert.equal(d.periods[0].amount,undefined);
 });
+
+test('selected half months preserve unpaid nominal and sum payments once',()=>{
+ const rows=[{id:1,tanggal:'2026-10-15',no_sj:'A',pembeli:'A',jumlah_box:2,harga:100,dibayar:50},{id:2,tanggal:'2026-10-16',no_sj:'B',pembeli:'B',nominal:300,dibayar:0},{id:3,tanggal:'2026-10-31',no_sj:'C',pembeli:'C',nominal:100,dibayar:100}];
+ const before=JSON.stringify(rows),d=inputSummary({tables:['pisang_penjualan'],rowsOf:()=>rows,TABLES:{pisang_penjualan:{date:'tanggal'}},today:'2026-11-02'}).tables[0];
+ const periods=d.selectedPeriods.filter(p=>p.month==='2026-10'),full=periods.find(p=>p.part==='full'),first=periods.find(p=>p.part==='first'),second=periods.find(p=>p.part==='second');
+ assert.equal(first.amount,200);assert.equal(first.paid,50);assert.equal(first.outstanding,150);assert.equal(second.amount,400);assert.equal(second.paid,100);assert.equal(second.outstanding,300);assert.equal(full.amount,first.amount+second.amount);assert.equal(full.paid,150);assert.equal(full.outstanding,450);assert.equal(JSON.stringify(rows),before);
+});
