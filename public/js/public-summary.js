@@ -2,7 +2,7 @@ import {weeklyProgressCards} from './weekly-progress-cards.js';
 import {padiSummaryMarkup} from './padi-summary.js';
 import {cropLabel} from './crop-labels.js';
 import {progressMarkup} from './progress-matrix.js';
-import {climateChartMarkup} from './climate-chart.js';
+import {mountClimateChart} from './climate-chart.js';
 import {periodSummaryMarkup,harvestSummaryMarkup} from './period-summary.js';
 import {planSummaryMarkup} from './year-plan.js?v=simple-plant-plan-20261027';
 import {renderPublicDaily} from './daily-public.js';
@@ -23,7 +23,7 @@ export async function renderPublicSummary(host,A){
  host.querySelector('#sumHarvest').innerHTML=harvestSummaryMarkup(totals);
  host.querySelector('#padiTotals').innerHTML=periodSummaryMarkup(totals,'padi');
  host.querySelector('#climateTotals').innerHTML=periodSummaryMarkup(totals,'iklim');
- host.querySelector('#climateCharts').innerHTML=climateChartMarkup(totals.periods.find(p=>p.key==='month'));
+ mountClimateChart(host.querySelector('#climateCharts'),request,totals.periods.find(p=>p.key==='month'));
  host.querySelector('#sumYearPlan').innerHTML=planSummaryMarkup(plan);host.querySelector('#sumWeek').textContent=progress.from+' – '+progress.to;
  host.querySelector('#sumWeekly').innerHTML=weeklyProgressCards(progress.weekly);
  host.querySelector('#sumArea').textContent=progress.blocks.length+' blok pada tabel · luas blok terpantau '+num(progress.area)+' ha · maksimal 100% tiap tahap';const draw=()=>host.querySelector('#sumBlocks').innerHTML=progressMarkup(progress,host.querySelector('#sumSearch').value);host.querySelector('#sumSearch').oninput=draw;draw();host.querySelector('#sumStatus').textContent='Data per '+plan.today;

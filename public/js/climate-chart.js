@@ -6,8 +6,8 @@ export function climateChartMarkup(period){
  const records=new Map((period.climate.days||[]).map(d=>[d.tanggal,d])),days=[];
  for(let date=new Date(period.from+'T00:00:00Z');date.toISOString().slice(0,10)<=period.to;date.setUTCDate(date.getUTCDate()+1)){const key=date.toISOString().slice(0,10);days.push({tanggal:key,...records.get(key)});}
  const rain=days.filter(d=>valid(d.hujan)),temp=days.filter(d=>valid(d.tavg));
- const head=`<div class="sum-section-head"><div><h2>Curah hujan & suhu</h2><p class="small muted">Pengamatan harian · bulan ini</p></div><span>${esc(period.from)} – ${esc(period.to)}</span></div>`;
- if(!rain.length&&!temp.length)return `<section class="sum-panel climate-charts">${head}<p class="sum-empty">Belum ada pengamatan pada bulan ini.</p></section>`;
+ const head=`<div class="sum-section-head"><div><h2>Curah hujan & suhu</h2><p class="small muted">Pengamatan harian · ${esc(period.label||'Bulan ini')}</p></div><span>${esc(period.from)} – ${esc(period.to)}</span></div>`;
+ if(!rain.length&&!temp.length)return `<section class="sum-panel climate-charts">${head}<p class="sum-empty">Belum ada pengamatan pada periode ini.</p></section>`;
  const w=900,h=300,left=56,right=842,top=34,bottom=246,step=(right-left)/Math.max(1,days.length);
  const rainMax=Math.max(5,Math.ceil(Math.max(0,...rain.map(d=>Number(d.hujan)))*1.15/5)*5);
  const temps=temp.map(d=>Number(d.tavg)),tmin=temp.length?Math.floor((Math.min(...temps)-2)/5)*5:20,tmax=temp.length?Math.ceil((Math.max(...temps)+2)/5)*5:40;
@@ -25,4 +25,16 @@ export function climateChartMarkup(period){
  const grid=[0,.25,.5,.75,1].map(f=>{const y=bottom-f*(bottom-top);return `<line x1="${left}" x2="${right}" y1="${y}" y2="${y}" stroke="#e4ebe6" stroke-dasharray="3 5"/><text x="${left-12}" y="${y+4}" text-anchor="end" font-size="11">${num(rainMax*f)}</text><text x="${right+12}" y="${y+4}" font-size="11">${num(tmin+(tmax-tmin)*f)}</text>`;}).join('');
  const total=rain.reduce((s,d)=>s+Number(d.hujan),0),avg=temp.length?temps.reduce((s,v)=>s+v,0)/temp.length:null;
  return `<section class="sum-panel climate-charts">${head}<div class="climate-overview"><div><span>Total hujan</span><strong>${rain.length?num(total)+' <small>mm</small>':'Belum tercatat'}</strong><small>${rain.length} / ${days.length} hari tercatat</small></div><div><span>Suhu rata-rata</span><strong>${avg!=null?num(avg)+' <small>°C</small>':'Belum tercatat'}</strong><small>${temp.length} / ${days.length} hari tercatat</small></div></div><div class="climate-legend"><span><i class="climate-rain-key"></i>Curah hujan · mm (kiri)</span><span><i class="climate-temp-key"></i>Suhu rata-rata harian · °C (kanan)</span></div><div class="climate-plot" tabindex="0" role="region" aria-label="Grafik gabungan curah hujan dan suhu, geser untuk melihat tanggal"><svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Curah hujan harian dan suhu rata-rata harian ${esc(period.from)} sampai ${esc(period.to)}"><text x="${left}" y="16" font-size="12">Hujan (mm)</text><text x="${right}" y="16" text-anchor="end" font-size="12">Suhu (°C)</text>${grid}${bars}${segments.join('')}${points}${missing}${labels}</svg></div><p class="small muted">Tanggal pengamatan · × = belum tercatat. Garis suhu terputus saat data kosong; hujan 0 mm tetap dihitung sebagai pengamatan.</p></section>`;
+}
+
+export function climateMonthPeriods(today){
+ const [year,month]=today.slice(0,7).split('-').map(Number),last=new Date(Date.UTC(year,month-1,0)).toISOString().slice(0,10);
+ return [{key:'current',label:'Bulan ini',from:today.slice(0,7)+'-01',to:today},{key:'previous',label:'Bulan lalu',from:last.slice(0,7)+'-01',to:last}];
+}
+export function mountClimateChart(host,api,current){
+ if(!host||!current)return;
+ const periods=climateMonthPeriods(current.to),cache=new Map([['current',{...current,label:'Bulan ini'}]]);let ticket=0;
+ host.innerHTML=`<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><label>Periode grafik <select aria-label="Periode grafik curah hujan"><option value="current">Bulan ini</option><option value="previous">Bulan lalu</option></select></label></div><div class="climate-selected"></div>`;
+ const select=host.querySelector('select'),body=host.querySelector('.climate-selected');body.innerHTML=climateChartMarkup(cache.get('current'));
+ select.onchange=async()=>{const key=select.value,period=periods.find(p=>p.key===key),request=++ticket;if(cache.has(key)){body.innerHTML=climateChartMarkup(cache.get(key));return;}body.innerHTML='<p role="status">Memuat pengamatan…</p>';try{const climate=await api.get('/api/climate?from='+period.from+'&to='+period.to);cache.set(key,{...period,climate});if(host.isConnected&&request===ticket)body.innerHTML=climateChartMarkup(cache.get(key));}catch(e){if(host.isConnected&&request===ticket)body.textContent='Pengamatan belum dapat dimuat: '+e.message;}};
 }
