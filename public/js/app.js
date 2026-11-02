@@ -488,6 +488,7 @@ function exportAll() {
 
 // ================================================================ RIWAYAT & PENGATURAN
 // ================================================================ INPUT EXCEL
+const excelUploadGuide=()=>`<details class="card" style="margin:12px 0"><summary><b>Panduan tambah, revisi & duplikat Excel</b></summary><ol class="small" style="line-height:1.8;padding-left:20px"><li><b>Mulai dari download terbaru.</b> Pakai file dari halaman yang sesuai dan jangan mengganti nama sheet atau judul kolom.</li><li><b>Tambah data baru:</b> isi baris kosong dan sel kuning muda; ID baris dan versi dikosongkan hanya untuk data baru.</li><li><b>Revisi data lama:</b> ubah baris yang sudah ada. Pertahankan ID baris dan versi; jangan salin revisi sebagai baris baru.</li><li><b>Pratinjau:</b> periksa jumlah bertambah/berubah, rincian sebelum–sesudah, kesalahan dan peringatan sebelum menekan Terapkan. Hanya sheet yang lolos pemeriksaan dapat diterapkan.</li><li><b>Penjualan:</b> rincian identik tanpa ID yang sudah ada dilewati agar tidak dobel. Calon duplikat (tanggal, SJ, pembeli dan barang sama tetapi jumlah/harga/pembayaran berbeda) ditahan. Download ulang, cari baris asli dan revisi dengan ID. Rincian tambahan yang sah untuk barang yang sama perlu diperiksa admin melalui aplikasi.</li><li><b>File lama:</b> jika versi sudah berubah atau ID tidak ditemukan, jangan kosongkan ID untuk memaksa masuk. Download ulang dan pindahkan revisi ke baris yang benar.</li><li><b>Menghapus baris Excel tidak menghapus data web.</b> Penghapusan rincian salah/duplikat dilakukan admin di aplikasi setelah pembayaran dan rincian yang dipertahankan dicocokkan. Menulis KOSONG juga tidak menghapus data.</li><li><b>Sesudah diterapkan:</b> download kembali untuk memperoleh ID dan versi terbaru. Jangan unggah kembali file lama. Data Daily dan referensi GIS direvisi dari sumbernya.</li></ol><p class="small muted">Satu SJ boleh berisi beberapa barang. Nomor SJ saja bukan bukti duplikat. Pengaman ini membantu memeriksa unggahan, bukan memastikan semua transaksi benar.</p></details>`;
 function excelReportTable(rep) {
   if (!rep) return '<div class="small muted">Belum pernah sinkron.</div>';
   if (rep.gagal) return `<div style="color:var(--danger)">Sinkron gagal: ${esc(rep.gagal)}</div>`;
@@ -520,7 +521,7 @@ function excelPanel(el, { tables, kom, label, onDone }) {
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.statusText); return j;
     };
     const md = openModal(`<div class="modal-head"><h2>⬆ Upload Excel · ${esc(label)}</h2><button class="x">×</button></div>
-      <div class="modal-body"><div class="small muted" style="margin-bottom:8px">File: <b>${esc(file.name)}</b> — hanya data halaman ini yang diperbarui, data halaman lain tidak tersentuh.</div><div id="xpB">Membaca file…</div></div>
+      <div class="modal-body"><div class="small muted" style="margin-bottom:8px">File: <b>${esc(file.name)}</b> — hanya data halaman ini yang diperbarui, data halaman lain tidak tersentuh.</div>${excelUploadGuide()}<div id="xpB">Membaca file…</div></div>
       <div class="modal-foot"><span class="sp"></span><button class="btn" id="xpNo">Batal</button><button class="btn primary" id="xpOk" disabled>Terapkan</button></div>`, true);
     $('#xpNo', md).onclick = closeModal;
     try {
@@ -544,9 +545,9 @@ async function renderExcel(main) {
   const rep = st.laporan;
   const scopeNote=isAdmin(me)?'':`<p class="small">Sheet sesuai akses Anda: ${EXCEL_SHEETS.filter(s=>can(s.table)).map(s=>esc(s.sheet)).join(', ')}.</p>`;
   main.innerHTML = `<div class="page-head"><div><h1>📥 Input Excel</h1>
-      <p class="desc">${st.online ? 'Isi data lewat Excel: download file berisi data terbaru, ubah/tambah baris, lalu upload kembali. Baris lama yang tidak ada di file tetap disimpan.' : 'Isi data lewat Excel: ubah, tambah, atau hapus baris di file Excel lalu <b>simpan</b> — aplikasi otomatis ikut ter-update dalam beberapa detik. Perubahan lewat aplikasi juga otomatis ditulis ke file Excel.'}</p></div>
+      <p class="desc">${st.online ? 'Isi data lewat Excel: download file berisi data terbaru, ubah/tambah baris, lalu upload kembali. Baris lama yang tidak ada di file tetap disimpan.' : 'Isi data lewat Excel: ubah atau tambah baris di file Excel lalu <b>simpan</b> — aplikasi otomatis ikut ter-update dalam beberapa detik. Perubahan lewat aplikasi juga otomatis ditulis ke file Excel.'}</p></div>
       <div class="actions"><a class="btn primary" href="/api/excel/download">⬇ Download Excel (data terbaru)</a></div></div>
-    ${scopeNote}<div id="inputCrosscheck" class="card" style="margin-bottom:16px">Memuat ringkasan untuk crosscheck…</div><div class="cols-2">
+    ${scopeNote}${excelUploadGuide()}<div id="inputCrosscheck" class="card" style="margin-bottom:16px">Memuat ringkasan untuk crosscheck…</div><div class="cols-2">
       ${st.online ? `<div class="card"><h3>Isi lewat Excel (versi online)</h3>
         <ol class="small" style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>Klik <b>Download Excel</b> — isinya data terbaru.</li><li>Isi sel <b>kuning muda</b> saja. Luas blok mengikuti GIS; hasil ha adalah pekerjaan pada tanggal itu. Jadwal, ID dan nilai otomatis tidak perlu diisi ulang.</li><li>Data yang sudah masuk Daily Report tidak diinput lagi. Ubah / tambah baris manual, lalu simpan.</li><li>Upload file itu di kotak sebelah sesuai akses akun → periksa ringkasan perubahan → <b>Terapkan</b>.</li></ol>
       </div>` : `<div class="card"><h3>File Excel input</h3>
