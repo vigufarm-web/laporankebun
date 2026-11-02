@@ -1,3 +1,4 @@
+import {salesImportDecision} from './lib/sales-import-guard.js';
 import {withGeneralDailyLocations} from './public/js/daily-locations.js';
 import {hiddenActivity,visibleActivityRows} from './public/js/activity-visibility.js';
 import {saveWeeklyItems} from './lib/weekly-plan-store.js';
@@ -1444,7 +1445,10 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
         if(masterField&&cleaned[masterField]!==old[masterField]){s.errors.push({row:input.__baris,msg:'Ubah nama blok melalui GIS.'});continue;}
         if(Object.entries(cleaned).some(([k,v])=>!samaNilai(v,old[k]))) {ops.push({id,old,row:cleaned});s.ubah++;for(const f of sheetFields(TABLES,p.cfg)){if(!f.k.startsWith('_')&&!samaNilai(cleaned[f.k],old[f.k])&&s.changes.length<100)s.changes.push({row:input.__baris,field:f.l,before:old[f.k]??null,after:cleaned[f.k]??null});}}
       } else {
-        const sigKey=sig(t,p.cfg,row);if(existing.get(sigKey)){existing.set(sigKey,existing.get(sigKey)-1);continue;}
+        const sigKey=sig(t,p.cfg,row);if(existing.get(sigKey)){existing.set(sigKey,existing.get(sigKey)-1);if(['pisang_penjualan','padi_penjualan'].includes(t))s.peringatan.push('Baris '+input.__baris+': rincian identik sudah ada; dilewati agar tidak dobel.');continue;}
+        const duplicate=salesImportDecision(t,cleaned,cur,ops.filter(op=>!op.id).map(op=>op.row));
+        if(duplicate.kind==='skip'){s.peringatan.push('Baris '+input.__baris+': rincian SJ identik sudah ada; dilewati agar tidak dobel.');continue;}
+        if(duplicate.kind==='conflict'){s.errors.push({row:input.__baris,msg:'Calon duplikat SJ '+cleaned.no_sj+'. Rincian barang sudah ada'+(duplicate.ids.length?' (ID '+duplicate.ids.join(', ')+')':' dalam file ini')+'. Untuk revisi, download terbaru dan ubah baris ber-ID; jangan tambah baris baru. Jika ini rincian tambahan yang sah, minta admin memeriksa sebelum memasukkannya melalui aplikasi.'});continue;}
         const display=TABLES[t].display;
         if(typeof display==='string' && cur.some(x=>util.key(x[display])===util.key(cleaned[display]))){s.errors.push({row:input.__baris,msg:'Data induk sudah ada. Download ulang dan gunakan ID baris untuk merevisi.'});continue;}
         ops.push({row:cleaned});s.tambah++;
