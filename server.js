@@ -1131,14 +1131,19 @@ async function api(req, res, url) {
     }
     if (m === 'PUT' && id) {
       const b = await readBody(req);
+      if (b.password && String(b.password).length < 6) return send(res, 400, { error: 'Password minimal 6 karakter' });
+      if (!db.prepare('SELECT 1 FROM _users WHERE id=?').get(id)) return send(res, 404, { error: 'Pengguna tidak ditemukan' });
       const admins = db.prepare("SELECT id FROM _users WHERE aktif=1 AND peran LIKE '%\"admin\"%'").all().map((r) => r.id);
       const willLoseAdmin = admins.length === 1 && admins[0] === id && ((b.peran && !b.peran.includes('admin')) || b.aktif === 0);
       if (willLoseAdmin) return send(res, 400, { error: 'Harus ada minimal 1 admin aktif' });
-      if (b.nama != null) db.prepare('UPDATE _users SET nama=? WHERE id=?').run(b.nama, id);
-      if (b.peran) db.prepare('UPDATE _users SET peran=? WHERE id=?').run(cleanPeran(b.peran), id);
-      if (b.aktif != null) { db.prepare('UPDATE _users SET aktif=? WHERE id=?').run(b.aktif ? 1 : 0, id); if (!b.aktif) db.prepare('DELETE FROM _sessions WHERE user_id=?').run(id); }
-      if (b.password) { if (String(b.password).length < 6) return send(res, 400, { error: 'Password minimal 6 karakter' }); setPassword(id, b.password); db.prepare('DELETE FROM _sessions WHERE user_id=?').run(id); }
-      log('ubah pengguna', '_users', id, { nama: b.nama, peran: b.peran, aktif: b.aktif, password: b.password ? '(diganti)' : undefined });
+      tx(() => {
+        if (b.nama != null) db.prepare('UPDATE _users SET nama=? WHERE id=?').run(b.nama, id);
+        if (b.peran) db.prepare('UPDATE _users SET peran=? WHERE id=?').run(cleanPeran(b.peran), id);
+        if (b.aktif != null) db.prepare('UPDATE _users SET aktif=? WHERE id=?').run(b.aktif ? 1 : 0, id);
+        if (b.password) setPassword(id, b.password);
+        if (b.password || (b.aktif != null && !b.aktif)) db.prepare('DELETE FROM _sessions WHERE user_id=?').run(id);
+        log('ubah pengguna', '_users', id, { nama: b.nama, peran: b.peran, aktif: b.aktif, password: b.password ? '(diganti)' : undefined });
+      });
       return send(res, 200, { ok: true });
     }
   }
@@ -1227,6 +1232,7 @@ async function api(req, res, url) {
       if(hiddenActivity(body.aktivitas))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if(table==='gis_layer' && body.geojson && isBlockLayer({...old,...body})) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
+      if(Object.hasOwn(body,'updated_at') && body.updated_at!==old.updated_at) return send(res,409,{error:'Data sudah berubah sejak formulir dibuka. Salin isian Anda bila perlu, lalu tutup dan buka kembali baris terbaru.'});
       validateOperationalBlock(table,body,old);
       const canonical=blocks.canonical(table,table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
       let r = clean(table,canonical);
@@ -1236,7 +1242,10 @@ async function api(req, res, url) {
       let related = 0;
       if(old && ['lahan_blok','pisang_blok','padi_petak'].includes(table) && TABLES[table].display && body[TABLES[table].display] && body[TABLES[table].display]!==old[TABLES[table].display]) return send(res,409,{error:'Ubah nama blok melalui revisi GIS agar ID dan seluruh riwayat tetap terhubung.'});
       tx(() => {
-        if (cols.length) db.prepare(`UPDATE ${q(table)} SET updated_at=?${cols.map((c) => `, ${q(c)}=?`).join('')} WHERE id=?`).run(now(), ...cols.map((c) => r[c]), id);
+        if (cols.length) {
+          const version=new Date(Math.max(Date.now(), (Date.parse(old.updated_at)||0)+1)).toISOString();
+          db.prepare(`UPDATE ${q(table)} SET updated_at=?${cols.map((c) => `, ${q(c)}=?`).join('')} WHERE id=?`).run(version, ...cols.map((c) => r[c]), id);
+        }
         // nama induk berubah â†’ ikut ganti di semua data yang merujuk (mis. nama blok di panen/progres)
         const nu = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
         if (old && nu && TABLES[table].display) {
