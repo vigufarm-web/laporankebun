@@ -489,6 +489,13 @@ function exportAll() {
 // ================================================================ RIWAYAT & PENGATURAN
 // ================================================================ INPUT EXCEL
 const excelUploadGuide=()=>`<details class="card" style="margin:12px 0"><summary><b>Panduan tambah, revisi & duplikat Excel</b></summary><ol class="small" style="line-height:1.8;padding-left:20px"><li><b>Mulai dari download terbaru.</b> Pakai file dari halaman yang sesuai dan jangan mengganti nama sheet atau judul kolom.</li><li><b>Tambah data baru:</b> isi baris kosong dan sel kuning muda; ID baris dan versi dikosongkan hanya untuk data baru.</li><li><b>Revisi data lama:</b> ubah baris yang sudah ada. Pertahankan ID baris dan versi; jangan salin revisi sebagai baris baru.</li><li><b>Pratinjau:</b> periksa jumlah bertambah/berubah, rincian sebelum–sesudah, kesalahan dan peringatan sebelum menekan Terapkan. Hanya sheet yang lolos pemeriksaan dapat diterapkan.</li><li><b>Penjualan:</b> rincian identik tanpa ID yang sudah ada dilewati agar tidak dobel. Calon duplikat (tanggal, SJ, pembeli dan barang sama tetapi jumlah/harga/pembayaran berbeda) ditahan. Download ulang, cari baris asli dan revisi dengan ID. Rincian tambahan yang sah untuk barang yang sama perlu diperiksa admin melalui aplikasi.</li><li><b>File lama:</b> jika versi sudah berubah atau ID tidak ditemukan, jangan kosongkan ID untuk memaksa masuk. Download ulang dan pindahkan revisi ke baris yang benar.</li><li><b>Menghapus baris Excel tidak menghapus data web.</b> Penghapusan rincian salah/duplikat dilakukan admin di aplikasi setelah pembayaran dan rincian yang dipertahankan dicocokkan. Menulis KOSONG juga tidak menghapus data.</li><li><b>Sesudah diterapkan:</b> download kembali untuk memperoleh ID dan versi terbaru. Jangan unggah kembali file lama. Data Daily dan referensi GIS direvisi dari sumbernya.</li></ol><p class="small muted">Satu SJ boleh berisi beberapa barang. Nomor SJ saja bukan bukti duplikat. Pengaman ini membantu memeriksa unggahan, bukan memastikan semua transaksi benar.</p></details>`;
+function showExcelApplyResult(host, report) {
+  host.innerHTML = excelReportTable(report);
+  const saved = report.sheets.filter(sheet => sheet.status === 'diperbarui').length;
+  const blocked = report.sheets.filter(sheet => sheet.jumlahError > 0).length;
+  const message = saved ? `${saved} sheet tersimpan.` : 'Tidak ada perubahan yang tersimpan.';
+  toast(blocked ? `${message} ${blocked} sheet ditahan. Periksa rincian.` : message, blocked > 0);
+}
 function excelReportTable(rep) {
   if (!rep) return '<div class="small muted">Belum pernah sinkron.</div>';
   if (rep.gagal) return `<div style="color:var(--danger)">Sinkron gagal: ${esc(rep.gagal)}</div>`;
@@ -533,7 +540,7 @@ function excelPanel(el, { tables, kom, label, onDone }) {
       ok.disabled = !n; if (n) ok.textContent = `Terapkan ${n} sheet`;
       ok.onclick = async () => {
         ok.disabled = true; ok.textContent = 'Menerapkan…';
-        try { await go(false); closeModal(); await syncAll(); toast('Data dari Excel sudah diterapkan'); onDone?.(); }
+        try { const report = await go(false); await syncAll(); showExcelApplyResult($('#xpB', md), report); ok.textContent = 'Selesai'; onDone?.(); }
         catch (e) { toast(e.message, true); ok.disabled = false; ok.textContent = `Terapkan ${n} sheet`; }
       };
     } catch (e) { $('#xpB', md).innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
@@ -582,7 +589,7 @@ async function renderExcel(main) {
       $('#xP').innerHTML = `${excelReportTable(pv)}<div style="margin-top:10px;display:flex;gap:8px">${n ? `<button class="btn primary" id="xOk">Terapkan ${n} sheet</button>` : `<span class="small muted">${pv.sheets.some(s=>s.jumlahError)?'Ada kesalahan yang perlu diperbaiki; periksa rincian di atas.':'Tidak ada perubahan pada kolom yang dapat diinput; periksa status setiap sheet.'}</span>`}<button class="btn" id="xNo">Batal</button></div>`;
       $('#xNo').onclick = () => { f.value = ''; $('#xP').innerHTML = ''; };
       $('#xOk')?.addEventListener('click', async () => {
-        try { await send(false); if(isAdmin(me))await syncAll(); toast('Data dari Excel sudah diterapkan'); renderExcel(main); } catch (e) { toast(e.message, true); }
+        try { const report = await send(false); if(isAdmin(me))await syncAll(); f.value = ''; showExcelApplyResult($('#xP'), report); } catch (e) { toast(e.message, true); }
       });
     } catch (e) { $('#xP').innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
   };
