@@ -425,7 +425,9 @@ export async function openForm(table, row, { onSaved, prefill } = {}) {
   $('#bCancel', md).onclick = closeModal;
   setTimeout(() => $('input, select', md)?.focus(), 30);
 
+  let saving = false;
   const save = async (more) => {
+    if (saving) return;
     let r = read();
     if (T.lengkapi) { r = T.lengkapi(r, isNew ? null : row); for (const f of T.f) if (f.t !== 'calc' && r[f.k] != null) { const el = $(`#f_${f.k}`, md); if (el && el.value !== String(r[f.k])) { if (el.tagName === 'SELECT' && ![...el.options].some((o) => o.value === r[f.k])) el.add(new Option(r[f.k])); el.value = r[f.k]; } } } // mis. Penjualan: Bentuk/Kelas/Kondisi ⇄ Jenis Barang
     // nama induk diketik bebas (datalist): beda huruf besar/kecil/spasi → dibetulkan; aktivitas tak dikenal → ditolak; lainnya → konfirmasi
@@ -443,8 +445,9 @@ export async function openForm(table, row, { onSaved, prefill } = {}) {
       el.classList.toggle('err', miss); bad ||= miss;
     }
     if (bad) return toast('Lengkapi kolom bertanda *', true);
+    saving = true;
     try {
-      const res = isNew ? await api.post(`/api/t/${table}`, r) : await api.put(`/api/t/${table}/${row.id}`, r);
+      const res = isNew ? await api.post(`/api/t/${table}`, r) : await api.put(`/api/t/${table}/${row.id}`, {...r,updated_at:row.updated_at ?? null});
       await syncAll();
       toast(isNew ? 'Data tersimpan' : res?._related ? `Perubahan tersimpan · ${res._related} data terkait ikut diperbarui` : 'Perubahan tersimpan');
       if (more) {
@@ -454,6 +457,7 @@ export async function openForm(table, row, { onSaved, prefill } = {}) {
         onSaved?.(); openForm(table, null, { onSaved });
       } else { closeModal(); onSaved?.(); }
     } catch (e) { toast('Gagal menyimpan: ' + e.message, true); }
+    finally { saving = false; }
   };
   $('#bSave', md).onclick = () => save(false);
   $('#bSaveMore', md)?.addEventListener('click', () => save(true));
@@ -782,4 +786,3 @@ async function renderUsers(main) {
 }
 
 boot();
-
