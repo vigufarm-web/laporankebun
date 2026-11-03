@@ -1534,7 +1534,7 @@ function readScope(req,url){
   if(!VERCEL)return null;
   const p=url.pathname;
   const gisTables=['_blocks','gis_layer','_gis_block_versions','_gis_plantings','_gis_planting_revisions','_gis_reference_tokens','_gis_commodities'];
-  if(p==='/api/excel/summary')return [...authTables,...editableExcelTables(sessionUser(req))];
+  if(p==='/api/excel/summary')return [...authTables,...(req.inputClient?['pisang_penjualan','padi_penjualan']:editableExcelTables(sessionUser(req)))];
   if(p==='/api/gis-service')return authTables;
   if(p==='/api/gis-reference')return [...authTables,...gisTables];
   if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
@@ -1602,11 +1602,12 @@ async function handler(req, res) {
       if(req.method==='OPTIONS')return send(res,200,{ok:true});
       const target='/api/'+url.pathname.slice('/api/input-client/'.length);
       const tables='lahan_harian|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
-      const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/download))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
+      const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
         (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
         (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)));
       if(!ok)return send(res,404,{error:'Endpoint Input Data Kebun tidak tersedia.'});
       if(target==='/api/excel/download'&&!new RegExp('^(?:'+tables+')$').test(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Pilihan Excel tidak tersedia.'});
+      if(target==='/api/excel/summary'&&url.searchParams.get('tables')!=='pisang_penjualan,padi_penjualan')return send(res,400,{error:'Ringkasan hanya tersedia untuk penjualan.'});
       req.inputClient=true;url.pathname=target;
     }
     if(url.pathname.startsWith('/api/gis-client/')){const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin||''));if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');if(req.method==='OPTIONS')return send(res,200,{ok:true});const target='/api/'+url.pathname.slice('/api/gis-client/'.length);if(!/^\/api\/(?:login|reference-login|logout|me|blocks|gis(?:\/.*)?|gis-registry(?:\/.*)?)$/.test(target))return send(res,404,{error:'Endpoint Peta tidak tersedia.'});req.gisClient=true;url.pathname=target;}
