@@ -1650,7 +1650,7 @@ async function handler(req, res) {
   }
 }
 
-if (!VERCEL) http.createServer(handler).listen(PORT, '127.0.0.1', () => {
+if (!VERCEL) http.createServer(handler).listen(PORT, '0.0.0.0', () => {
   console.log('\n  Monitoring Kebun berjalan:');
   console.log(`   Komputer ini : http://localhost:${PORT}`);
   for (const ifs of Object.values(os.networkInterfaces())) for (const i of ifs || [])
