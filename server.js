@@ -5,6 +5,7 @@ import {saveWeeklyItems} from './lib/weekly-plan-store.js';
 import {prepareExcelInput,referenceSheets,capExcelLandChanges} from './lib/excel-input-policy.js';
 import {padiSummary} from './lib/padi-summary.js';
 import {inputRows,inputSummary} from './lib/input-summary.js';
+import {addSalesExcelReport} from './lib/sales-excel-report.js';
 import {isRepeatedArea,isDryingWork,isNurseryPopulation,unresolvedCoverage,cappedCoverage} from './lib/coverage-area.js';
 import {activityKey,parseGroups} from './public/js/daily-work.js';
 import {checkWeeklyWorkflow,checkActualWorkflow,reallocateEffectiveHK} from './lib/daily-workflow.js';
@@ -1163,7 +1164,13 @@ async function api(req, res, url) {
     if (panel && !panel.tables.length) return send(res, 400, { error: 'Tabel tidak dikenal untuk Excel' });
     if(m==='GET'&&parts[2]==='summary')return send(res,200,inputSummary({tables:panel?panel.tables:[...EXCEL_TABLES],rowsOf,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())}));
     if (m === 'GET' && parts[2] === 'download') {
-      const buf = Buffer.from(await (await makeWorkbook(panel)).xlsx.writeBuffer());
+      const wb=await makeWorkbook(panel);
+      if(req.inputClient && panel?.tables?.length===1 && ['pisang_penjualan','padi_penjualan'].includes(panel.tables[0])){
+        const table=panel.tables[0];
+        const oldSummary=wb.getWorksheet('Ringkasan Input');if(oldSummary)wb.removeWorksheet(oldSummary.id);
+        addSalesExcelReport(wb,{table,rows:inputRows(table,rowsOf(table)),today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())});
+      }
+      const buf = Buffer.from(await wb.xlsx.writeBuffer());
       const fname = panel ? `Excel ${panel.label} ${now().slice(0, 10)}.xlsx` : path.basename(EXCEL_FILE);
       res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${fname.replace(/[^w .-]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(fname)}` });
       return res.end(buf);
