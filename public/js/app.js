@@ -540,8 +540,9 @@ function excelPanel(el, { tables, kom, label, onDone }) {
       ok.disabled = !n; if (n) ok.textContent = `Terapkan ${n} sheet`;
       ok.onclick = async () => {
         ok.disabled = true; ok.textContent = 'Menerapkan…';
-        try { const report = await go(false); await syncAll(); showExcelApplyResult($('#xpB', md), report); ok.textContent = 'Selesai'; onDone?.(); }
-        catch (e) { toast(e.message, true); ok.disabled = false; ok.textContent = `Terapkan ${n} sheet`; }
+        try { const report = await go(false); showExcelApplyResult($('#xpB', md), report); ok.textContent = 'Selesai'; }
+        catch (e) { toast(e.message, true); ok.disabled = false; ok.textContent = `Terapkan ${n} sheet`; return; }
+        try { await syncAll(); onDone?.(); } catch { toast('Hasil simpan tersedia. Muat ulang untuk memperbarui tampilan.', true); }
       };
     } catch (e) { $('#xpB', md).innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
   };
@@ -588,8 +589,16 @@ async function renderExcel(main) {
       const n = pv.sheets.filter((s) => s.status.startsWith('akan')).length;
       $('#xP').innerHTML = `${excelReportTable(pv)}<div style="margin-top:10px;display:flex;gap:8px">${n ? `<button class="btn primary" id="xOk">Terapkan ${n} sheet</button>` : `<span class="small muted">${pv.sheets.some(s=>s.jumlahError)?'Ada kesalahan yang perlu diperbaiki; periksa rincian di atas.':'Tidak ada perubahan pada kolom yang dapat diinput; periksa status setiap sheet.'}</span>`}<button class="btn" id="xNo">Batal</button></div>`;
       $('#xNo').onclick = () => { f.value = ''; $('#xP').innerHTML = ''; };
-      $('#xOk')?.addEventListener('click', async () => {
-        try { const report = await send(false); if(isAdmin(me))await syncAll(); f.value = ''; showExcelApplyResult($('#xP'), report); } catch (e) { toast(e.message, true); }
+      $('#xOk')?.addEventListener('click', async event => {
+        const apply = event.currentTarget;
+        apply.disabled = true;
+        f.disabled = true;
+        try {
+          const report = await send(false);
+          f.value = '';
+          showExcelApplyResult($('#xP'), report);
+        } catch (e) { toast(e.message, true); apply.disabled = false; }
+        finally { f.disabled = false; }
       });
     } catch (e) { $('#xP').innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
   };
