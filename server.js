@@ -1216,6 +1216,18 @@ async function api(req, res, url) {
     }
     if (m === 'POST') {
       const body = await readBody(req);
+      if(req.inputClient && ['pisang_penjualan','padi_penjualan'].includes(table) && body && !Array.isArray(body) && Object.hasOwn(body,'salesBatch')) {
+        const {salesBatch,batchId}=body;
+        if(!Array.isArray(salesBatch)||salesBatch.length<1||salesBatch.length>50||!/^[0-9a-f-]{36}$/i.test(String(batchId||'')))return send(res,400,{error:'Rincian atau identitas penyimpanan tidak valid.'});
+        const common=['tanggal','no_sj','pembeli'];
+        if(salesBatch.some(r=>!r||typeof r!=='object'||common.some(k=>!String(r[k]||'').trim()))||salesBatch.some(r=>common.some(k=>String(r[k]).trim()!==String(salesBatch[0][k]).trim())))return send(res,400,{error:'Semua rincian harus memakai tanggal, nomor SJ, dan pembeli yang sama.'});
+        const key='sales-batch:'+batchId,hash=crypto.createHash('sha256').update(JSON.stringify([table,salesBatch])).digest('hex');
+        const seen=db.prepare('SELECT v FROM _settings WHERE k=?').get(key);
+        if(seen){const prior=JSON.parse(seen.v);if(prior.hash!==hash)return send(res,409,{error:'Identitas simpan sudah digunakan untuk isian berbeda.'});return send(res,200,{ids:prior.ids,alreadySaved:true});}
+        const ids=tx(()=>{const result=salesBatch.map(r=>insertRow(table,r,false));db.prepare('INSERT INTO _settings (k,v) VALUES (?,?)').run(key,JSON.stringify({hash,ids:result}));return result;});
+        log('import',table,null,{jumlah:ids.length,ids,batch:batchId});
+        return send(res,200,{ids});
+      }
       if((Array.isArray(body)?body:[body]).some(row=>hiddenActivity(row.aktivitas)))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if (Array.isArray(body)) {
         if(table==='gis_layer')return send(res,400,{error:'Unggah layer melalui pratinjau GIS.'});
@@ -1273,6 +1285,11 @@ async function api(req, res, url) {
     if (m === 'DELETE' && id && ['lahan_blok','pisang_blok','padi_petak','gis_layer'].includes(table)) return send(res,409,{error:'Data induk blok/peta dipertahankan. Nonaktifkan blok melalui revisi GIS.'});
     if (m === 'DELETE' && id) {
       const old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
+      if(req.inputClient && ['pisang_penjualan','padi_penjualan'].includes(table)) {
+        if(!old)return send(res,404,{error:'Data tidak ditemukan.'});
+        const expected=url.searchParams.get('updated_at');
+        if(!expected || expected!==old.updated_at)return send(res,409,{error:'Data sudah berubah. Muat ulang sebelum menghapus.'});
+      }
       const refs = old ? childRefs(table, old) : [];
       const cascade = url.searchParams.get('cascade') === '1';
       if (refs.length && !cascade) return send(res, 409, { error: 'Ada data lain yang terhubung', refs });
@@ -1598,13 +1615,14 @@ async function handler(req, res) {
     if(url.pathname.startsWith('/api/input-client/')){
       const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&(!origin||/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)));
       if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});
-      if(origin)res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
+      if(origin)res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
       if(req.method==='OPTIONS')return send(res,200,{ok:true});
       const target='/api/'+url.pathname.slice('/api/input-client/'.length);
       const tables='lahan_harian|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
       const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
         (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
-        (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)));
+        (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)))||
+        (req.method==='DELETE'&&/^\/api\/t\/(?:pisang_penjualan|padi_penjualan)\/\d+$/.test(target));
       if(!ok)return send(res,404,{error:'Endpoint Input Data Kebun tidak tersedia.'});
       if(target==='/api/excel/download'&&!new RegExp('^(?:'+tables+')$').test(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Pilihan Excel tidak tersedia.'});
       if(target==='/api/excel/summary'&&url.searchParams.get('tables')!=='pisang_penjualan,padi_penjualan')return send(res,400,{error:'Ringkasan hanya tersedia untuk penjualan.'});
