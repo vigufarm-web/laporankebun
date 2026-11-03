@@ -1258,6 +1258,7 @@ async function api(req, res, url) {
       if(hiddenActivity(body.aktivitas))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if(table==='gis_layer' && body.geojson && isBlockLayer({...old,...body})) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
+      if(req.inputClient && ['pisang_penjualan','padi_penjualan'].includes(table) && !body.updated_at)return send(res,409,{error:'Versi data tidak tersedia. Muat ulang baris sebelum melakukan revisi.'});
       if(Object.hasOwn(body,'updated_at') && body.updated_at!==old.updated_at) return send(res,409,{error:'Data sudah berubah sejak formulir dibuka. Salin isian Anda bila perlu, lalu tutup dan buka kembali baris terbaru.'});
       validateOperationalBlock(table,body,old);
       const canonical=blocks.canonical(table,table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
@@ -1269,6 +1270,7 @@ async function api(req, res, url) {
       if(old && ['lahan_blok','pisang_blok','padi_petak'].includes(table) && TABLES[table].display && body[TABLES[table].display] && body[TABLES[table].display]!==old[TABLES[table].display]) return send(res,409,{error:'Ubah nama blok melalui revisi GIS agar ID dan seluruh riwayat tetap terhubung.'});
       tx(() => {
         if (cols.length) {
+          if(['pisang_penjualan','padi_penjualan'].includes(table))db.prepare('INSERT INTO _import_revisions (table_name,row_id,before_json,created_at) VALUES (?,?,?,?)').run(table,id,JSON.stringify(old),now());
           const version=new Date(Math.max(Date.now(), (Date.parse(old.updated_at)||0)+1)).toISOString();
           db.prepare(`UPDATE ${q(table)} SET updated_at=?${cols.map((c) => `, ${q(c)}=?`).join('')} WHERE id=?`).run(version, ...cols.map((c) => r[c]), id);
         }
@@ -1300,7 +1302,7 @@ async function api(req, res, url) {
       const refs = old ? childRefs(table, old) : [];
       const cascade = url.searchParams.get('cascade') === '1';
       if (refs.length && !cascade) return send(res, 409, { error: 'Ada data lain yang terhubung', refs });
-      const related = tx(() => { const d = cascade && old ? deleteChildren(table, old) : 0; db.prepare(`DELETE FROM ${q(table)} WHERE id=?`).run(id); return d; });
+      const related = tx(() => { const d = cascade && old ? deleteChildren(table, old) : 0; if(old && ['pisang_penjualan','padi_penjualan'].includes(table))db.prepare('INSERT INTO _import_revisions (table_name,row_id,before_json,created_at) VALUES (?,?,?,?)').run(table,id,JSON.stringify(old),now()); db.prepare(`DELETE FROM ${q(table)} WHERE id=?`).run(id); return d; });
       if (old && table === 'gis_layer') delete old.geojson;
       log('hapus', table, id, { ...old, ...(related ? { data_terkait_ikut_dihapus: related } : {}) });
       if (old && BLOK_T[table] && table !== 'gis_layer') catatBlok(table, [old], []);
