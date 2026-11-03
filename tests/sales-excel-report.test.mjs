@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from '../lib/exceljs.min.cjs';
-import {addSalesExcelReport} from '../lib/sales-excel-report.js';
+import {addSalesExcelReport,compareSalesSJ} from '../lib/sales-excel-report.js';
+
+test('SJ urut numerik dalam bulan dan gudang, dan rincian sama berdekatan',()=>{
+ const rows=[{tanggal:'2026-10-20',gudang:'TGL',no_sj:'10/TGL'},{tanggal:'2026-10-22',gudang:'TGL',no_sj:'2/TGL'},{tanggal:'2026-10-01',gudang:'TGL',no_sj:'1/TGL'},{tanggal:'2026-11-01',gudang:'TGL',no_sj:'1/TGL'},{tanggal:'2026-10-23',gudang:'TGL',no_sj:'2/TGL'},{tanggal:'2026-10-01',gudang:'SMG',no_sj:'3/SMG'}];
+ assert.deepEqual(rows.sort(compareSalesSJ).map(r=>r.no_sj),['3/SMG','1/TGL','2/TGL','2/TGL','10/TGL','1/TGL']);
+});
 
 test('laporan Excel memisahkan ringkasan, pembeli dan SJ, serta menghitung retur dan ongkir',async()=>{
  const rows=[
