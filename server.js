@@ -5,7 +5,7 @@ import {saveWeeklyItems} from './lib/weekly-plan-store.js';
 import {prepareExcelInput,referenceSheets,capExcelLandChanges} from './lib/excel-input-policy.js';
 import {padiSummary} from './lib/padi-summary.js';
 import {inputRows,inputSummary} from './lib/input-summary.js';
-import {addSalesExcelReport} from './lib/sales-excel-report.js';
+import {addSalesExcelReport, compareSalesSJ} from './lib/sales-excel-report.js';
 import {isRepeatedArea,isDryingWork,isNurseryPopulation,unresolvedCoverage,cappedCoverage} from './lib/coverage-area.js';
 import {activityKey,parseGroups} from './public/js/daily-work.js';
 import {checkWeeklyWorkflow,checkActualWorkflow,reallocateEffectiveHK} from './lib/daily-workflow.js';
@@ -1395,7 +1395,7 @@ function scopeOf(table, kom) {
 }
 const makeWorkbook = (panel = null) => {
   const SHEETS = panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS;
-  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)).map(r=>{const field=({pisang_blok:'nama_blok',padi_petak:'nama_petak',lahan_blok:'blok'})[t],b=field&&blocks.find(r[field]);return b?{...r,luas_ha:b.luas_ha,...(t==='lahan_blok'?{kepemilikan:b.ownership,peruntukan:b.divisi,target_tanam:rowsOf('lahan_target').find(x=>util.key(x.blok)===util.key(b.nama))?.bulan||r.target_tanam}:{} )}:r;}); return f ? rows.filter(f) : rows; };
+  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)).map(r=>{const field=({pisang_blok:'nama_blok',padi_petak:'nama_petak',lahan_blok:'blok'})[t],b=field&&blocks.find(r[field]);return b?{...r,luas_ha:b.luas_ha,...(t==='lahan_blok'?{kepemilikan:b.ownership,peruntukan:b.divisi,target_tanam:rowsOf('lahan_target').find(x=>util.key(x.blok)===util.key(b.nama))?.bulan||r.target_tanam}:{} )}:r;}); const result=f?rows.filter(f):rows; return ['pisang_penjualan','padi_penjualan'].includes(t)?result.sort(compareSalesSJ):result; };
   const refNames = (t) => (TABLES[t]?.display ? db.prepare(`SELECT * FROM ${q(t)}`).all().filter(r=>!hiddenActivity(r.aktivitas)).map((r) => displayOf(t, r)) : []);
   return buildWorkbook({ TABLES, SHEETS, rowsOf: scoped, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA', panel: panel?.label, refNames }).then(wb=>{
     const data=inputSummary({tables:SHEETS.map(s=>s.table),rowsOf:scoped,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())});
