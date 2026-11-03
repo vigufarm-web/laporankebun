@@ -393,6 +393,7 @@ function setPassword(id, pw) { const salt = crypto.randomBytes(16).toString('hex
 function publicUser(u) { return u && { id: u.id, username: u.username, nama: u.nama, peran: JSON.parse(u.peran || '[]'), aktif: u.aktif, last_login: u.last_login }; }
 function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((x) => x[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))])); }
 function sessionUser(req) {
+  if(req.inputClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);if(!u||session.auth_hash!=='input:'+u.hash)return null;const account=publicUser(u);return isAdmin(account)||(!(account.peran||[]).some(r=>r.startsWith('daily_'))&&(account.peran||[]).includes('penjualan'))?account:null;}
   if(req.gisClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);return u&&u.hash===session.auth_hash&&isAdmin(publicUser(u))?publicUser(u):null;}
   const tok = cookies(req).kebun_sid; if (!tok) return null;
   const s = db.prepare('SELECT * FROM _sessions WHERE token=?').get(tok);
@@ -725,11 +726,13 @@ async function api(req, res, url) {
       failed.set(un, { n: f.n + 1, t: Date.now() });
       return send(res, 401, { error: 'Username atau password salah' });
     }
+    if(req.inputClient){const account=publicUser(u),roles=account.peran||[];if(!isAdmin(account)&&(!roles.includes('penjualan')||roles.some(r=>r.startsWith('daily_'))))return send(res,403,{error:'Akun ini tidak memiliki akses Input Data Kebun.'});const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,'input:'+u.hash);failed.delete(un);return send(res,200,{user:account,token,expires});}
     if(req.gisClient){if(!isAdmin(publicUser(u)))return send(res,403,{error:'Pengelolaan peta memerlukan akun admin.'});if(parts[1]==='reference-login'){const grant=tx(()=>gisRegistry.grant(b.app,{persistent:b.persistent===true}));failed.delete(un);return send(res,200,grant);}const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,u.hash);db.prepare('DELETE FROM _gis_editor_sessions WHERE expires < ?').run(now());failed.delete(un);return send(res,200,{user:publicUser(u),token,expires});}
     failed.delete(un); startSession(res, u.id);
     return send(res, 200, { user: publicUser(u) });
   }
   if (parts[1] === 'logout' && m === 'POST') {
+    if(req.inputClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');db.prepare('DELETE FROM _gis_editor_sessions WHERE hash=? AND auth_hash LIKE ?').run(crypto.createHash('sha256').update(token).digest('hex'),'input:%');return send(res,200,{ok:true});}
     if(req.gisClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');db.prepare('DELETE FROM _gis_editor_sessions WHERE hash=?').run(crypto.createHash('sha256').update(token).digest('hex'));return send(res,200,{ok:true});}
     const tok = cookies(req).kebun_sid; if (tok) db.prepare('DELETE FROM _sessions WHERE token=?').run(tok);
     res.setHeader('Set-Cookie', 'kebun_sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
@@ -751,7 +754,11 @@ async function api(req, res, url) {
   }
   const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods','padi-summary'].includes(parts[1])||isPublicDailyRead(url.pathname,m));
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
-  if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1])&&!(parts[1]==='excel'&&editableExcelTables(user).length))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});
+  const inputMandor = user && !isAdmin(user) && (user.peran || []).some(r => r.startsWith('daily_'));
+  const inputSales = req.inputClient && user && !isAdmin(user) && !inputMandor && (user.peran || []).includes('penjualan');
+  const inputSalesTable = ['pisang_penjualan','padi_penjualan'].includes(parts[2]);
+  if(req.inputClient && inputMandor && parts[1] === 'excel') return send(res,403,{error:'Akun mandor tidak dapat mengunduh data penjualan.'});
+  if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1])&&!(parts[1]==='excel'&&editableExcelTables(user).length)&&!(inputSales&&inputSalesTable&&['records','t'].includes(parts[1])))return send(res,403,{error:'Rincian input hanya dapat dilihat sesuai hak akses.'});
 
   if(url.pathname==='/api/kebun-plan/reconcile'&&m==='POST'){
     if(!isAdmin(user))return send(res,403,{error:'Pembaruan target dan jadwal khusus admin.'});
@@ -1565,7 +1572,7 @@ async function apiRequest(req, res, url) {
   return serial(async () => {
     const adminRead=/^\/api\/(?:t|tables|records|excel|blocks|gis|kebun|land-prep|padi|nursery-summary|backup|backups|users|log)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/excel/status';
     const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup'&&!isPublicDailyRead(url.pathname,req.method);
-    if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});if(adminRead&&!isAdmin(reader)&&!(url.pathname.startsWith('/api/excel/')&&editableExcelTables(reader).length))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
+    if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});const salesInput=req.inputClient&&(reader.peran||[]).includes('penjualan')&&!(reader.peran||[]).some(r=>r.startsWith('daily_'))&&/^\/api\/(?:records|t)\/(?:pisang_penjualan|padi_penjualan)(?:\/\d+)?$/.test(url.pathname);if(adminRead&&!isAdmin(reader)&&!salesInput&&!(url.pathname.startsWith('/api/excel/')&&editableExcelTables(reader).length))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
     if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
     const hold = holdResponse(res);
@@ -1588,6 +1595,20 @@ async function handler(req, res) {
   dailyTargetCache=new Map();
   const url = new URL(req.url, 'http://x');
   try {
+    if(url.pathname.startsWith('/api/input-client/')){
+      const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&(!origin||/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin)));
+      if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});
+      if(origin)res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
+      if(req.method==='OPTIONS')return send(res,200,{ok:true});
+      const target='/api/'+url.pathname.slice('/api/input-client/'.length);
+      const tables='lahan_harian|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
+      const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/download))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
+        (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
+        (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)));
+      if(!ok)return send(res,404,{error:'Endpoint Input Data Kebun tidak tersedia.'});
+      if(target==='/api/excel/download'&&!new RegExp('^(?:'+tables+')$').test(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Pilihan Excel tidak tersedia.'});
+      req.inputClient=true;url.pathname=target;
+    }
     if(url.pathname.startsWith('/api/gis-client/')){const origin=req.headers.origin,allowed=origin==='https://vigufarm-web.github.io'||(!VERCEL&&/^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin||''));if(!allowed)return send(res,403,{error:'Asal aplikasi tidak diizinkan.'});res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');if(req.method==='OPTIONS')return send(res,200,{ok:true});const target='/api/'+url.pathname.slice('/api/gis-client/'.length);if(!/^\/api\/(?:login|reference-login|logout|me|blocks|gis(?:\/.*)?|gis-registry(?:\/.*)?)$/.test(target))return send(res,404,{error:'Endpoint Peta tidak tersedia.'});req.gisClient=true;url.pathname=target;}
     if(VERCEL&&/^\/peta\/?$/.test(url.pathname)){res.writeHead(302,{Location:process.env.GIS_EDITOR_URL||'https://vigufarm-web.github.io/peta-kebun/','Cache-Control':'no-store'});return res.end();}
     if (VERCEL && (url.pathname === '/' || url.pathname === '/index.html' || url.pathname === '/daily' || url.pathname === '/daily/')) return send(res, 200, INDEX_HTML, MIME['.html'], { 'Cache-Control': 'no-cache' });
