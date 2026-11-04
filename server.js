@@ -393,8 +393,11 @@ const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('h
 function setPassword(id, pw) { const salt = crypto.randomBytes(16).toString('hex'); db.prepare('UPDATE _users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(pw, salt), id); }
 function publicUser(u) { return u && { id: u.id, username: u.username, nama: u.nama, peran: JSON.parse(u.peran || '[]'), aktif: u.aktif, last_login: u.last_login }; }
 function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((x) => x[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))])); }
+const inputTables=['lahan_harian','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
+const canInputAccount = u => isAdmin(u) || (!!u && !(u.peran||[]).some(r=>r.startsWith('daily_')) && inputTables.some(t=>canEdit(u,t)));
+const canInputRead = (u,table,method) => canEdit(u,table) || (method==='GET' && table==='lahan_aktivitas' && canEdit(u,'lahan_harian'));
 function sessionUser(req) {
-  if(req.inputClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);if(!u||session.auth_hash!=='input:'+u.hash)return null;const account=publicUser(u);return isAdmin(account)||(!(account.peran||[]).some(r=>r.startsWith('daily_'))&&(account.peran||[]).includes('penjualan'))?account:null;}
+  if(req.inputClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);if(!u||session.auth_hash!=='input:'+u.hash)return null;const account=publicUser(u);return canInputAccount(account)?account:null;}
   if(req.gisClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);return u&&u.hash===session.auth_hash&&isAdmin(publicUser(u))?publicUser(u):null;}
   const tok = cookies(req).kebun_sid; if (!tok) return null;
   const s = db.prepare('SELECT * FROM _sessions WHERE token=?').get(tok);
@@ -727,7 +730,7 @@ async function api(req, res, url) {
       failed.set(un, { n: f.n + 1, t: Date.now() });
       return send(res, 401, { error: 'Username atau password salah' });
     }
-    if(req.inputClient){const account=publicUser(u),roles=account.peran||[];if(!isAdmin(account)&&(!roles.includes('penjualan')||roles.some(r=>r.startsWith('daily_'))))return send(res,403,{error:'Akun ini tidak memiliki akses Input Data Kebun.'});const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,'input:'+u.hash);failed.delete(un);return send(res,200,{user:account,token,expires});}
+    if(req.inputClient){const account=publicUser(u);if(!canInputAccount(account))return send(res,403,{error:'Akun ini tidak memiliki akses Input Data Kebun.'});const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,'input:'+u.hash);failed.delete(un);return send(res,200,{user:account,token,expires});}
     if(req.gisClient){if(!isAdmin(publicUser(u)))return send(res,403,{error:'Pengelolaan peta memerlukan akun admin.'});if(parts[1]==='reference-login'){const grant=tx(()=>gisRegistry.grant(b.app,{persistent:b.persistent===true}));failed.delete(un);return send(res,200,grant);}const token=crypto.randomBytes(32).toString('hex'),expires=new Date(Date.now()+8*3600e3).toISOString();db.prepare('INSERT INTO _gis_editor_sessions (hash,user_id,expires,auth_hash) VALUES (?,?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'),u.id,expires,u.hash);db.prepare('DELETE FROM _gis_editor_sessions WHERE expires < ?').run(now());failed.delete(un);return send(res,200,{user:publicUser(u),token,expires});}
     failed.delete(un); startSession(res, u.id);
     return send(res, 200, { user: publicUser(u) });
@@ -756,10 +759,8 @@ async function api(req, res, url) {
   const publicRead = m === 'GET' && (['settings','overview','kebun-summary','kebun-plan','summary-periods','padi-summary'].includes(parts[1])||isPublicDailyRead(url.pathname,m));
   if (!user && !publicRead) return send(res, 401, { error: 'Silakan login sebagai admin untuk menambah / mengubah data' });
   const inputMandor = user && !isAdmin(user) && (user.peran || []).some(r => r.startsWith('daily_'));
-  const inputSales = req.inputClient && user && !isAdmin(user) && !inputMandor && (user.peran || []).includes('penjualan');
-  const inputSalesTable = ['pisang_penjualan','padi_penjualan'].includes(parts[2]);
   if(req.inputClient && inputMandor && parts[1] === 'excel') return send(res,403,{error:'Akun mandor tidak dapat mengunduh data penjualan.'});
-  if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1])&&!(parts[1]==='excel'&&editableExcelTables(user).length)&&!(inputSales&&inputSalesTable&&['records','t'].includes(parts[1])))return send(res,403,{error:'Rincian input hanya dapat dilihat sesuai hak akses.'});
+  if(user&&!isAdmin(user)&&['t','tables','records','excel','blocks','gis','kebun'].includes(parts[1])&&!(parts[1]==='excel'&&editableExcelTables(user).length)&&!(req.inputClient&&['records','t'].includes(parts[1])&&canInputRead(user,parts[2],m)))return send(res,403,{error:'Rincian input hanya dapat dilihat sesuai hak akses.'});
 
   if(url.pathname==='/api/kebun-plan/reconcile'&&m==='POST'){
     if(!isAdmin(user))return send(res,403,{error:'Pembaruan target dan jadwal khusus admin.'});
@@ -1258,7 +1259,7 @@ async function api(req, res, url) {
       if(hiddenActivity(body.aktivitas))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if(table==='gis_layer' && body.geojson && isBlockLayer({...old,...body})) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
-      if(req.inputClient && ['pisang_penjualan','padi_penjualan'].includes(table) && !body.updated_at)return send(res,409,{error:'Versi data tidak tersedia. Muat ulang baris sebelum melakukan revisi.'});
+      if(req.inputClient && !body.updated_at)return send(res,409,{error:'Versi data tidak tersedia. Muat ulang baris sebelum melakukan revisi.'});
       if(Object.hasOwn(body,'updated_at') && body.updated_at!==old.updated_at) return send(res,409,{error:'Data sudah berubah sejak formulir dibuka. Salin isian Anda bila perlu, lalu tutup dan buka kembali baris terbaru.'});
       validateOperationalBlock(table,body,old);
       const canonical=blocks.canonical(table,table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
@@ -1598,7 +1599,7 @@ async function apiRequest(req, res, url) {
   return serial(async () => {
     const adminRead=/^\/api\/(?:t|tables|records|excel|blocks|gis|kebun|land-prep|padi|nursery-summary|backup|backups|users|log)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/excel/status';
     const loginRead=/^\/api\/(?:reports|daily)(?:\/|$)/.test(url.pathname)&&url.pathname!=='/api/daily/cleanup'&&!isPublicDailyRead(url.pathname,req.method);
-    if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});const salesInput=req.inputClient&&(reader.peran||[]).includes('penjualan')&&!(reader.peran||[]).some(r=>r.startsWith('daily_'))&&/^\/api\/(?:records|t)\/(?:pisang_penjualan|padi_penjualan)(?:\/\d+)?$/.test(url.pathname);if(adminRead&&!isAdmin(reader)&&!salesInput&&!(url.pathname.startsWith('/api/excel/')&&editableExcelTables(reader).length))return send(res,403,{error:'Rincian input hanya dapat dilihat admin. Ringkasan tetap tersedia.'});}
+    if(VERCEL&&(adminRead||loginRead)){await syncCloud(null,authTables);const reader=sessionUser(req);if(!reader)return send(res,401,{error:'Silakan login. Ringkasan tetap tersedia.'});const match=url.pathname.match(/^\/api\/(?:records|t)\/([a-z_]+)(?:\/\d+)?$/);const permittedInput=req.inputClient&&match&&canInputRead(reader,match[1],req.method);if(adminRead&&!isAdmin(reader)&&!permittedInput&&!(url.pathname.startsWith('/api/excel/')&&editableExcelTables(reader).length))return send(res,403,{error:'Rincian input hanya dapat dilihat sesuai hak akses.'});}
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
     if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
     const hold = holdResponse(res);
