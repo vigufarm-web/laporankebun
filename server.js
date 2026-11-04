@@ -396,6 +396,7 @@ function cookies(req) { return Object.fromEntries((req.headers.cookie || '').spl
 const inputTables=['lahan_harian','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
 const canInputAccount = u => isAdmin(u) || (!!u && !(u.peran||[]).some(r=>r.startsWith('daily_')) && inputTables.some(t=>canEdit(u,t)));
 const canInputRead = (u,table,method) => canEdit(u,table) || (method==='GET' && table==='lahan_aktivitas' && canEdit(u,'lahan_harian'));
+const canInputLocations = u => ['lahan_harian','pisang_panen_pkk','pisang_box','pisang_handclass','padi_panen','padi_rencana'].some(t=>canEdit(u,t));
 function sessionUser(req) {
   if(req.inputClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);if(!u||session.auth_hash!=='input:'+u.hash)return null;const account=publicUser(u);return canInputAccount(account)?account:null;}
   if(req.gisClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);return u&&u.hash===session.auth_hash&&isAdmin(publicUser(u))?publicUser(u):null;}
@@ -948,7 +949,7 @@ async function api(req, res, url) {
   }
   // --- Daily Report (harus login; mandor hanya dapat mengubah divisinya)
   if (parts[1] === 'daily') {
-    if(!isAdmin(user)&&!dailyOnly(user))return send(res,403,{error:'Daily Report hanya untuk admin dan mandor sesuai divisinya.'});
+    if(!isAdmin(user)&&!dailyOnly(user)&&!(req.inputClient&&m==='GET'&&parts[2]==='locations'&&canInputLocations(user)))return send(res,403,{error:'Daily Report hanya untuk admin dan mandor sesuai divisinya.'});
     if (m === 'GET' && parts[2] === 'locations') {
       if (!user) return send(res, 401, { error: 'Silakan login untuk memilih lokasi Daily Report' });
       return send(res,200,withGeneralDailyLocations(ownedDailyLocations()));
