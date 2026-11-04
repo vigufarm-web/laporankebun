@@ -45,10 +45,39 @@ try{
     assert.equal((await request('/api/input-client/records/'+denied,{originHeader:origin,token:roleToken})).status,403,name+' denied');
     assert.equal((await request('/api/input-client/records/pisang_penjualan',{originHeader:origin,token:roleToken})).status,403,name+' sales denied');
     assert.equal((await request('/api/input-client/daily/locations',{originHeader:origin,token:roleToken})).status,200,name+' GIS locations');
-    if(name==='lahan-uji')assert.equal((await request('/api/input-client/t/lahan_aktivitas',{originHeader:origin,token:roleToken})).status,200);
+    if(name==='lahan-uji'){
+      assert.equal((await request('/api/input-client/t/lahan_aktivitas',{originHeader:origin,token:roleToken})).status,200);
+      for (const table of ['lahan_target','lahan_rencana']) assert.equal((await request('/api/input-client/records/'+table,{originHeader:origin,token:roleToken})).status,200,table+' staff access');
+    }
   }
   const adminLogin=await request('/api/input-client/login',{method:'POST',originHeader:origin,body:{username:'admin-uji',password:pw}});
   assert.equal(adminLogin.status,200);const adminToken=(await adminLogin.json()).token;
+  const blocks=await (await request('/api/blocks',{cookieHeader:cookie})).json();
+  const block=blocks.find(b=>b.nama==='A01');assert.ok(block);
+  const feature={type:'Feature',geometry:{type:'Polygon',coordinates:[[[109,-7],[109.001,-7],[109.001,-7.001],[109,-7]]]},properties:{Nama_Blok:'A01',Lahan:'Pisang',kepemilikan:'Sudah milik kebun',blok_id:block.id}};
+  const layer={nama:'Blok Uji',jenis:'Blok Tanam',field_nama:'Nama_Blok',tampil:1,warna:'#336644',gaya:'{}',geojson:JSON.stringify({type:'FeatureCollection',features:[feature]})};
+  const preview=await request('/api/gis/revision',{method:'POST',cookieHeader:cookie,body:{layerId:null,layer,mappings:{}}});assert.equal(preview.status,200);
+  const proposal=await preview.json();assert.deepEqual(proposal.errors,[]);
+  const applied=await request('/api/gis/revision',{method:'POST',cookieHeader:cookie,body:{mode:'apply',token:proposal.token,layerId:null,layer,mappings:{}}});assert.equal(applied.status,200,await applied.clone().text());
+  const landLogin=await request('/api/input-client/login',{method:'POST',originHeader:origin,body:{username:'lahan-uji',password:pw}});
+  const landToken=(await landLogin.json()).token;
+  for(const [table,payload] of [
+    ['lahan_target',{blok:'A01',bulan:'2038-12-01',mulai_persiapan:'2038-11-01',prioritas:3}],
+    ['lahan_rencana',{blok:'A01',aktivitas:'Bajak 1',luas_ha:0.2,mulai:'2038-11-01',selesai:'2038-11-05'}],
+  ]){
+    const added=await request('/api/input-client/t/'+table,{method:'POST',originHeader:origin,token:landToken,body:payload});
+    assert.equal(added.status,200,table+' add: '+await added.clone().text());
+    const id=(await added.json()).id;
+    const list=await (await request('/api/input-client/records/'+table+'?limit=100',{originHeader:origin,token:landToken})).json();
+    const saved=list.rows.find(row=>row.id===id);assert.ok(saved?.updated_at,table+' version');
+    const edit={keterangan:'Revisi uji',updated_at:saved.updated_at};
+    assert.equal((await request('/api/input-client/t/'+table+'/'+id,{method:'PUT',originHeader:origin,token:landToken,body:edit})).status,200,table+' edit');
+    assert.equal((await request('/api/input-client/t/'+table+'/'+id,{method:'PUT',originHeader:origin,token:landToken,body:edit})).status,409,table+' stale edit');
+    assert.equal((await request('/api/input-client/excel/download?tables='+table,{originHeader:origin,token:landToken})).status,200,table+' export');
+  }
+  for (const table of ['lahan_target','lahan_rencana']) {
+    assert.equal((await request('/api/input-client/records/'+table,{originHeader:origin,token:staffToken})).status,403,table+' rejects climate staff');
+  }
   const climate=await request('/api/input-client/t/iklim',{method:'POST',originHeader:origin,token:adminToken,body:{tanggal:'2026-11-03',curah_hujan:12}});
   assert.equal(climate.status,200,await climate.clone().text());const climateId=(await climate.json()).id;
   const climateRows=await (await request('/api/input-client/records/iklim',{originHeader:origin,token:adminToken})).json();
