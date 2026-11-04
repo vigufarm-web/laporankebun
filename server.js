@@ -864,7 +864,7 @@ async function api(req, res, url) {
     const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10),from=url.searchParams.get('from')||today.slice(0,7)+'-01',to=url.searchParams.get('to')||today;
     const summary=cloud?await cloudOverview(cloud,{from,to,today,TABLES}):reads.overview({from,to,today,blocks:verifiedOverviewBlocks()});if(!user)summary.daily=[];return send(res,200,summary);
   }
-  if (parts[1]==='climate' && m==='GET') {const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10);return send(res,200,reads.climate(url.searchParams.get('from')||today.slice(0,7)+'-01',url.searchParams.get('to')||today));}
+  if (parts[1]==='climate' && m==='GET') {if(req.inputClient&&!canInputRead(user,'iklim','GET'))return send(res,403,{error:'Tidak memiliki akses iklim.'});const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10);return send(res,200,reads.climate(url.searchParams.get('from')||today.slice(0,7)+'-01',url.searchParams.get('to')||today));}
   if (parts[1]==='records' && m==='GET') {
     const t=parts[2];if(!TABLES[t]||t.startsWith('daily_')||t==='gis_layer')return send(res,400,{error:'Gunakan endpoint khusus untuk data ini.'});
     return send(res,200,reads.records(t,url.searchParams,{inputOnly:!!req.inputClient}));
@@ -1590,6 +1590,7 @@ function readScope(req,url){
   if(p==='/api/gis-service')return authTables;
   if(p==='/api/gis-reference')return [...authTables,...gisTables];
   if(p==='/api/harvest-phases')return [...authTables,...gisTables];
+  if(p==='/api/climate')return [...authTables,'iklim'];
   if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
 
   if(p==='/api/reference-login'&&req.method==='POST')return [...authTables,'_gis_reference_tokens'];
@@ -1655,7 +1656,7 @@ async function handler(req, res) {
       if(req.method==='OPTIONS')return send(res,200,{ok:true});
       const target='/api/'+url.pathname.slice('/api/input-client/'.length);
       const tables='lahan_harian|lahan_target|lahan_rencana|lahan_aktivitas|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
-      const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|harvest-phases|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
+      const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|harvest-phases|climate|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
         (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
         (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)))||
         (req.method==='DELETE'&&new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target));
