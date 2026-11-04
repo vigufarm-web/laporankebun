@@ -393,10 +393,10 @@ const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('h
 function setPassword(id, pw) { const salt = crypto.randomBytes(16).toString('hex'); db.prepare('UPDATE _users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(pw, salt), id); }
 function publicUser(u) { return u && { id: u.id, username: u.username, nama: u.nama, peran: JSON.parse(u.peran || '[]'), aktif: u.aktif, last_login: u.last_login }; }
 function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((x) => x[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))])); }
-const inputTables=['lahan_harian','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
+const inputTables=['lahan_harian','lahan_target','lahan_rencana','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
 const canInputAccount = u => isAdmin(u) || (!!u && !(u.peran||[]).some(r=>r.startsWith('daily_')) && inputTables.some(t=>canEdit(u,t)));
-const canInputRead = (u,table,method) => canEdit(u,table) || (method==='GET' && table==='lahan_aktivitas' && canEdit(u,'lahan_harian'));
-const canInputLocations = u => ['lahan_harian','pisang_panen_pkk','pisang_box','pisang_handclass','padi_panen','padi_rencana'].some(t=>canEdit(u,t));
+const canInputRead = (u,table,method) => canEdit(u,table) || (method==='GET' && table==='lahan_aktivitas' && ['lahan_harian','lahan_rencana'].some(t=>canEdit(u,t)));
+const canInputLocations = u => ['lahan_harian','lahan_target','lahan_rencana','pisang_panen_pkk','pisang_box','pisang_handclass','padi_panen','padi_rencana'].some(t=>canEdit(u,t));
 function sessionUser(req) {
   if(req.inputClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);if(!u||session.auth_hash!=='input:'+u.hash)return null;const account=publicUser(u);return canInputAccount(account)?account:null;}
   if(req.gisClient){const token=String(req.headers.authorization||'').replace(/^Bearer /,'');if(!/^[a-f0-9]{64}$/.test(token))return null;const session=db.prepare('SELECT * FROM _gis_editor_sessions WHERE hash=?').get(crypto.createHash('sha256').update(token).digest('hex'));if(!session||session.expires<now())return null;const u=db.prepare('SELECT * FROM _users WHERE id=? AND aktif=1').get(session.user_id);return u&&u.hash===session.auth_hash&&isAdmin(publicUser(u))?publicUser(u):null;}
@@ -1629,7 +1629,7 @@ async function handler(req, res) {
       if(origin)res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
       if(req.method==='OPTIONS')return send(res,200,{ok:true});
       const target='/api/'+url.pathname.slice('/api/input-client/'.length);
-      const tables='lahan_harian|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
+      const tables='lahan_harian|lahan_target|lahan_rencana|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
       const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
         (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
         (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)))||
