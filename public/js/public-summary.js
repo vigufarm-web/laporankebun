@@ -26,6 +26,6 @@ export async function renderPublicSummary(host,A){
  mountClimateChart(host.querySelector('#climateCharts'),request,totals.periods.find(p=>p.key==='month'));
  host.querySelector('#sumYearPlan').innerHTML=planSummaryMarkup(plan);host.querySelector('#sumWeek').textContent=progress.from+' – '+progress.to;
  host.querySelector('#sumWeekly').innerHTML=weeklyProgressCards(progress.weekly);
- host.querySelector('#sumArea').textContent=progress.blocks.length+' blok pada tabel · luas blok terpantau '+num(progress.area)+' ha · maksimal 100% tiap tahap';const draw=()=>host.querySelector('#sumBlocks').innerHTML=progressMarkup(progress,host.querySelector('#sumSearch').value);host.querySelector('#sumSearch').oninput=draw;draw();host.querySelector('#sumStatus').textContent='Data per '+plan.today;
+ host.querySelector('#sumArea').textContent=progress.blocks.length+' blok pada tabel · luas progres terpantau '+num(progress.area)+' ha · dibatasi luas bagian milik kebun dan luas blok tercatat; luas GIS penuh tersedia di Peta Kebun · maksimal 100% tiap tahap';const draw=()=>host.querySelector('#sumBlocks').innerHTML=progressMarkup(progress,host.querySelector('#sumSearch').value);host.querySelector('#sumSearch').oninput=draw;draw();host.querySelector('#sumStatus').textContent='Data per '+plan.today;
  }catch(e){host.querySelector('#sumStatus').textContent=e.message;}await daily;
 }
