@@ -473,7 +473,12 @@ gisRegistry.migrate();
 db.exec('CREATE TABLE IF NOT EXISTS _import_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT,table_name TEXT,row_id INTEGER,before_json TEXT,created_at TEXT)');
 const reads = createReadModels({db,TABLES,nominalJual,isJual,iklimHarian});
 
-function validateOperationalBlock(table,row,old=null) {
+function validateOperationalBlock(table,row,old=null,enforceUniqueTarget=false) {
+  if (enforceUniqueTarget && table === 'lahan_target' && row.blok && (!old || String(row.blok).trim().toLowerCase() !== String(old.blok || '').trim().toLowerCase())) {
+    const name=String(row.blok).trim().toLowerCase(), selected=blocks.find(row.blok);
+    const duplicate=db.prepare('SELECT id,blok,block_id FROM lahan_target').all().find(r=>r.id!==old?.id && (String(r.blok||'').trim().toLowerCase()===name || (selected && r.block_id===selected.id)));
+    if(duplicate){const e=new Error('Target untuk blok ini sudah ada. Buka dan revisi target yang sudah tercatat.');e.status=409;throw e;}
+  }
   const fields=table==='pisang_blok'?['tanggal_tanam','luas_ha','pokok_tanam','klon','status']:table==='padi_tanam'?['tgl_tanam','luas_tanam_ha','varietas']:[];
   if(old&&fields.some(k=>k in row&&String(row[k]??'')!==String(old[k]??''))&&gisRegistry.plantings().some(p=>p.source_key===table+':'+old.id)){const e=new Error('Data tanaman sudah dikelola di Peta Kebun. Ubah tanggal, luas tanam dan kelompok tanaman dari sana.');e.status=409;throw e;}
   const registry=blocks.list(),masterFields={lahan_blok:'blok',pisang_blok:'nama_blok',padi_petak:'nama_petak'};
@@ -1240,7 +1245,8 @@ async function api(req, res, url) {
       if((Array.isArray(body)?body:[body]).some(row=>hiddenActivity(row.aktivitas)))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if (Array.isArray(body)) {
         if(table==='gis_layer')return send(res,400,{error:'Unggah layer melalui pratinjau GIS.'});
-        for(const row of body)validateOperationalBlock(table,row);
+        if(req.inputClient && table==='lahan_target')return send(res,400,{error:'Simpan target tanam satu blok setiap kali.'});
+        for(const row of body)validateOperationalBlock(table,row,null,!!req.inputClient);
         const ids = tx(() => body.map((r) => insertRow(table, r, false)));
         log('import', table, null, { jumlah: ids.length });
         blocks.linkTable(table);
@@ -1248,7 +1254,7 @@ async function api(req, res, url) {
       }
       const blokLama = table === 'gis_layer' && layerBlok(body) ? db.prepare('SELECT * FROM gis_layer ORDER BY id DESC').all().find(layerBlok) : null; // layer Blok Tanam baru menggantikan yang lama
       if(table==='gis_layer' && isBlockLayer(body)) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
-      validateOperationalBlock(table,body);
+      validateOperationalBlock(table,body,null,!!req.inputClient);
       const nid = insertRow(table, table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
       if(table==='lahan_harian')capLandRows(db,now);
       if (blokLama) catatBlok('gis_layer', fiturBlok(blokLama.geojson), fiturBlok(body.geojson), { layer: body.nama });
@@ -1262,7 +1268,7 @@ async function api(req, res, url) {
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
       if(req.inputClient && !body.updated_at)return send(res,409,{error:'Versi data tidak tersedia. Muat ulang baris sebelum melakukan revisi.'});
       if(Object.hasOwn(body,'updated_at') && body.updated_at!==old.updated_at) return send(res,409,{error:'Data sudah berubah sejak formulir dibuka. Salin isian Anda bila perlu, lalu tutup dan buka kembali baris terbaru.'});
-      validateOperationalBlock(table,body,old);
+      validateOperationalBlock(table,body,old,!!req.inputClient);
       const canonical=blocks.canonical(table,table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
       let r = clean(table,canonical);
       if(canonical.block_id&&canonical.block_id!==old.block_id){r.block_id=canonical.block_id;r.block_name_snapshot=canonical.block_name_snapshot;r.block_refs_snapshot=canonical.block_refs_snapshot;}

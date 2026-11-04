@@ -28,3 +28,10 @@ test('fully completed stages remain complete after scoping to owned GIS area and
  const activities=['Land Clearing','Bajak 1','Bajak 2','Ridger','Tanam'],data={lahan_blok:[{blok:'D03',peruntukan:'Pisang',luas_ha:1}],lahan_target:[{blok:'D03',bulan:'2026-12-01'}],lahan_harian:activities.map((aktivitas,i)=>({id:i+1,blok:'D03',tanggal:'2026-09-30',aktivitas,hasil_ha:1,source_key:'baseline:complete'})),lahan_aktivitas:activities.map((aktivitas,i)=>({aktivitas,untuk:'Pisang',urutan:i+1,hari_per_ha:1})),pisang_blok:[],lahan_rencana:[],gis_layer:[]};
  const before=JSON.stringify(data),scoped=scopePlantingData(data,[{nama:'D03',divisi:'Pisang',luas_ha:.8}],'2026-10-25');assert.equal(susunRencana({rows:t=>scoped[t]||[]},'2026-10-26').length,0);assert.equal(JSON.stringify(data),before);
 });
+test('retired E01d target is held when E01c is the active mapped block',()=>{
+ const data={lahan_blok:[{blok:'E01c',peruntukan:'Pisang',luas_ha:1},{blok:'E01d',peruntukan:'Pisang',luas_ha:.5}],lahan_target:[{blok:'E01c',bulan:'2026-12-01'},{blok:'E01d',bulan:'2026-12-01'}],lahan_harian:[],lahan_rencana:[],lahan_aktivitas:[]};
+ const before=JSON.stringify(data),scoped=scopePlantingData(data,[{nama:'E01c',divisi:'Pisang',luas_ha:1}],'2026-11-04');
+ assert.deepEqual(scoped.lahan_target.map(r=>r.blok),['E01c']);
+ assert.deepEqual(scoped.lahan_blok.map(r=>r.blok),['E01c']);
+ assert.equal(JSON.stringify(data),before,'historical data is not changed');
+});

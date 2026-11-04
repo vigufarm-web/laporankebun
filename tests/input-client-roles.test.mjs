@@ -70,6 +70,12 @@ try{
     const id=(await added.json()).id;
     const list=await (await request('/api/input-client/records/'+table+'?limit=100',{originHeader:origin,token:landToken})).json();
     const saved=list.rows.find(row=>row.id===id);assert.ok(saved?.updated_at,table+' version');
+    if(table==='lahan_target'){
+      const duplicate=await request('/api/input-client/t/'+table,{method:'POST',originHeader:origin,token:landToken,body:{...payload,bulan:'2039-01-01'}});
+      assert.equal(duplicate.status,409,'reject a second target for the same GIS block');
+      assert.match((await duplicate.json()).error,/sudah ada/i);
+      assert.equal((await request('/api/input-client/t/'+table,{method:'POST',originHeader:origin,token:landToken,body:[payload,payload]})).status,400,'reject duplicate target batches');
+    }
     const edit={keterangan:'Revisi uji',updated_at:saved.updated_at};
     assert.equal((await request('/api/input-client/t/'+table+'/'+id,{method:'PUT',originHeader:origin,token:landToken,body:edit})).status,200,table+' edit');
     assert.equal((await request('/api/input-client/t/'+table+'/'+id,{method:'PUT',originHeader:origin,token:landToken,body:edit})).status,409,table+' stale edit');
