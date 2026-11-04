@@ -62,3 +62,17 @@ test('legacy planting follows one explicit merged GIS descendant without rewriti
 test('persistent read-only grants survive daily opening, remain app scoped and can be revoked',()=>{
  const {db,blocks,registry}=fixture();try{const grant=registry.grant('payrol',{persistent:true});assert.equal(grant.expires,null);const later=createGISRegistry({db,blocks,clock:()=>'2030-01-01T00:00:00.000Z'});assert.equal(later.verifyGrant(grant.token,'payrol'),true);assert.equal(later.verifyGrant(grant.token,'gudang'),false);registry.revokeGrant(grant.token);assert.equal(later.verifyGrant(grant.token,'payrol'),false);}finally{db.close();}
 });
+
+
+test('legacy group above GIS area can update losses without expanding its allocation',()=>{
+ const {db,registry}=fixture();try{
+ db.exec("INSERT INTO pisang_blok VALUES(1,'A01','gis-A','2025-05-22',2.1,4200,'G9','PC')");
+ registry.importLegacy(registry.legacyPreview().token);
+ const p=registry.plantings()[0];
+ const updated=registry.savePlanting({...p,expected_version:p.version,lost_plants:20,reason:'Catat pokok mati'});
+ assert.equal(updated.population,4200);assert.equal(updated.area_ha,2.1);assert.equal(updated.lost_plants,20);
+ assert.throws(()=>registry.savePlanting({...updated,expected_version:updated.version,population:4300,reason:'Tambah pokok'}),/melebihi/);
+ assert.throws(()=>registry.savePlanting({...updated,expected_version:updated.version,planted_on:'2025-05-21',reason:'Ubah periode'}),/melebihi/);
+ assert.equal(registry.plantings()[0].population,4200);
+ }finally{db.close();}
+});
