@@ -869,6 +869,12 @@ async function api(req, res, url) {
     const t=parts[2];if(!TABLES[t]||t.startsWith('daily_')||t==='gis_layer')return send(res,400,{error:'Gunakan endpoint khusus untuk data ini.'});
     return send(res,200,reads.records(t,url.searchParams,{inputOnly:!!req.inputClient}));
   }
+  if(req.inputClient && parts[1]==='harvest-phases' && m==='GET') {
+    if(!user || !canInputRead(user,'pisang_panen_pkk','GET'))return send(res,403,{error:'Tidak memiliki akses panen Pisang.'});
+    const at=url.searchParams.get('at')||new Date(Date.now()+7*3600000).toISOString().slice(0,10);
+    const catalog=gisRegistry.catalog(at,[]);
+    return send(res,200,{as_of:catalog.as_of,blocks:catalog.blocks.filter(b=>b.commodity==='Pisang').map(b=>({id:b.id,name:b.name,aliases:b.aliases,groups:b.plantings.filter(p=>(!p.planted_on||p.planted_on<=at)&&(!p.closed_on||p.closed_on>at)).map(p=>({id:p.id,label:p.label,planted_on:p.planted_on,cycle:p.cycle}))}))});
+  }
   if(parts[1]==='nursery-summary'&&m==='GET'){if(!isAdmin(user))return send(res,403,{error:'Khusus admin'});const {nurserySummary}=await import('./lib/nursery-summary.js');return send(res,200,nurserySummary(db));}
   if(parts[1]==='gis-registry') {
     if(!isAdmin(user))return send(res,403,{error:'Pengelolaan data induk GIS khusus admin.'});
@@ -1583,6 +1589,7 @@ function readScope(req,url){
   if(p==='/api/excel/summary')return [...authTables,...(req.inputClient?['pisang_penjualan','padi_penjualan']:editableExcelTables(sessionUser(req)))];
   if(p==='/api/gis-service')return authTables;
   if(p==='/api/gis-reference')return [...authTables,...gisTables];
+  if(p==='/api/harvest-phases')return [...authTables,...gisTables];
   if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
 
   if(p==='/api/reference-login'&&req.method==='POST')return [...authTables,'_gis_reference_tokens'];
@@ -1648,7 +1655,7 @@ async function handler(req, res) {
       if(req.method==='OPTIONS')return send(res,200,{ok:true});
       const target='/api/'+url.pathname.slice('/api/input-client/'.length);
       const tables='lahan_harian|lahan_target|lahan_rencana|lahan_aktivitas|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
-      const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
+      const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|harvest-phases|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
         (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
         (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)))||
         (req.method==='DELETE'&&new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target));
