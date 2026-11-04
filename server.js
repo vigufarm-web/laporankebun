@@ -392,7 +392,8 @@ const SESSION_DAYS = 30;
 const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('hex');
 function setPassword(id, pw) { const salt = crypto.randomBytes(16).toString('hex'); db.prepare('UPDATE _users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(pw, salt), id); }
 function publicUser(u) { return u && { id: u.id, username: u.username, nama: u.nama, peran: JSON.parse(u.peran || '[]'), aktif: u.aktif, last_login: u.last_login }; }
-function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((x) => x[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))])); }const inputTables=['lahan_harian','lahan_target','lahan_rencana','lahan_aktivitas','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
+function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((x) => x[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))])); }
+const inputTables=['lahan_harian','lahan_target','lahan_rencana','lahan_aktivitas','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
 const canInputAccount = u => isAdmin(u) || (!!u && !(u.peran||[]).some(r=>r.startsWith('daily_')) && inputTables.some(t=>canEdit(u,t)));
 const canInputRead = (u,table,method) => canEdit(u,table) || (method==='GET' && table==='lahan_aktivitas' && ['lahan_harian','lahan_rencana'].some(t=>canEdit(u,t)));
 const canInputLocations = u => ['lahan_harian','lahan_target','lahan_rencana','pisang_panen_pkk','pisang_box','pisang_handclass','padi_panen','padi_rencana'].some(t=>canEdit(u,t));
