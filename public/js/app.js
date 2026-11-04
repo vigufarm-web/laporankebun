@@ -7,7 +7,7 @@ const renderGIS=(...args)=>import('./gis.js').then(m=>m.renderGIS(...args));
 const renderOwner=(...args)=>import('./owner.js').then(m=>m.renderOwner(...args));
 const renderLaporan=(...args)=>import('./laporan.js').then(m=>m.renderLaporan(...args));
 const renderKomoditas=(...args)=>import('./komoditas.js').then(m=>m.renderKomoditas(...args));
-const renderDaily=(...args)=>import('./daily.js?v=20261104-pokok').then(m=>m.renderDaily(...args));
+const renderDaily=(...args)=>import('./daily.js').then(m=>m.renderDaily(...args));
 
 let me = null;                                  // pengguna yang login
 let server = {};                                // info server: penyimpanan online / vercel
