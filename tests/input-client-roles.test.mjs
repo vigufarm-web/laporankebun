@@ -157,7 +157,8 @@ try{
   ];
   for(const [table,payload] of inputCases){
     const created=await request('/api/input-client/t/'+table,{method:'POST',originHeader:origin,token:adminToken,body:payload});
-    assert.equal(created.status,200,table+': '+await created.clone().text());const itemId=(await created.json()).id;
+    assert.equal(created.status,200,table+': '+await created.clone().text());const creation=await created.json(),itemId=creation.id;
+    if(table==='lahan_harian'){assert.equal(creation.hasil_input_ha,0.1);assert.equal(creation.hasil_ha,0.1);}
     const list=await (await request('/api/input-client/records/'+table+'?summary=1',{originHeader:origin,token:adminToken})).json();
     assert.ok(list.summary?.rows.length,table+': ringkasan harus tersedia');
     const current=list.rows.find(r=>r.id===itemId);assert.ok(current?.updated_at,table+': versi tidak tersedia');
@@ -165,6 +166,7 @@ try{
     assert.equal((await request('/api/input-client/t/'+table+'/'+itemId,{method:'PUT',originHeader:origin,token:adminToken,body})).status,200,table+': revisi gagal');
     assert.equal((await request('/api/input-client/t/'+table+'/'+itemId,{method:'PUT',originHeader:origin,token:adminToken,body})).status,409,table+': revisi lama diterima');
     const after=(await (await request('/api/input-client/records/'+table,{originHeader:origin,token:adminToken})).json()).rows.find(r=>r.id===itemId);
+    if(table==='pisang_panen_pkk')assert.equal(after.fase,'PC','revisi tanpa kolom fase mempertahankan fase lama');
     if(table==='padi_panen'){assert.equal(after.musim_tanam,'Arsip uji');assert.equal(after.gkg_basis,'Aktual');assert.equal(after.detail_timbang,'45;55');assert.equal(after.gkg_kg,75);}
     if(table==='padi_benih')assert.equal(after.untuk,'Catatan arsip uji');
   }
@@ -172,6 +174,11 @@ try{
   assert.equal(overviewAfter.pisang.boxes-overviewBefore.pisang.boxes,5,'dashboard reflects revised packing once');
   assert.equal(overviewAfter.pisang.harvest-overviewBefore.pisang.harvest,12,'dashboard reflects revised banana harvest once');
   assert.equal(overviewAfter.padi.harvestKg-overviewBefore.padi.harvestKg,120,'dashboard reflects revised rice harvest once');
+  const capSaved=await request('/api/input-client/t/lahan_harian',{method:'POST',originHeader:origin,token:adminToken,body:{tanggal:'2026-10-30',blok:'A01',aktivitas:'Bajak 1',hasil_ha:1000,keterangan:'Uji batas'}});
+  assert.equal(capSaved.status,200,await capSaved.clone().text());const capResult=await capSaved.json();
+  assert.equal(capResult.hasil_input_ha,1000);assert.ok(capResult.hasil_ha<1000,'hasil terhitung dibatasi luas');
+  const capReload=(await (await request('/api/input-client/records/lahan_harian?q=2026-10-30',{originHeader:origin,token:adminToken})).json()).rows.find(r=>r.id===capResult.id);
+  assert.equal(capReload.hasil_input_ha,1000);assert.equal(capReload.hasil_ha,capResult.hasil_ha);
   const lr=await request('/api/input-client/login',{method:'POST',originHeader:origin,body:{username:'sales-uji',password:pw}});
   assert.equal(lr.status,200);const token=(await lr.json()).token;assert.match(token,/^[a-f0-9]{64}$/);
   const sales=await request('/api/input-client/records/pisang_penjualan',{originHeader:origin,token});assert.equal(sales.status,200);assert.equal(sales.headers.get('access-control-allow-origin'),origin);
