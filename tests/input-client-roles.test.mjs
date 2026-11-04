@@ -213,6 +213,26 @@ try{
   assert.equal((await request('/api/input-client/t/padi_penjualan/'+riceSaleId,{method:'PUT',originHeader:origin,token,body:riceSaleEdit})).status,409);
   assert.equal((await request('/api/input-client/excel/download?tables=padi_penjualan',{originHeader:origin,token})).status,200);
   assert.equal((await request('/api/input-client/excel/download?tables=lahan_harian',{originHeader:origin,token})).status,403);
+  // Uji template dan upload pada database sementara, tanpa menyentuh data produksi.
+  const templateRes=await request('/api/input-client/excel/download?tables=pisang_penjualan&template=1',{originHeader:origin,token});assert.equal(templateRes.status,200);
+  const book=new ExcelJS.Workbook();await book.xlsx.load(Buffer.from(await templateRes.arrayBuffer()));assert.ok(book.getWorksheet('Petunjuk'));
+  const sheet=book.getWorksheet('Pisang - Penjualan'),headers={};sheet.getRow(1).eachCell((cell,col)=>headers[String(cell.value).replace(/\s*\*$/,'')]=col);
+  assert.ok(headers['ID baris (jangan diubah)']&&headers['Versi baris (jangan diubah)']);
+  let target;sheet.eachRow((r,i)=>{if(i>1&&r.getCell(headers['No. Surat Jalan']).value==='BATCH'&&r.getCell(headers['Tipe']).value==='Penjualan')target=r;});assert.ok(target);
+  target.getCell(headers['Sudah Dibayar (Rp)']).value=777;
+  const added=sheet.addRow([]);for(const [name,value] of Object.entries({'Tanggal SJ':'2026-11-03','No. Surat Jalan':'EXCEL-TEST-NEW','Pembeli':'Pembeli Baru','Tipe':'Penjualan','Qty (Box)':3,'Harga @':1000}))if(headers[name])added.getCell(headers[name]).value=value;
+  const blob=Buffer.from(await book.xlsx.writeBuffer());
+  const upload=async(file,params='tables=pisang_penjualan&preview=1',auth=token)=>fetch(base+'/api/input-client/excel/upload?'+params,{method:'POST',headers:{Origin:origin,Authorization:'Bearer '+auth,'Content-Type':'application/octet-stream'},body:file});
+  assert.equal((await upload(blob,'tables=iklim&preview=1')).status,400);
+  assert.equal((await upload(blob,'tables=pisang_penjualan&preview=1',staffToken)).status,403);
+  let result=await (await upload(blob)).json();assert.equal(result.sheets[0].jumlahError,0,JSON.stringify(result));assert.equal(result.sheets[0].tambah,1);assert.equal(result.sheets[0].ubah,1);
+  let beforeUpload=(await (await request('/api/input-client/records/pisang_penjualan',{originHeader:origin,token})).json()).rows;assert.equal(beforeUpload.find(r=>r.no_sj==='EXCEL-TEST-NEW'),undefined);
+  result=await (await upload(blob,'tables=pisang_penjualan')).json();assert.equal(result.sheets[0].jumlahError,0,JSON.stringify(result));assert.equal(result.sheets[0].ubah,1);assert.equal(result.sheets[0].tambah,1);
+  const afterUpload=(await (await request('/api/input-client/records/pisang_penjualan',{originHeader:origin,token})).json()).rows;assert.ok(afterUpload.find(r=>r.no_sj==='EXCEL-TEST-NEW'));assert.equal(afterUpload.find(r=>r.id===ids[0]).dibayar,777);assert.ok(afterUpload.find(r=>r.id===ids[1]));
+  result=await (await upload(blob,'tables=pisang_penjualan')).json();assert.ok(result.sheets[0].jumlahError>0,'file lama ditolak');
+  const wrongType=await (await upload(blob,'tables=padi_penjualan&preview=1')).json();assert.ok(wrongType.sheets[0].jumlahError>0,'file Pisang ditolak untuk Padi');
+  const freshResponse=await request('/api/input-client/excel/download?tables=pisang_penjualan&template=1',{originHeader:origin,token});const duplicateBook=new ExcelJS.Workbook();await duplicateBook.xlsx.load(Buffer.from(await freshResponse.arrayBuffer()));const duplicateSheet=duplicateBook.getWorksheet('Pisang - Penjualan');let source;duplicateSheet.eachRow((r,i)=>{if(i>1&&r.getCell(headers['No. Surat Jalan']).value==='EXCEL-TEST-NEW')source=r;});assert.ok(source);const copy=duplicateSheet.addRow(source.values);copy.getCell(headers['ID baris (jangan diubah)']).value=null;copy.getCell(headers['Versi baris (jangan diubah)']).value=null;copy.getCell(headers['Qty (Box)']).value=7;const duplicateResult=await (await upload(Buffer.from(await duplicateBook.xlsx.writeBuffer()))).json();assert.ok(duplicateResult.sheets[0].jumlahError>0,'duplikat berisi jumlah berbeda ditahan');
+  sheet.getCell(1,headers['ID baris (jangan diubah)']).value='Hilang';result=await (await upload(Buffer.from(await book.xlsx.writeBuffer()))).json();assert.ok(result.sheets[0].jumlahError>0,'kolom ID wajib ada');
   const users=await (await request('/api/users',{cookieHeader:cookie})).json();const salesId=users.find(u=>u.username==='sales-uji').id;
   assert.equal((await request('/api/users/'+salesId,{method:'PUT',cookieHeader:cookie,body:{password:pw2}})).status,200);
   assert.equal((await request('/api/input-client/records/pisang_penjualan',{originHeader:origin,token})).status,401);

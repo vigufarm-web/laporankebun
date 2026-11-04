@@ -1178,7 +1178,7 @@ async function api(req, res, url) {
     if(m==='GET'&&parts[2]==='summary')return send(res,200,inputSummary({tables:panel?panel.tables:[...EXCEL_TABLES],rowsOf,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())}));
     if (m === 'GET' && parts[2] === 'download') {
       const wb=await makeWorkbook(panel,{inputOnly:!!req.inputClient});
-      if(req.inputClient && panel?.tables?.length===1 && ['pisang_penjualan','padi_penjualan'].includes(panel.tables[0])){
+      if(req.inputClient && url.searchParams.get('template')!=='1' && panel?.tables?.length===1 && ['pisang_penjualan','padi_penjualan'].includes(panel.tables[0])){
         const table=panel.tables[0];
         const oldSummary=wb.getWorksheet('Ringkasan Input');if(oldSummary)wb.removeWorksheet(oldSummary.id);
         addSalesExcelReport(wb,{table,rows:inputRows(table,rowsOf(table)),today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())});
@@ -1194,7 +1194,7 @@ async function api(req, res, url) {
       const boleh = panel ? panel.tables.every((t) => canEdit(user, t)) : isAdmin(user);
       if (!boleh) return send(res, 403, { error: panel ? 'Akun Anda tidak punya izin mengubah data halaman ini' : 'Khusus admin' });
       const buf = await readRaw(req);
-      const rep = await syncExcel(buf, { preview: url.searchParams.get('preview') === '1', oleh: user.nama || user.username, sumber: panel ? `upload ${panel.label}` : 'upload', panel });
+      const rep = await syncExcel(buf, { preview: url.searchParams.get('preview') === '1', oleh: user.nama || user.username, sumber: panel ? `upload ${panel.label}` : 'upload', panel, strictIdentity: !!req.inputClient });
       if (!rep.preview) scheduleExcelWrite(2000); // tulis ulang file Excel di folder agar sama dengan yang diupload
       return send(res, 200, rep);
     }
@@ -1488,14 +1488,14 @@ function cekNamaInduk(parsed) {
     if (p.otomatis) p.koreksi.unshift(`${p.otomatis} baris: kolom kosong diisi otomatis dari Jenis Barang / Bentuk-Kelas-Kondisi`);
   }
 }
-async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=null}={}) {
-  const parsed=await parseWorkbook(buf,{TABLES,SHEETS:panel?EXCEL_SHEETS.filter(s=>panel.tables.includes(s.table)):EXCEL_SHEETS});
+async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=null,strictIdentity=false}={}) {
+  const parsed=await parseWorkbook(buf,{TABLES,SHEETS:panel?EXCEL_SHEETS.filter(s=>panel.tables.includes(s.table)):EXCEL_SHEETS,strictIdentity});
   cekNamaInduk(parsed);
   const rep={waktu:now(),sumber,preview,oleh,panel:panel?.label||null,sheets:[],backup:null,peringatan:['Mode aman: baris yang hilang dari file tetap disimpan. Gunakan ID dan versi baris untuk merevisi data lama.']},todo=[];
   for(const p of parsed) {
     const t=p.cfg.table,all=db.prepare('SELECT * FROM '+q(t)).all(),scope=panel?scopeOf(t,panel.kom):null,cur=scope?all.filter(scope):all;
     const s={sheet:p.cfg.sheet,tabel:TABLES[t].title,baris:p.rows.length,sebelum:cur.length,tambah:0,ubah:0,hapus:0,changes:[],status:'tidak berubah',koreksi:p.koreksi||[],peringatan:p.peringatan||[],errors:p.errors.slice(0,30),jumlahError:p.errors.length,layoutBeda:!!p.layoutBeda};rep.sheets.push(s);
-    if(!p.found){s.status='sheet tidak ada â€” dilewati';continue;}
+    if(!p.found){s.status='sheet tidak ada — dilewati';if(strictIdentity){s.errors.push({row:0,msg:'Sheet data penjualan tidak ditemukan. Gunakan template sesuai jenis data.'});s.jumlahError=s.errors.length;}continue;}
     if(referenceSheets.has(t)){s.status='referensi otomatis â€” tidak diinput ulang';s.errors=[];s.jumlahError=0;continue;}
     if(p.kosong){s.status='permintaan kosong diabaikan â€” data lama dipertahankan';continue;}
     const ops=[],seenIds=new Set(),existing=new Map();
@@ -1661,11 +1661,12 @@ async function handler(req, res) {
       const target='/api/'+url.pathname.slice('/api/input-client/'.length);
       const tables='lahan_harian|lahan_target|lahan_rencana|lahan_aktivitas|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
       const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|harvest-phases|climate|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
-        (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
+        (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users|excel\/upload))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
         (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)))||
         (req.method==='DELETE'&&new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target));
       if(!ok)return send(res,404,{error:'Endpoint Input Data Kebun tidak tersedia.'});
       if(target==='/api/excel/download'&&!new RegExp('^(?:'+tables+')$').test(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Pilihan Excel tidak tersedia.'});
+      if(target==='/api/excel/upload'&&!['pisang_penjualan','padi_penjualan'].includes(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Upload hanya tersedia untuk satu jenis penjualan.'});
       if(target==='/api/excel/summary'&&url.searchParams.get('tables')!=='pisang_penjualan,padi_penjualan')return send(res,400,{error:'Ringkasan hanya tersedia untuk penjualan.'});
       req.inputClient=true;url.pathname=target;
     }
