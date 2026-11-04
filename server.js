@@ -393,7 +393,7 @@ const hashPw = (pw, salt) => crypto.scryptSync(String(pw), salt, 64).toString('h
 function setPassword(id, pw) { const salt = crypto.randomBytes(16).toString('hex'); db.prepare('UPDATE _users SET salt=?, hash=? WHERE id=?').run(salt, hashPw(pw, salt), id); }
 function publicUser(u) { return u && { id: u.id, username: u.username, nama: u.nama, peran: JSON.parse(u.peran || '[]'), aktif: u.aktif, last_login: u.last_login }; }
 function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).filter((x) => x[0]).map(([k, ...v]) => [k, decodeURIComponent(v.join('='))])); }
-const inputTables=['lahan_harian','lahan_target','lahan_rencana','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
+const inputTables=['lahan_harian','lahan_target','lahan_rencana','lahan_aktivitas','pisang_panen_pkk','pisang_box','pisang_bibit','pisang_estimasi','pisang_handclass','padi_giling','padi_panen','padi_benih','padi_rencana','iklim','pisang_penjualan','padi_penjualan'];
 const canInputAccount = u => isAdmin(u) || (!!u && !(u.peran||[]).some(r=>r.startsWith('daily_')) && inputTables.some(t=>canEdit(u,t)));
 const canInputRead = (u,table,method) => canEdit(u,table) || (method==='GET' && table==='lahan_aktivitas' && ['lahan_harian','lahan_rencana'].some(t=>canEdit(u,t)));
 const canInputLocations = u => ['lahan_harian','lahan_target','lahan_rencana','pisang_panen_pkk','pisang_box','pisang_handclass','padi_panen','padi_rencana'].some(t=>canEdit(u,t));
@@ -1243,6 +1243,14 @@ async function api(req, res, url) {
         return send(res,200,{ids});
       }
       if((Array.isArray(body)?body:[body]).some(row=>hiddenActivity(row.aktivitas)))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
+      if(req.inputClient&&table==='lahan_aktivitas'){
+        if(Array.isArray(body))return send(res,400,{error:'Simpan satu kegiatan setiap kali.'});
+        const nama=String(body?.aktivitas||'').trim(),untuk=String(body?.untuk||'').trim(),urutan=Number(body?.urutan);
+        if(!nama||!['Pisang','Padi','Semua'].includes(untuk)||body?.urutan===''||body?.urutan==null||!Number.isInteger(urutan)||urutan<0)return send(res,400,{error:'Isi nama kegiatan, komoditas dan urutan yang valid.'});
+        const duplicate=db.prepare("SELECT 1 FROM lahan_aktivitas WHERE lower(trim(aktivitas))=lower(?) AND (untuk=? OR untuk='Semua' OR ?='Semua') LIMIT 1").get(nama,untuk,untuk);
+        if(duplicate)return send(res,409,{error:'Kegiatan dengan nama ini sudah tersedia untuk komoditas tersebut. Gunakan atau revisi kegiatan yang ada.'});
+        body.aktivitas=nama;
+      }
       if (Array.isArray(body)) {
         if(table==='gis_layer')return send(res,400,{error:'Unggah layer melalui pratinjau GIS.'});
         if(req.inputClient && table==='lahan_target')return send(res,400,{error:'Simpan target tanam satu blok setiap kali.'});
@@ -1268,6 +1276,7 @@ async function api(req, res, url) {
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
       if(req.inputClient && !body.updated_at)return send(res,409,{error:'Versi data tidak tersedia. Muat ulang baris sebelum melakukan revisi.'});
       if(Object.hasOwn(body,'updated_at') && body.updated_at!==old.updated_at) return send(res,409,{error:'Data sudah berubah sejak formulir dibuka. Salin isian Anda bila perlu, lalu tutup dan buka kembali baris terbaru.'});
+      if(req.inputClient&&table==='lahan_aktivitas'&&((body.aktivitas!==undefined&&body.aktivitas!==old.aktivitas)||(body.untuk!==undefined&&body.untuk!==old.untuk)))return send(res,409,{error:'Nama dan komoditas kegiatan lama dipertahankan karena dipakai oleh riwayat. Tambahkan kegiatan baru jika diperlukan.'});
       validateOperationalBlock(table,body,old,!!req.inputClient);
       const canonical=blocks.canonical(table,table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
       let r = clean(table,canonical);
@@ -1635,7 +1644,7 @@ async function handler(req, res) {
       if(origin)res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Methods','GET, POST, PUT, DELETE, OPTIONS');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
       if(req.method==='OPTIONS')return send(res,200,{ok:true});
       const target='/api/'+url.pathname.slice('/api/input-client/'.length);
-      const tables='lahan_harian|lahan_target|lahan_rencana|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
+      const tables='lahan_harian|lahan_target|lahan_rencana|lahan_aktivitas|pisang_panen_pkk|pisang_box|pisang_bibit|pisang_estimasi|pisang_handclass|padi_giling|padi_panen|padi_benih|padi_rencana|iklim|pisang_penjualan|padi_penjualan';
       const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
         (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
         (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)))||
