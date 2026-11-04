@@ -41,6 +41,7 @@ try{
   assert.equal((await request('/api/input-client/users',{originHeader:origin,token:staffToken})).status,403);
   assert.equal((await request('/api/input-client/daily/locations',{originHeader:origin,token:staffToken})).status,403);
   assert.equal((await request('/api/input-client/harvest-phases',{originHeader:origin,token:staffToken})).status,403);
+  assert.equal((await request('/api/input-client/climate?from=2026-11-01&to=2026-11-30',{originHeader:origin,token:staffToken})).status,200);
   for(const [name,allowed,denied] of [['pisang-uji','pisang_box','padi_panen'],['padi-uji','padi_panen','pisang_box'],['lahan-uji','lahan_harian','pisang_penjualan']]){
     const login=await request('/api/input-client/login',{method:'POST',originHeader:origin,body:{username:name,password:pw}});
     assert.equal(login.status,200,name);const roleToken=(await login.json()).token;
@@ -49,6 +50,7 @@ try{
     assert.equal((await request('/api/input-client/records/pisang_penjualan',{originHeader:origin,token:roleToken})).status,403,name+' sales denied');
     assert.equal((await request('/api/input-client/daily/locations',{originHeader:origin,token:roleToken})).status,200,name+' GIS locations');
     assert.equal((await request('/api/input-client/harvest-phases?at=2026-11-04',{originHeader:origin,token:roleToken})).status,name==='pisang-uji'?200:403,name+' fase sesuai hak akses');
+    assert.equal((await request('/api/input-client/climate',{originHeader:origin,token:roleToken})).status,403,name+' iklim sesuai hak akses');
     if(name==='lahan-uji'){
       assert.equal((await request('/api/input-client/t/lahan_aktivitas',{originHeader:origin,token:roleToken})).status,200);
       for (const table of ['lahan_target','lahan_rencana']) assert.equal((await request('/api/input-client/records/'+table,{originHeader:origin,token:roleToken})).status,200,table+' staff access');
