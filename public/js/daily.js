@@ -1,7 +1,7 @@
 import {activityKey,parseGroups} from './daily-work.js';
 import {dailyHKMarkup} from './daily-hk.js';
 import { reportActions, planShare } from './report-sharing.js';
-import { quickDaily } from './daily-quick.js';
+import { quickDaily } from './daily-quick.js?v=20261104-pokok';
 const DIVISI = ['Pisang', 'Padi', 'Infra'];
 const ROLE = { Pisang: 'daily_pisang', Padi: 'daily_padi', Infra: 'daily_infra' };
 import {UNIT,ACTIVITY} from './daily-catalog.js';
