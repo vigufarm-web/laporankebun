@@ -1273,6 +1273,10 @@ async function api(req, res, url) {
       if(table==='lahan_harian')capLandRows(db,now);
       if (blokLama) catatBlok('gis_layer', fiturBlok(blokLama.geojson), fiturBlok(body.geojson), { layer: body.nama });
       blocks.linkTable(table);
+      if(req.inputClient && table==='lahan_harian') {
+        const saved=db.prepare('SELECT id,hasil_input_ha,hasil_ha FROM lahan_harian WHERE id=?').get(nid);
+        return send(res,200,saved||{id:nid});
+      }
       return send(res, 200, { id: nid });
     }
     if (m === 'PUT' && id) {
