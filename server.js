@@ -867,7 +867,7 @@ async function api(req, res, url) {
   if (parts[1]==='climate' && m==='GET') {const today=new Date(Date.now()+7*3600e3).toISOString().slice(0,10);return send(res,200,reads.climate(url.searchParams.get('from')||today.slice(0,7)+'-01',url.searchParams.get('to')||today));}
   if (parts[1]==='records' && m==='GET') {
     const t=parts[2];if(!TABLES[t]||t.startsWith('daily_')||t==='gis_layer')return send(res,400,{error:'Gunakan endpoint khusus untuk data ini.'});
-    return send(res,200,reads.records(t,url.searchParams));
+    return send(res,200,reads.records(t,url.searchParams,{inputOnly:!!req.inputClient}));
   }
   if(parts[1]==='nursery-summary'&&m==='GET'){if(!isAdmin(user))return send(res,403,{error:'Khusus admin'});const {nurserySummary}=await import('./lib/nursery-summary.js');return send(res,200,nurserySummary(db));}
   if(parts[1]==='gis-registry') {
@@ -1171,7 +1171,7 @@ async function api(req, res, url) {
     if (panel && !panel.tables.length) return send(res, 400, { error: 'Tabel tidak dikenal untuk Excel' });
     if(m==='GET'&&parts[2]==='summary')return send(res,200,inputSummary({tables:panel?panel.tables:[...EXCEL_TABLES],rowsOf,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())}));
     if (m === 'GET' && parts[2] === 'download') {
-      const wb=await makeWorkbook(panel);
+      const wb=await makeWorkbook(panel,{inputOnly:!!req.inputClient});
       if(req.inputClient && panel?.tables?.length===1 && ['pisang_penjualan','padi_penjualan'].includes(panel.tables[0])){
         const table=panel.tables[0];
         const oldSummary=wb.getWorksheet('Ringkasan Input');if(oldSummary)wb.removeWorksheet(oldSummary.id);
@@ -1274,6 +1274,7 @@ async function api(req, res, url) {
       if(hiddenActivity(body.aktivitas))return send(res,400,{error:'Ecer Pupuk hanya tersedia pada Daily Report mandor.'});
       if(table==='gis_layer' && body.geojson && isBlockLayer({...old,...body})) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
       if(!old)return send(res,404,{error:'Data tidak ditemukan'});
+      if(req.inputClient&&table==='lahan_harian'&&old.daily_report_id)return send(res,409,{error:'Data ini berasal dari Daily Mandor. Revisi melalui Daily Mandor.'});
       if(req.inputClient && !body.updated_at)return send(res,409,{error:'Versi data tidak tersedia. Muat ulang baris sebelum melakukan revisi.'});
       if(Object.hasOwn(body,'updated_at') && body.updated_at!==old.updated_at) return send(res,409,{error:'Data sudah berubah sejak formulir dibuka. Salin isian Anda bila perlu, lalu tutup dan buka kembali baris terbaru.'});
       if(req.inputClient&&table==='lahan_aktivitas'&&((body.aktivitas!==undefined&&body.aktivitas!==old.aktivitas)||(body.untuk!==undefined&&body.untuk!==old.untuk)))return send(res,409,{error:'Nama dan komoditas kegiatan lama dipertahankan karena dipakai oleh riwayat. Tambahkan kegiatan baru jika diperlukan.'});
@@ -1311,15 +1312,17 @@ async function api(req, res, url) {
     if (m === 'DELETE' && id && ['lahan_blok','pisang_blok','padi_petak','gis_layer'].includes(table)) return send(res,409,{error:'Data induk blok/peta dipertahankan. Nonaktifkan blok melalui revisi GIS.'});
     if (m === 'DELETE' && id) {
       const old = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);
-      if(req.inputClient && ['pisang_penjualan','padi_penjualan'].includes(table)) {
+      if(req.inputClient) {
         if(!old)return send(res,404,{error:'Data tidak ditemukan.'});
+        if(table==='lahan_harian'&&old.daily_report_id)return send(res,409,{error:'Data ini berasal dari Daily Mandor. Kelola melalui Daily Mandor.'});
         const expected=url.searchParams.get('updated_at');
         if(!expected || expected!==old.updated_at)return send(res,409,{error:'Data sudah berubah. Muat ulang sebelum menghapus.'});
+        if(url.searchParams.get('cascade')==='1')return send(res,400,{error:'Data terkait tidak dapat dihapus otomatis.'});
       }
       const refs = old ? childRefs(table, old) : [];
       const cascade = url.searchParams.get('cascade') === '1';
       if (refs.length && !cascade) return send(res, 409, { error: 'Ada data lain yang terhubung', refs });
-      const related = tx(() => { const d = cascade && old ? deleteChildren(table, old) : 0; if(old && ['pisang_penjualan','padi_penjualan'].includes(table))db.prepare('INSERT INTO _import_revisions (table_name,row_id,before_json,created_at) VALUES (?,?,?,?)').run(table,id,JSON.stringify(old),now()); db.prepare(`DELETE FROM ${q(table)} WHERE id=?`).run(id); return d; });
+      const related = tx(() => { const d = cascade && old ? deleteChildren(table, old) : 0; if(old && (req.inputClient||['pisang_penjualan','padi_penjualan'].includes(table)))db.prepare('INSERT INTO _import_revisions (table_name,row_id,before_json,created_at) VALUES (?,?,?,?)').run(table,id,JSON.stringify(old),now()); db.prepare(`DELETE FROM ${q(table)} WHERE id=?`).run(id); if(req.inputClient&&table==='lahan_harian')capLandRows(db,now); return d; });
       if (old && table === 'gis_layer') delete old.geojson;
       log('hapus', table, id, { ...old, ...(related ? { data_terkait_ikut_dihapus: related } : {}) });
       if (old && BLOK_T[table] && table !== 'gis_layer') catatBlok(table, [old], []);
@@ -1412,9 +1415,9 @@ function scopeOf(table, kom) {
   }
   return null;
 }
-const makeWorkbook = (panel = null) => {
+const makeWorkbook = (panel = null, {inputOnly=false} = {}) => {
   const SHEETS = panel ? EXCEL_SHEETS.filter((s) => panel.tables.includes(s.table)) : EXCEL_SHEETS;
-  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)).map(r=>{const field=({pisang_blok:'nama_blok',padi_petak:'nama_petak',lahan_blok:'blok'})[t],b=field&&blocks.find(r[field]);return b?{...r,luas_ha:b.luas_ha,...(t==='lahan_blok'?{kepemilikan:b.ownership,peruntukan:b.divisi,target_tanam:rowsOf('lahan_target').find(x=>util.key(x.blok)===util.key(b.nama))?.bulan||r.target_tanam}:{} )}:r;}); const result=f?rows.filter(f):rows; return ['pisang_penjualan','padi_penjualan'].includes(t)?result.sort(compareSalesSJ):result; };
+  const scoped = (t) => { const f = panel && scopeOf(t, panel.kom); const rows = inputRows(t,rowsOf(t)).filter(r=>!(inputOnly&&t==='lahan_harian'&&r.daily_report_id)).map(r=>{const field=({pisang_blok:'nama_blok',padi_petak:'nama_petak',lahan_blok:'blok'})[t],b=field&&blocks.find(r[field]);return b?{...r,luas_ha:b.luas_ha,...(t==='lahan_blok'?{kepemilikan:b.ownership,peruntukan:b.divisi,target_tanam:rowsOf('lahan_target').find(x=>util.key(x.blok)===util.key(b.nama))?.bulan||r.target_tanam}:{} )}:r;}); const result=f?rows.filter(f):rows; return ['pisang_penjualan','padi_penjualan'].includes(t)?result.sort(compareSalesSJ):result; };
   const refNames = (t) => (TABLES[t]?.display ? db.prepare(`SELECT * FROM ${q(t)}`).all().filter(r=>!hiddenActivity(r.aktivitas)).map((r) => displayOf(t, r)) : []);
   return buildWorkbook({ TABLES, SHEETS, rowsOf: scoped, nama: getSetting('nama') || 'PT VIGU FARM INDONESIA', panel: panel?.label, refNames }).then(wb=>{
     const data=inputSummary({tables:SHEETS.map(s=>s.table),rowsOf:scoped,TABLES,today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Jakarta'}).format(new Date())});
@@ -1648,7 +1651,7 @@ async function handler(req, res) {
       const ok=(req.method==='GET'&&(/^(?:\/api\/(?:me|users|daily\/locations|t\/lahan_aktivitas|excel\/(?:download|summary)))$/.test(target)||new RegExp('^/api/records/(?:'+tables+')$').test(target)))||
         (req.method==='POST'&&(/^(?:\/api\/(?:login|logout|users))$/.test(target)||new RegExp('^/api/t/(?:'+tables+')$').test(target)))||
         (req.method==='PUT'&&(/^\/api\/users\/\d+$/.test(target)||new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target)))||
-        (req.method==='DELETE'&&/^\/api\/t\/(?:pisang_penjualan|padi_penjualan)\/\d+$/.test(target));
+        (req.method==='DELETE'&&new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target));
       if(!ok)return send(res,404,{error:'Endpoint Input Data Kebun tidak tersedia.'});
       if(target==='/api/excel/download'&&!new RegExp('^(?:'+tables+')$').test(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Pilihan Excel tidak tersedia.'});
       if(target==='/api/excel/summary'&&url.searchParams.get('tables')!=='pisang_penjualan,padi_penjualan')return send(res,400,{error:'Ringkasan hanya tersedia untuk penjualan.'});
