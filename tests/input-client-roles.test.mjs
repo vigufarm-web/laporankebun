@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
+import ExcelJS from '../lib/exceljs.min.cjs';
 
 const server=createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
 const port=server.address().port;await new Promise(resolve=>server.close(resolve));
@@ -69,8 +70,21 @@ try{
   const dailyLand=allLand.find(row=>row.daily_report_id===dailyId);assert.ok(dailyLand,'daily stays linked to report');
   const onlyInput=await (await request('/api/input-client/records/lahan_harian?limit=100',{originHeader:origin,token:landToken})).json();
   assert.ok(!onlyInput.rows.some(row=>row.daily_report_id===dailyId),'daily does not appear in input');
+  const exportResponse=await request('/api/input-client/excel/download?tables=lahan_harian',{originHeader:origin,token:landToken});
+  assert.equal(exportResponse.status,200);
+  const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(Buffer.from(await exportResponse.arrayBuffer()));
+  const progressSheet=workbook.getWorksheet('Progres - Harian');assert.ok(progressSheet);
+  const excelTexts=[];progressSheet.eachRow(row=>row.eachCell(cell=>excelTexts.push(String(cell.value??''))));
+  assert.ok(!excelTexts.some(v=>v.startsWith('2038-11-07')),'Daily record is excluded from Input Excel');
   assert.equal((await request('/api/input-client/t/lahan_harian/'+dailyLand.id,{method:'PUT',originHeader:origin,token:landToken,body:{updated_at:dailyLand.updated_at,keterangan:'ubah'}})).status,409);
   assert.equal((await request('/api/input-client/t/lahan_harian/'+dailyLand.id+'?updated_at='+encodeURIComponent(dailyLand.updated_at),{method:'DELETE',originHeader:origin,token:landToken})).status,409);
+  const ownAdded=await request('/api/input-client/t/lahan_harian',{method:'POST',originHeader:origin,token:landToken,body:{tanggal:'2038-11-06',blok:'A01',aktivitas:'Bajak 1',hasil_ha:0.01}});
+  assert.equal(ownAdded.status,200,await ownAdded.clone().text());const ownId=(await ownAdded.json()).id;
+  const ownRow=(await (await request('/api/input-client/records/lahan_harian?limit=100',{originHeader:origin,token:landToken})).json()).rows.find(r=>r.id===ownId);
+  assert.ok(ownRow?.updated_at);
+  assert.equal((await request('/api/input-client/t/lahan_harian/'+ownId+'?updated_at='+encodeURIComponent(ownRow.updated_at),{method:'DELETE',originHeader:origin,token:landToken})).status,200);
+  const dailyStill=(await (await request('/api/records/lahan_harian?limit=100',{cookieHeader:cookie})).json()).rows.find(row=>row.daily_report_id===dailyId);
+  assert.ok(dailyStill,'deleting an admin record must not delete the Daily record');
   for(const [table,payload] of [
     ['lahan_target',{blok:'A01',bulan:'2038-12-01',mulai_persiapan:'2038-11-01',prioritas:3}],
     ['lahan_rencana',{blok:'A01',aktivitas:'Bajak 1',luas_ha:0.2,mulai:'2038-11-01',selesai:'2038-11-05'}],
