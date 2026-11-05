@@ -1495,7 +1495,7 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
   for(const p of parsed) {
     const t=p.cfg.table,all=db.prepare('SELECT * FROM '+q(t)).all(),scope=panel?scopeOf(t,panel.kom):null,cur=scope?all.filter(scope):all;
     const s={sheet:p.cfg.sheet,tabel:TABLES[t].title,baris:p.rows.length,sebelum:cur.length,tambah:0,ubah:0,hapus:0,changes:[],status:'tidak berubah',koreksi:p.koreksi||[],peringatan:p.peringatan||[],errors:p.errors.slice(0,30),jumlahError:p.errors.length,layoutBeda:!!p.layoutBeda};rep.sheets.push(s);
-    if(!p.found){s.status='sheet tidak ada — dilewati';if(strictIdentity){s.errors.push({row:0,msg:'Sheet data penjualan tidak ditemukan. Gunakan template sesuai jenis data.'});s.jumlahError=s.errors.length;}continue;}
+    if(!p.found){s.status='sheet tidak ada — dilewati';if(strictIdentity){s.errors.push({row:0,msg:'Sheet data tidak ditemukan. Gunakan template sesuai jenis data.'});s.jumlahError=s.errors.length;}continue;}
     if(referenceSheets.has(t)){s.status='referensi otomatis â€” tidak diinput ulang';s.errors=[];s.jumlahError=0;continue;}
     if(p.kosong){s.status='permintaan kosong diabaikan â€” data lama dipertahankan';continue;}
     const ops=[],seenIds=new Set(),existing=new Map();
@@ -1506,6 +1506,10 @@ async function syncExcel(buf, {preview=false,oleh='Excel',sumber='file',panel=nu
       if(t==='lahan_harian'&&previous?.daily_report_id){s.peringatan.push('Baris '+input.__baris+': mengikuti Daily Report; revisi melalui Daily, tidak diinput ulang.');continue;}
       let row;try{row=blocks.canonical(t,prepareExcelInput(t,input,previous,{findBlock:blocks.find,targets:rowsOf('lahan_target')}));validateOperationalBlock(t,row,previous);}catch(e){s.errors.push({row:input.__baris,msg:e.message});continue;}
       const cleaned=clean(t,TABLES[t].lengkapi?TABLES[t].lengkapi(row,previous):row);
+      if(t==='iklim' && (!previous || previous.tanggal!==cleaned.tanggal || previous.jam!==cleaned.jam)){
+        const same=x=>String(x.tanggal||'')===String(cleaned.tanggal||'') && String(x.jam||'').trim()===String(cleaned.jam||'').trim();
+        if(cur.some(x=>Number(x.id)!==id && same(x)) || ops.some(x=>Number(x.id)!==id && same(x.row))){s.errors.push({row:input.__baris,msg:'Tanggal dan jam sudah tercatat. Gunakan baris ber-ID untuk revisi agar data iklim tidak ganda.'});continue;}
+      }
       if(row.block_id){cleaned.block_id=row.block_id;cleaned.block_name_snapshot=row.block_name_snapshot;}
       if(row.block_refs_snapshot)cleaned.block_refs_snapshot=previous?.block_id===row.block_id?previous.block_refs_snapshot||row.block_refs_snapshot:row.block_refs_snapshot;
       if(id) {
@@ -1666,7 +1670,7 @@ async function handler(req, res) {
         (req.method==='DELETE'&&new RegExp('^/api/t/(?:'+tables+')/\\d+$').test(target));
       if(!ok)return send(res,404,{error:'Endpoint Input Data Kebun tidak tersedia.'});
       if(target==='/api/excel/download'&&!new RegExp('^(?:'+tables+')$').test(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Pilihan Excel tidak tersedia.'});
-      if(target==='/api/excel/upload'&&!['pisang_penjualan','padi_penjualan'].includes(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Upload hanya tersedia untuk satu jenis penjualan.'});
+      if(target==='/api/excel/upload'&&!['pisang_penjualan','padi_penjualan','iklim'].includes(url.searchParams.getAll('tables').join()))return send(res,400,{error:'Upload hanya tersedia untuk satu jenis penjualan atau Iklim.'});
       if(target==='/api/excel/summary'&&url.searchParams.get('tables')!=='pisang_penjualan,padi_penjualan')return send(res,400,{error:'Ringkasan hanya tersedia untuk penjualan.'});
       req.inputClient=true;url.pathname=target;
     }
