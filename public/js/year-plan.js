@@ -1,4 +1,4 @@
-import {bananaDetailMarkup} from './banana-detail.js?v=estimasi-aktual-20261109';
+import {bananaDetailMarkup} from './banana-detail.js?v=luas-aktual-20261109';
 import {mountPlantingMap} from './planting-map.js';
 import {progressMarkup} from './progress-matrix.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

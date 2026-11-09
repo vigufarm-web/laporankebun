@@ -1,5 +1,5 @@
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const num=v=>v==null?'—':Number(v).toLocaleString('id-ID',{maximumFractionDigits:2});
+const num=v=>v==null?'—':Number(v).toLocaleString('id-ID',{maximumFractionDigits:3});
 const date=v=>v?new Date(v+'T00:00:00Z').toLocaleDateString('id-ID',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Jakarta'}):'Belum tercatat';
 const month=v=>new Date(v+'-01T00:00:00Z').toLocaleDateString('id-ID',{month:'long',year:'numeric',timeZone:'Asia/Jakarta'});
 const tile=(label,value,note='')=>`<article class="sum-tile"><span>${label}</span><strong>${value}</strong><small>${note}</small></article>`;
