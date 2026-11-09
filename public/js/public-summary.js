@@ -4,7 +4,7 @@ import {cropLabel} from './crop-labels.js';
 import {progressMarkup} from './progress-matrix.js';
 import {mountClimateChart} from './climate-chart.js';
 import {periodSummaryMarkup,harvestSummaryMarkup} from './period-summary.js';
-import {planSummaryMarkup} from './year-plan.js?v=simple-plant-plan-20261027';
+import {planSummaryMarkup} from './year-plan.js?v=rencana-tanam-20261109';
 import {renderPublicDaily} from './daily-public.js';
 import {fullReportControl} from './full-report.js';
 const num=v=>Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2});
@@ -16,7 +16,7 @@ export async function renderPublicSummary(host,A){
  const daily=renderPublicDaily(host.querySelector('#publicDailySection'),A||{api:request},{intro:false});
  try{const [totals,plan,padi]=await Promise.all([request.get('/api/summary-periods'),request.get('/api/kebun-plan'),request.get('/api/padi-summary')]);if(!host.querySelector('#sumTotals'))return;const progress=plan.progress,all=totals.periods.find(p=>p.key==='all'),stock=all.pisang.stock;
  const tiles=rows=>rows.map(([label,value,note])=>`<article class="sum-tile"><span>${cropLabel(label)}</span><strong>${value}</strong><small>${note}</small></article>`).join('');
- host.querySelector('#sumFigures').innerHTML=tiles([['Saldo bibit Pisang',num(stock)+' pokok','Seluruh batch yang tercatat'],['Sisa rencana tanam Pisang',num(plan.remainingHa)+' ha','Pada blok rencana tahun '+plan.year]]);
+ host.querySelector('#sumFigures').innerHTML=tiles([['Saldo bibit Pisang',num(stock)+' pokok','Seluruh batch yang tercatat'],['Sisa rencana tanam Pisang',num(plan.remainingHa)+' ha','Pada blok rencana hingga '+plan.yearEnd.slice(0,4)]]);
  host.querySelector('#padiFigures').innerHTML=padiSummaryMarkup(padi);
  host.querySelector('#gisFigures').innerHTML=tiles([['Luas milik kebun',num(progress.ownedAreaHa)+' ha','Berdasarkan persil GIS']]);
  host.querySelector('#sumTotals').innerHTML=periodSummaryMarkup(totals,'pisang');
