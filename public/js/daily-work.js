@@ -2,6 +2,15 @@ import {isRepeatedArea,isNurseryPopulation,isDryingWork} from './work-measures.j
 import {activityKey,landStage} from './daily-catalog.js';
 export {activityKey};
 export function parseGroups(value){try{return Array.isArray(value)?value:JSON.parse(value||'[]');}catch{return [];}}
+// Preserve saved work while making the remaining weekly plan available again.
+export function actualRows(base,plan,locations){
+ const saved=(base?.items||[]).map(r=>({...r,selected:true}));
+ const valid=new Set((locations||[]).map(l=>l.nama));
+ const present=new Set(saved.map(r=>activityKey(r.aktivitas,r.satuan)+'|'+r.blok));
+ const ids=new Set(saved.filter(r=>r.plan_item_id!=null).map(r=>String(r.plan_item_id)));
+ const pending=(plan?.items||[]).filter(r=>valid.has(r.blok)&&!ids.has(String(r.id))&&!present.has(activityKey(r.aktivitas,r.satuan)+'|'+r.blok)).map(r=>({...r,id:undefined,plan_item_id:r.id,di_luar_rencana:0,realisasi:'',hk_realisasi:'',selected:false}));
+ return [...saved,...pending];
+}
 // Jenis kegiatan rencana: 'rutin' (berulang, acuan per pelaksanaan, tidak habis) · 'target' (sisa berkurang sampai selesai) · 'hk' (tanpa target).
 // Cakupan luas berulang (siram/spray/pupuk … ha, bibit) selalu rutin dan persiapan lahan selalu target: perhitungan cakupan,
 // progres lahan GIS dan laporan owner bergantung padanya. Selain itu dipilih mandor (choice); rencana lama tanpa pilihan = target.
