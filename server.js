@@ -1647,7 +1647,9 @@ async function apiRequest(req, res, url) {
     try {
       await api(req,res,url);
       const asOf=new Date(Date.now()+7*3600000).toISOString().slice(0,10);
-      syncPendingLand(db,gisRegistry,pend,asOf,tx);
+      const plantingSync=syncPendingLand(db,gisRegistry,pend,asOf,tx);
+      if(plantingSync && pend.reduce((size,s)=>size+s.sql.length+JSON.stringify(s.args||'').length,0)>3e6)
+        throw Object.assign(new Error('Perubahan terlalu besar untuk disimpan bersama GIS secara aman. Bagi unggahan menjadi beberapa bagian.'),{status:413});
       await flush(); hold.release();
     }
     catch (e) {
