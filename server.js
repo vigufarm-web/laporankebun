@@ -808,14 +808,15 @@ async function api(req, res, url) {
     if(url.searchParams.get('cycle')){where.push('siklus=?');args.push(url.searchParams.get('cycle'));}
     const reports=db.prepare('SELECT * FROM daily_report WHERE '+where.join(' AND ')+' ORDER BY tanggal,divisi,id').all(...args).map(dailyPayload).filter(r=>!owner||r.items.some(x=>x.realisasi!=null||x.hk_realisasi!=null||x.keterangan)||r.kendala||r.tindak_lanjut||r.photos.some(p=>!p.deleted_at));
     if(owner){
-      const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),{ownerWeeklyWork,ownerWeeklyNotes,selectOwnerPhotos}=await import('./lib/owner-weekly.js');
+      const {buildReportPDF,ownerSections}=await import('./lib/reports-pdf.js'),{ownerWeeklyWork,ownerWeeklyNotes,selectOwnerPhotos,selectOwnerPdfPhotos}=await import('./lib/owner-weekly.js');
       const through=to<today?to:today,completed=reports.filter(r=>r.status==='Selesai'&&r.tanggal<=through),summary=reads.overview({from,to:through,today,blocks:verifiedOverviewBlocks()}),work=ownerWeeklyWork({db,from,to:through,reports:completed,landTargets:dailyLandTargets(from),locations:ownedDailyLocations()}),notes=ownerWeeklyNotes(completed),samples=selectOwnerPhotos(completed),sections=ownerSections({db,from,to:through,climate:summary.climate,work});
       summary.lcByCrop=ownerLandClearing(db,from,through);
       if(parts[2]==='owner-summary')return send(res,200,{from,to,summary,sections,work,notes,reportCount:completed.length,photos:samples.flatMap(r=>r.photos.map(p=>({id:p.id,division:r.divisi,date:r.tanggal,caption:p.caption||p.jenis||'Foto kegiatan',url:p.url,thumbnail_url:p.thumbnail_url})))});
       if(parts[2]==='share')return send(res,200,{text:'LAPORAN MINGGUAN KEBUN VIGU FARM\n'+from+' s.d. '+to+'\n'+work.map(r=>r.division+' / '+r.activity+': '+(r.actual==null?'hasil belum tercatat':r.actual.toLocaleString('id-ID',{maximumFractionDigits:2})+' '+r.unit)+'; target '+(r.target==null?'belum ada':r.target.toLocaleString('id-ID',{maximumFractionDigits:2})+' '+r.unit+(r.targetPartial?' (sebagian)':''))).join('\n')+'\nPDF berisi rekap mingguan dan sampel foto kegiatan.'});
       if(parts[2]!=='owner.pdf')return send(res,404,{error:'Laporan tidak ditemukan'});
-      await attachReportPhotos(samples);
-      const pdf=await buildReportPDF({name:db.prepare("SELECT v FROM _settings WHERE k='nama'").get()?.v||'PT VIGU FARM INDONESIA',from,to,reports:samples,summary,sections,notes,owner:true,createdBy:user.nama||user.username});
+      const pdfPhotos=selectOwnerPdfPhotos(reports.filter(r=>r.tanggal<=through));
+      await attachReportPhotos(pdfPhotos);
+      const pdf=await buildReportPDF({name:db.prepare("SELECT v FROM _settings WHERE k='nama'").get()?.v||'PT VIGU FARM INDONESIA',from,to,reports:pdfPhotos,summary,sections,notes,owner:true,createdBy:user.nama||user.username});
       return send(res,200,pdf,'application/pdf',{'Content-Disposition':'attachment; filename="weekly-kebun-vigu-'+from+'-'+to+'.pdf"'});
     }
     if(parts[2]==='share') {
