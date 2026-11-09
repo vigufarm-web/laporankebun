@@ -1268,7 +1268,7 @@ async function api(req, res, url) {
         if(table==='gis_layer')return send(res,400,{error:'Unggah layer melalui pratinjau GIS.'});
         if(req.inputClient && table==='lahan_target')return send(res,400,{error:'Simpan target tanam satu blok setiap kali.'});
         for(const row of body)validateOperationalBlock(table,row,null,!!req.inputClient);
-        const ids = tx(() => body.map((r) => insertRow(table, r, false)));
+        const ids = tx(() => body.map((r) => {const n=insertRow(table,table==='lahan_harian'?{...r,hasil_input_ha:r.hasil_ha}:r,false);if(table==='lahan_harian')capLandRows(db,now,{lastLandId:n});return n;}));
         log('import', table, null, { jumlah: ids.length });
         blocks.linkTable(table);
         return send(res, 200, { ids });
@@ -1276,8 +1276,7 @@ async function api(req, res, url) {
       const blokLama = table === 'gis_layer' && layerBlok(body) ? db.prepare('SELECT * FROM gis_layer ORDER BY id DESC').all().find(layerBlok) : null; // layer Blok Tanam baru menggantikan yang lama
       if(table==='gis_layer' && isBlockLayer(body)) return send(res,409,{error:'Gunakan pratinjau revisi blok GIS.',gisRevision:true});
       validateOperationalBlock(table,body,null,!!req.inputClient);
-      const nid = insertRow(table, table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);
-      if(table==='lahan_harian')capLandRows(db,now);
+      const nid = tx(()=>{const result=insertRow(table, table==='lahan_harian'?{...body,hasil_input_ha:body.hasil_ha}:body);if(table==='lahan_harian')capLandRows(db,now,{lastLandId:result});return result;});
       if (blokLama) catatBlok('gis_layer', fiturBlok(blokLama.geojson), fiturBlok(body.geojson), { layer: body.nama });
       blocks.linkTable(table);
       if(req.inputClient && table==='lahan_harian') {
@@ -1315,8 +1314,8 @@ async function api(req, res, url) {
           const a = displayOf(table, old), b = displayOf(table, nu);
           if (a && b && a !== b) related = cascadeRename(table, a, b);
         }
+        if(table==='lahan_harian')capLandRows(db,now,{lastLandId:Number(id)});
       });
-      if(table==='lahan_harian')capLandRows(db,now);
       log('ubah', table, id, table === 'gis_layer' ? { layer: r.nama || old?.nama, diubah: Object.keys(r).map((k) => ({ geojson: 'isi peta / atribut / catatan', gaya: 'tampilan', tampil: 'tampil/sembunyi' }[k] || k)).join(', ') } : { ...r, ...(related ? { data_terkait_diperbarui: related } : {}) });
       if (old && BLOK_T[table]) {
         const nu = db.prepare(`SELECT * FROM ${q(table)} WHERE id=?`).get(id);

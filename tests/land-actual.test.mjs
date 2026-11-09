@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {TABLES,susunRencana,hariPerHa} from '../public/js/schema.js';import {kebunSummary} from '../lib/kebun-summary.js';import {importLand,saveDailyLand,registerHistoricalDailyCoverage} from '../lib/land-actual.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {TABLES,susunRencana,hariPerHa} from '../public/js/schema.js';import {kebunSummary} from '../lib/kebun-summary.js';import {importLand,saveDailyLand,capLandRows,registerHistoricalDailyCoverage} from '../lib/land-actual.js';
 function fixture(){const db=new DatabaseSync(':memory:');for(const [t,T] of Object.entries(TABLES)){const fields=T.f.filter(f=>f.t!=='calc');db.exec(`CREATE TABLE ${t}(id INTEGER PRIMARY KEY,created_at TEXT,updated_at TEXT,${fields.map(f=>f.k+' '+(f.t==='num'||f.t==='money'?'REAL':f.t==='int'?'INTEGER':'TEXT')).join(',')})`);}db.exec('CREATE TABLE _settings(k TEXT PRIMARY KEY,v TEXT)');const now=()=>new Date().toISOString();const insertRow=(t,r)=>{const keys=Object.keys(r);return Number(db.prepare(`INSERT INTO ${t}(${keys.join(',')}) VALUES(${keys.map(()=>'?').join(',')})`).run(...Object.values(r)).lastInsertRowid);};const tx=fn=>{db.exec('BEGIN');try{const x=fn();db.exec('COMMIT');return x;}catch(e){db.exec('ROLLBACK');throw e;}};return {db,insertRow,now,tx,actor:'test',blocks:{canonical:(_,r)=>r,linkTable(){}}};}
 test('actual import reconciles changes without double counting and caps Daily at the remaining area',()=>{
  const c=fixture(),{db,insertRow,now}=c;insertRow('lahan_blok',{blok:'D04',luas_ha:1,peruntukan:'Pisang'});insertRow('lahan_aktivitas',{aktivitas:'Bajak 1',untuk:'Pisang',urutan:1,hari_per_ha:1});
@@ -47,8 +47,36 @@ test('capped and backdated land results keep grouped HK proportional without dup
  saveDailyLand(db,id,now,insertRow);assert.deepEqual(db.prepare('SELECT realisasi,hk_realisasi FROM daily_item WHERE report_id=? ORDER BY urutan').all(id).map(r=>[r.realisasi,r.hk_realisasi]),[[.02,.75],[.06,2.25]]);
  const early=insertRow('daily_report',{tanggal:'2026-10-23',divisi:'Pisang',status:'Selesai'});insertRow('daily_item',{report_id:early,urutan:1,blok:'A',aktivitas:'Bajak 1',realisasi:.01,satuan:'ha',hk_realisasi:1});
  saveDailyLand(db,early,now,insertRow);const rows=db.prepare('SELECT realisasi,hk_realisasi FROM daily_item WHERE report_id=? ORDER BY urutan').all(id);
- assert.equal(rows[0].realisasi,.01);assert.equal(rows.reduce((s,r)=>s+r.hk_realisasi,0),3);assert.ok(Math.abs(rows[0].hk_realisasi-3/7)<1e-6);
+ assert.equal(rows[0].realisasi,.02);assert.equal(rows.reduce((s,r)=>s+r.hk_realisasi,0),3);assert.equal(rows[0].hk_realisasi,.75);assert.equal(db.prepare('SELECT realisasi FROM daily_item WHERE report_id=?').get(early).realisasi,0);
  saveDailyLand(db,early,now,insertRow);assert.equal(db.prepare('SELECT count(*) n FROM lahan_harian WHERE daily_report_id=?').get(early).n,1);db.close();
+});
+
+test('a full block still permits reported work and HK without increasing recorded land progress',()=>{
+ const {db,insertRow,now}=fixture();insertRow('lahan_blok',{blok:'A',luas_ha:1,peruntukan:'Pisang'});insertRow('lahan_harian',{tanggal:'2026-10-01',blok:'A',aktivitas:'Bajak 1',hasil_ha:1});
+ const id=insertRow('daily_report',{tanggal:'2026-11-03',divisi:'Pisang',status:'Selesai',hk_kegiatan:JSON.stringify([{key:'bajak 1|ha',hk:2,manual:false}])});
+ insertRow('daily_item',{report_id:id,urutan:1,blok:'A',aktivitas:'Bajak 1',satuan:'ha',realisasi:.2,hk_realisasi:2});
+ saveDailyLand(db,id,now);const item=db.prepare('SELECT realisasi,realisasi_input,hk_realisasi FROM daily_item WHERE report_id=?').get(id);
+ assert.equal(item.realisasi,0);assert.equal(item.realisasi_input,.2);assert.equal(item.hk_realisasi,2);assert.equal(db.prepare('SELECT sum(hasil_ha) n FROM lahan_harian').get().n,1);db.close();
+});
+
+test('later recalculation rolls back instead of rewriting an existing Daily result',()=>{
+ const {db,insertRow,now,tx}=fixture();insertRow('lahan_blok',{blok:'A',luas_ha:1,peruntukan:'Pisang'});
+ const older=insertRow('daily_report',{tanggal:'2026-11-03',divisi:'Pisang',status:'Selesai'}),newer=insertRow('daily_report',{tanggal:'2026-11-05',divisi:'Pisang',status:'Selesai'});
+ insertRow('lahan_harian',{tanggal:'2026-11-03',blok:'A',aktivitas:'Bajak 1',hasil_ha:0,hasil_input_ha:.5,daily_report_id:older,diganti_aktual:0});
+ insertRow('lahan_harian',{tanggal:'2026-11-05',blok:'A',aktivitas:'Bajak 1',hasil_ha:1,hasil_input_ha:1,daily_report_id:newer,diganti_aktual:0});
+ const a=insertRow('daily_item',{report_id:older,blok:'A',aktivitas:'Bajak 1',satuan:'ha',realisasi:0,realisasi_input:.5,hk_realisasi:1});
+ const b=insertRow('daily_item',{report_id:newer,blok:'A',aktivitas:'Bajak 1',satuan:'ha',realisasi:1,realisasi_input:1,hk_realisasi:2});
+ assert.throws(()=>tx(()=>capLandRows(db,now)),/memengaruhi hasil laporan Daily lain/);
+ assert.equal(db.prepare('SELECT realisasi FROM daily_item WHERE id=?').get(a).realisasi,0);assert.equal(db.prepare('SELECT realisasi FROM daily_item WHERE id=?').get(b).realisasi,1);assert.equal(db.prepare('SELECT sum(hasil_ha) n FROM lahan_harian').get().n,1);db.close();
+});
+
+test('new admin progress uses remaining GIS area without rewriting completed Daily',()=>{
+ const {db,insertRow,now,tx}=fixture();insertRow('lahan_blok',{blok:'A',luas_ha:1,peruntukan:'Pisang'});
+ const report=insertRow('daily_report',{tanggal:'2026-11-05',divisi:'Pisang',status:'Selesai'});
+ insertRow('lahan_harian',{tanggal:'2026-11-05',blok:'A',aktivitas:'Bajak 1',hasil_ha:.8,hasil_input_ha:.8,daily_report_id:report,diganti_aktual:0});
+ const item=insertRow('daily_item',{report_id:report,blok:'A',aktivitas:'Bajak 1',satuan:'ha',realisasi:.8,realisasi_input:.8,hk_realisasi:2});
+ const id=tx(()=>{const n=insertRow('lahan_harian',{tanggal:'2026-11-03',blok:'A',aktivitas:'Bajak 1',hasil_ha:.5,hasil_input_ha:.5});capLandRows(db,now,{lastLandId:n});return n;});
+ assert.equal(db.prepare('SELECT hasil_ha FROM lahan_harian WHERE id=?').get(id).hasil_ha,.2);assert.equal(db.prepare('SELECT realisasi FROM daily_item WHERE id=?').get(item).realisasi,.8);assert.equal(db.prepare('SELECT sum(hasil_ha) n FROM lahan_harian').get().n,1);db.close();
 });
 
 
