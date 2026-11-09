@@ -2,7 +2,7 @@ import {readDevicePhotos,saveDevicePhotos,submissionFor} from './daily-device-st
 import {dailyHKMarkup} from './daily-hk.js';
 import {uploadPhoto,photoCaptionInputs} from './photos.js';
 import {ACTIVITY,UNIT,activityUnits,landStage} from './daily-catalog.js';
-import {groupWork,prepareActual,activityKey,parseGroups,dailyWorkTarget} from './daily-work.js';
+import {groupWork,prepareActual,activityKey,parseGroups,dailyWorkTarget,actualRows} from './daily-work.js';
 import {monday} from './weekly-work-form.js';
 import {quickPickHTML,bindQuickPick} from './block-quick-pick.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -23,9 +23,9 @@ export async function quickDaily(host,A,report=null,afterSave=()=>{}){
   const start=monday(date),[locs,plans,reports]=await Promise.all([A.api.get('/api/daily/locations'),A.api.get(`/api/daily/plans?week=${date}&divisi=${div}`),A.api.get(`/api/daily?from=${start}&to=${plusDays(start,6)}&divisi=${div}`)]);if(n!==ticket)return;
   locations=locs;plan=plans.find(p=>p.divisi===div)||null;base=reports.find(r=>r.tanggal===date&&r.divisi===div)||(report?.tanggal===date&&report.divisi===div?report:null);photoQueue=[];pendingSubmission=null;
   if(!A.preview)try{photoQueue=(await readDevicePhotos(draftKey()))||[];}catch{}if(n!==ticket)return;
-  const rows=base?base.items.map(r=>({...r,selected:true})):(plan?.items||[]).filter(r=>locations.some(l=>l.nama===r.blok)).map(r=>({...r,id:undefined,plan_item_id:r.id,di_luar_rencana:0,realisasi:'',hk_realisasi:'',selected:false}));
+  const rows=actualRows(base,plan,locations);
   const previousItems=reports.filter(r=>r.tanggal<date&&r.divisi===div&&r.status==='Selesai').flatMap(r=>r.items);for(const row of rows){const target=dailyWorkTarget({row,division:div,plan,previousItems});row._remaining=target.remaining;row._repeat=target.repeat;}
-  groups=groupWork(rows,base?.hk_kegiatan);if(!base)groups.forEach(g=>g.manual=g.satuan==='HK');declaredHK=base?.apel_hadir??'';notes={kendala:base?.kendala||'',tindak_lanjut:base?.tindak_lanjut||''};dirty=false;draw();
+  groups=groupWork(rows,base?.hk_kegiatan);groups.filter(g=>!g.rows.some(r=>r.selected)).forEach(g=>g.manual=g.satuan==='HK');declaredHK=base?.apel_hadir??'';notes={kendala:base?.kendala||'',tindak_lanjut:base?.tindak_lanjut||''};dirty=false;draw();
   let draft;try{draft=JSON.parse(localStorage.getItem(draftKey()));}catch{}if(draft){pendingSubmission=draft.pendingSubmission||null;host.querySelector('#qRestore').hidden=false;host.querySelector('#qRestore button').onclick=()=>{if((draft.baseVersion??null)!==(base?.updated_at??null)){host.querySelector('#qRestore').textContent='Laporan sudah berubah. Draf lama tetap disimpan di perangkat, tetapi tidak dipulihkan agar laporan terbaru tidak tertimpa.';return;}groups=draft.groups||groupWork(draft.items||[]);for(const g of groups)for(const row of g.rows){const target=dailyWorkTarget({row,division:div,plan,previousItems});row._remaining=target.remaining;row._repeat=target.repeat;}declaredHK=draft.apel_hadir??'';notes={kendala:draft.kendala||'',tindak_lanjut:draft.tindak_lanjut||''};dirty=true;draw();update();};}
  }catch(e){host.innerHTML=`<p>${esc(e.message)}</p><button class="btn" id="qRetry">Coba lagi</button>`;host.querySelector('#qRetry').onclick=load;}}
  const totalFor=g=>{try{return prepareActual([g]).items;}catch{return g.rows.filter(r=>r.selected);}};
