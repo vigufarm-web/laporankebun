@@ -31,6 +31,7 @@ import { photoExpiresAt, photoExpired } from './lib/photo-retention.js';
 import { createReadModels } from './lib/read-models.js';
 import { createBlockRegistry, isBlockLayer } from './lib/blocks.js';
 import {createGISRegistry} from './lib/gis-registry.js';
+import {previewPlantingSync,applyPlantingSync,syncPendingLand} from './lib/planting-progress-sync.js';
 // Server lokal Monitoring Kebun â€” Node.js (tanpa dependensi server) + SQLite bawaan Node.
 // Jalankan: node server.js   lalu buka http://localhost:3000
 import http from 'node:http';
@@ -879,6 +880,11 @@ async function api(req, res, url) {
   if(parts[1]==='gis-registry') {
     if(!isAdmin(user))return send(res,403,{error:'Pengelolaan data induk GIS khusus admin.'});
     const at=url.searchParams.get('at')||new Date(Date.now()+7*3600000).toISOString().slice(0,10);
+    if(parts[2]==='planting-progress'&&m==='GET')return send(res,200,previewPlantingSync(db,gisRegistry,at));
+    if(parts[2]==='planting-progress'&&m==='POST'){
+      const body=await readBody(req),preview=previewPlantingSync(db,gisRegistry,at);
+      return send(res,200,tx(()=>{const result=applyPlantingSync(db,gisRegistry,preview,body.token);db.prepare('INSERT INTO _settings(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('planting-sync-enabled','1');log('aktifkan sinkronisasi realisasi tanam','_gis_plantings',null,result);return result;}));
+    }
     if(m==='DELETE'&&parts[2]==='grants'){const body=await readBody(req);tx(()=>gisRegistry.revokeGrant(body.token));return send(res,200,{ok:true});}
     if(m==='POST'&&parts[2]==='grants'){const body=await readBody(req);return send(res,200,tx(()=>gisRegistry.grant(body.app,{persistent:body.persistent===true})));}
     if(m==='GET'&&!parts[2])return send(res,200,gisRegistry.catalog(at,ownedPlanningLocations()));
@@ -1599,11 +1605,11 @@ function readScope(req,url){
   if(p==='/api/gis-reference')return [...authTables,...gisTables];
   if(p==='/api/harvest-phases')return [...authTables,...gisTables];
   if(p==='/api/climate')return [...authTables,'iklim'];
-  if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','_log'];
+  if(p.startsWith('/api/gis-registry'))return [...authTables,...gisTables,'pisang_blok','padi_tanam','lahan_harian','_log'];
 
   if(p==='/api/reference-login'&&req.method==='POST')return [...authTables,'_gis_reference_tokens'];
   if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
-  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
+  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','_gis_planting_revisions','_gis_commodities','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
   if(p==='/api/tables')return authTables;
@@ -1638,7 +1644,12 @@ async function apiRequest(req, res, url) {
     const photoReportId=VERCEL && req.method==='POST' && /^\/api\/daily\/photo(?:\/\d+\/thumbnail)?$/.test(url.pathname) ? Number(url.searchParams.get('report'))||null : null;
     if (await syncCloud(photoReportId,readScope(req,url)) && !VERCEL) scheduleExcelWrite(1000);
     const hold = holdResponse(res);
-    try { await api(req, res, url); await flush(); hold.release(); }
+    try {
+      await api(req,res,url);
+      const asOf=new Date(Date.now()+7*3600000).toISOString().slice(0,10);
+      syncPendingLand(db,gisRegistry,pend,asOf,tx);
+      await flush(); hold.release();
+    }
     catch (e) {
       hold.discard(); txMark = -1;
       if (pend.length) { pend.length = 0; await loadCloud(); } // perubahan setengah jalan dibatalkan â†’ samakan lagi dengan isi online
