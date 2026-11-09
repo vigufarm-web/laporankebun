@@ -61,3 +61,10 @@ test('an inactive older block with the same name never receives the active block
   const p=previewPlantingSync(db,registry,'2026-11-09');assert.equal(p.statements.length,1);assert.equal(p.statements[0].block_id,'gis-D04');assert.equal(p.statements[0].group_id,registry.plantings()[0].id);assert.equal(p.statements[0].reason,null);
  }finally{db.close();}
 });
+test('matching legacy quantity is still reviewed so readers use actual planted area',()=>{
+ const {db,registry}=fixture();try{
+  db.exec("UPDATE _gis_plantings SET population=4728,area_ha=2.364 WHERE id=(SELECT id FROM _gis_plantings LIMIT 1)");
+  const p=previewPlantingSync(db,registry,'2026-11-09');assert.equal(p.statements[0].original_population,4728);assert.equal(applyPlantingSync(db,registry,p,p.token).changed,1);assert.equal(registry.plantings()[0].version,2);
+  const next=previewPlantingSync(db,registry,'2026-11-09');assert.equal(applyPlantingSync(db,registry,next,next.token).changed,0);
+ }finally{db.close();}
+});
