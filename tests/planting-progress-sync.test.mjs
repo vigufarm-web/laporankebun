@@ -55,3 +55,9 @@ test('a later saved admin actual triggers the enabled synchronization exactly on
   assert.equal(syncPendingLand(db,registry,[{sql:'UPDATE lahan_harian SET hasil_ha=?'}],'2026-11-09',tx).changed,0);
  }finally{db.close();}
 });
+test('an inactive older block with the same name never receives the active block actual',()=>{
+ const {db,registry}=fixture();try{
+  db.exec("INSERT INTO _blocks(id,nama,divisi,active,luas_ha) VALUES('inactive-d04','D04','Pisang',0,2.463)");
+  const p=previewPlantingSync(db,registry,'2026-11-09');assert.equal(p.statements.length,1);assert.equal(p.statements[0].block_id,'gis-D04');assert.equal(p.statements[0].group_id,registry.plantings()[0].id);assert.equal(p.statements[0].reason,null);
+ }finally{db.close();}
+});
