@@ -50,3 +50,6 @@ test('capped and backdated land results keep grouped HK proportional without dup
  assert.equal(rows[0].realisasi,.01);assert.equal(rows.reduce((s,r)=>s+r.hk_realisasi,0),3);assert.ok(Math.abs(rows[0].hk_realisasi-3/7)<1e-6);
  saveDailyLand(db,early,now,insertRow);assert.equal(db.prepare('SELECT count(*) n FROM lahan_harian WHERE daily_report_id=?').get(early).n,1);db.close();
 });
+
+
+test('planting input estimates exclude historical baseline and preserve the saved effective actual',()=>{const c=fixture(),{db,insertRow}=c;insertRow('lahan_blok',{blok:'A',luas_ha:1,peruntukan:'Pisang'});insertRow('lahan_harian',{tanggal:'2026-09-30',blok:'A',aktivitas:'Tanam',hasil_ha:.8,source_key:'baseline:old'});insertRow('lahan_harian',{tanggal:'2026-10-01',blok:'A',aktivitas:'Tanam',hasil_ha:.3,hasil_input_ha:.3});const d=kebunSummary(db,[{nama:'A',divisi:'Pisang',luas_ha:1}],'2026-11-09');const a=d.blocks[0].activity.find(x=>x.name==='Tanam');assert.equal(a.ha,1);assert.equal(a.inputHa,.3);db.close();});
