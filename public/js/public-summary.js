@@ -4,7 +4,7 @@ import {cropLabel} from './crop-labels.js';
 import {progressMarkup} from './progress-matrix.js';
 import {mountClimateChart} from './climate-chart.js';
 import {periodSummaryMarkup,harvestSummaryMarkup} from './period-summary.js';
-import {planSummaryMarkup} from './year-plan.js?v=luas-aktual-20261109';
+import {planSummaryMarkup} from './year-plan.js?v=realisasi-aktual-20261109';
 import {renderPublicDaily} from './daily-public.js';
 import {fullReportControl} from './full-report.js';
 const num=v=>Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2});
