@@ -873,7 +873,7 @@ export function susunRencana(c, mulai) {
       // prioritas: alat/tim kegiatan ini menunggu sampai blok berprioritas lebih kecil tidak punya sisa pekerjaan dengan alat itu
       if (b.kelas && blok.some((c, j) => c.kelas < b.kelas && lanjut[j] >= 0 && c.sisa.some((h, kk) => kk >= lanjut[j] && h > 0.005 && info[kk].alat === info[k].alat))) return;
       if (b.kelas >= 10 && blok.some((other, j) => other.kelas < b.kelas && lanjut[j] >= 0)) return;
-      const kelompokSelesai = b.kelas >= 10 ? Math.max(0, ...blok.map((other, j) => other.kelas < b.kelas ? selesaiBlok[j] : 0)) : 0;
+      const kelompokSelesai = b.kelas >= 10 ? Math.ceil(Math.max(0, ...blok.map((other, j) => other.kelas < b.kelas ? selesaiBlok[j] : 0)) - 1e-9) : 0;
       const s = masuk(Math.max(bebas[info[k].alat] || 0, siap[i], kelompokSelesai), info[k].kerja);
       calon.push({ i, k, s });
       if (!pilih || s < pilih.s - 1e-9 || (Math.abs(s - pilih.s) <= 1e-9 && (i < pilih.i || (i === pilih.i && k < pilih.k)))) pilih = { i, k, s };
