@@ -858,7 +858,7 @@ export function susunRencana(c, mulai) {
   // bisa mulai (alat bebas & kegiatan sebelumnya di blok itu selesai); seri → prioritas blok, lalu urutan kegiatan.
   const alatOf = (a) => {const machine=alatDefault(a.aktivitas)||String(a.alat||'').trim();return machine?'alat:'+util.key(machine):'akt:'+a.aktivitas;};
   const info = acts.map((a) => ({ a, kerja: hariKerjaAkt(a), dph: dphTim(c, a), alat: alatOf(a) }));
-  const bebas = {}, siap = blok.map(b=>b.earliest?Math.max(0,Math.round((util.d(b.earliest)-t0)/86400000)):0), lanjut = blok.map((b) => b.sisa.findIndex((h) => h > 0.005)), rows = [];
+  const bebas = {}, siap = blok.map(b=>b.earliest?Math.max(0,Math.round((util.d(b.earliest)-t0)/86400000)):0), selesaiBlok = blok.map(() => 0), lanjut = blok.map((b) => b.sisa.findIndex((h) => h > 0.005)), rows = [];
   // rotasi alat (user): kegiatan dengan Urutan Blok "Blok terdekat" (default Land Clearing) pindah ke blok TERDEKAT di peta di antara
   // blok yang sama-sama siap (Prioritas blok sama; bulan target diabaikan). Posisi awal = blok terakhir yang dikerjakan di Progres Harian.
   // Kegiatan lain (mis. traktor) tetap mendahulukan blok yang paling dekat jadwal tanamnya.
@@ -872,7 +872,9 @@ export function susunRencana(c, mulai) {
       const k = lanjut[i]; if (k < 0) return;
       // prioritas: alat/tim kegiatan ini menunggu sampai blok berprioritas lebih kecil tidak punya sisa pekerjaan dengan alat itu
       if (b.kelas && blok.some((c, j) => c.kelas < b.kelas && lanjut[j] >= 0 && c.sisa.some((h, kk) => kk >= lanjut[j] && h > 0.005 && info[kk].alat === info[k].alat))) return;
-      const s = masuk(Math.max(bebas[info[k].alat] || 0, siap[i]), info[k].kerja);
+      if (b.kelas >= 10 && blok.some((other, j) => other.kelas < b.kelas && lanjut[j] >= 0)) return;
+      const kelompokSelesai = b.kelas >= 10 ? Math.max(0, ...blok.map((other, j) => other.kelas < b.kelas ? selesaiBlok[j] : 0)) : 0;
+      const s = masuk(Math.max(bebas[info[k].alat] || 0, siap[i], kelompokSelesai), info[k].kerja);
       calon.push({ i, k, s });
       if (!pilih || s < pilih.s - 1e-9 || (Math.abs(s - pilih.s) <= 1e-9 && (i < pilih.i || (i === pilih.i && k < pilih.k)))) pilih = { i, k, s };
     });
@@ -884,7 +886,7 @@ export function susunRencana(c, mulai) {
     }
     const { i, k, s } = pilih, b = blok[i], x = info[k], ha = b.sisa[k];
     const e = maju(s, ha * x.dph, x.kerja);
-    bebas[x.alat] = e; siap[i] = e;
+    bebas[x.alat] = e; siap[i] = e; selesaiBlok[i] = e;
     if (pos.has(util.key(b.blok))) posAlat[x.alat] = pos.get(util.key(b.blok));
     let nk = k + 1; while (nk < acts.length && b.sisa[nk] <= 0.005) nk++;
     lanjut[i] = nk < acts.length ? nk : -1;
