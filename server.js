@@ -1063,6 +1063,20 @@ async function api(req, res, url) {
       log('unggah foto', 'daily_photo', id, { report_id: report.id, divisi: report.divisi, expires_at: expires });
       return send(res, 200, { id, url: `/api/daily/photo/${id}`, expires_at: expires });
     }
+    if (m === 'PUT' && parts[2] === 'photo' && parts[3] && !parts[4]) {
+      const photo = db.prepare('SELECT * FROM daily_photo WHERE id=?').get(Number(parts[3]));
+      const report = photo && db.prepare('SELECT * FROM daily_report WHERE id=?').get(photo.report_id);
+      if (!photo || !report || photo.deleted_at || photoExpired(photo) || !photo.lokasi) return send(res, 404, { error: 'Foto tidak tersedia' });
+      if (!canDaily(user, report.divisi)) return send(res, 403, { error: 'Tidak diizinkan' });
+      const b=await readBody(req);
+      if(typeof b.caption!=='string'||b.caption.length>200)return send(res,400,{error:'Keterangan maksimal 200 karakter.'});
+      if(typeof b.updated_at!=='string'||b.updated_at!==photo.updated_at)return send(res,409,{error:'Foto telah berubah. Muat ulang laporan sebelum menyimpan keterangan.'});
+      const previous=Date.parse(photo.updated_at||'');
+    const caption=textLimit(b.caption,200),updated=new Date(Math.max(Date.now(),Number.isFinite(previous)?previous+1:0)).toISOString();
+      db.prepare('UPDATE daily_photo SET caption=?,updated_at=? WHERE id=?').run(caption,updated,photo.id);
+      log('revisi keterangan foto','daily_photo',photo.id,{report_id:report.id,divisi:report.divisi,sebelum:photo.caption,sesudah:caption});
+      return send(res,200,{id:photo.id,caption,updated_at:updated});
+    }
     if (m === 'DELETE' && parts[2] === 'photo' && parts[3]) {
       const photo = db.prepare('SELECT * FROM daily_photo WHERE id=?').get(Number(parts[3]));
       const report = photo && db.prepare('SELECT * FROM daily_report WHERE id=?').get(photo.report_id);
