@@ -1,5 +1,15 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';
 import {ownerWeeklyWork,selectOwnerPhotos,weeklyWorkSections} from '../lib/owner-weekly.js';
+test('equivalent named activities are combined in reports without mixing units or changing saved rows',()=>{
+ const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE lahan_harian(tanggal TEXT,aktivitas TEXT,hasil_ha REAL,diganti_aktual INTEGER,source_key TEXT)');
+ const items=[{aktivitas:'Aplikasi dolomite',blok:'A',satuan:'ha',realisasi:.2},{aktivitas:'Aplikasi kapur dolomite',blok:'B',satuan:'ha',realisasi:.3},{aktivitas:'Boster LOB',blok:'N',satuan:'HK',realisasi:2},{aktivitas:'Booster LOB bibit',blok:'N',satuan:'HK',realisasi:3},{aktivitas:'Booster LOB bibit',blok:'N',satuan:'pokok',realisasi:100},{aktivitas:'Bajak 1',blok:'A',satuan:'ha',realisasi:.2}];
+ const reports=[{id:1,status:'Selesai',tanggal:'2026-11-10',divisi:'Pisang',items}],before=JSON.stringify(reports);
+ const rows=ownerWeeklyWork({db,from:'2026-11-09',to:'2026-11-15',reports});
+ assert.equal(rows.find(x=>x.activity==='Aplikasi kapur dolomite').actual,.5);
+ assert.equal(rows.find(x=>x.activity==='Booster LOB'&&x.unit==='HK').actual,5);
+ assert.equal(rows.find(x=>x.activity==='Booster LOB'&&x.unit==='pokok').actual,100);
+ assert.equal(JSON.stringify(reports),before);db.close();
+});
 test('owner weekly totals sum daily actuals, deduplicate weekly block targets, separate units and exclude drafts',()=>{
  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE lahan_harian(tanggal TEXT,aktivitas TEXT,hasil_ha REAL,diganti_aktual INTEGER,source_key TEXT)');
  const item=(blok,realisasi,hasil_sdhi,target=10,satuan='ha')=>({blok,aktivitas:'Panen padi',realisasi,hasil_sdhi,target,satuan,target_hk_minggu:8,hk_realisasi:2});

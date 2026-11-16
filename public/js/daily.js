@@ -1,4 +1,5 @@
 import {activityKey,parseGroups} from './daily-work.js';
+import {reportActivity} from './report-activity.js';
 import {dailyHKMarkup} from './daily-hk.js';
 import { reportActions, planShare } from './report-sharing.js';
 import { quickDaily } from './daily-quick.js';
@@ -61,8 +62,8 @@ export function ownerTable(reports, query = '') {
   const grouped = new Map();
   for (const x of ownerRows(reports).filter(x=>!query || [x.aktivitas,x.blok,x.report.tanggal,x.report.divisi].join(' ').toLowerCase().includes(query.toLowerCase()))) {
     if (!has(x.realisasi) && !has(x.hk_realisasi)) continue;
-    const key=[x.report.tanggal,x.report.divisi,String(x.aktivitas).toLowerCase().replace(/\s/g,''),String(x.satuan||'').toLowerCase()].join('|');
-    const g=grouped.get(key)||{...x,blocks:new Set(),notes:new Set(),realisasi:null,hasil_sdhi:null,target:null,target_hk_minggu:null,hk_realisasi:null,cumulative:{hasil_sdhi:new Map(),target:new Map(),target_hk_minggu:new Map()}};
+    const activity=reportActivity(x.aktivitas),key=[x.report.tanggal,x.report.divisi,activity.toLowerCase().replace(/\s/g,''),String(x.satuan||'').toLowerCase()].join('|');
+    const g=grouped.get(key)||{...x,aktivitas:activity,blocks:new Set(),notes:new Set(),realisasi:null,hasil_sdhi:null,target:null,target_hk_minggu:null,hk_realisasi:null,cumulative:{hasil_sdhi:new Map(),target:new Map(),target_hk_minggu:new Map()}};
     String(x.blok||'').split(/\s*,\s*/).filter(Boolean).forEach(b=>g.blocks.add(b));
     if(x.keterangan)g.notes.add(x.keterangan);
     for(const k of ['realisasi','hk_realisasi'])if(has(x[k]))g[k]=(g[k]??0)+Number(x[k]);
