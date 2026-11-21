@@ -18,7 +18,7 @@ import {kebunPlan} from './lib/kebun-plan.js';
 import {summaryPeriods} from './lib/summary-periods.js';
 import {cloudOverview,cloudOverviewPeriods} from './lib/cloud-overview.js';
 import {weeklyLand} from './lib/weekly-targets.js';
-import { importLand, capLandRows, landAreas, landStages, saveDailyLand, stageForDaily, registerHistoricalDailyCoverage } from './lib/land-actual.js';
+import { importLand, capLandRows, landAreas, landStages, saveDailyLand, stageForDaily, registerHistoricalDailyCoverage, reconcileManualLand } from './lib/land-actual.js';
 import { kebunSummary } from './lib/kebun-summary.js';
 import { removeDuplicateParcelLayer } from './lib/gis-deduplicate.js';
 import { createParcelLocations } from './lib/gis-ownership.js';
@@ -1109,12 +1109,13 @@ async function api(req, res, url) {
       const sameHistoricalItem = x => old && old.tanggal === b.tanggal && old.divisi === divisi && previousItems.some(p=>Number(p.id)===Number(x.id) && util.key(p.blok)===util.key(x.blok));
       if ((b.items || []).some(x=>!ownedNames.has(util.key(x.blok)) && !sameHistoricalItem(x))) return send(res,400,{error:'Kegiatan baru harus memakai blok GIS aktif. Lokasi data historis yang sama dapat dilengkapi.'});
       const status = ['Rencana Dikirim', 'Selesai'].includes(b.status) ? b.status : b.status === 'Dikirim' ? 'Selesai' : 'Draf';
+      if(b.reconcile_manual_land && (!isAdmin(user)||!b.workflow_v2||!old||old.status!=='Draf'||status!=='Selesai'))return send(res,403,{error:'Pencocokan progres hanya untuk admin saat menyelesaikan draf.'});
       const rencanaAt = status !== 'Draf' ? old?.rencana_at || now() : old?.rencana_at || null;
       const selesaiAt = status === 'Selesai' ? now() : old?.selesai_at || null;
       if(b.apel_hadir!==''&&b.apel_hadir!=null&&(!Number.isFinite(Number(b.apel_hadir))||Number(b.apel_hadir)<0))return send(res,400,{error:'Total HK mandor harus angka nol atau lebih.'});
       const penginput = user.nama || user.username;
       const values = [b.tanggal, divisi, null, textLimit(b.siklus, 100), status, null, null, numberOrNull(b.apel_hadir), textLimit(b.apel_catatan, 2000), textLimit(b.kendala, 2000), textLimit(b.tindak_lanjut, 2000), selesaiAt, rencanaAt, selesaiAt, penginput];
-      let reportId,landResult={adjusted:0};
+      let reportId,landResult={adjusted:0},reconciledLand=null;
       tx(() => {
         registerHistoricalDailyCoverage(db,now);
         if (old) {
@@ -1138,11 +1139,13 @@ async function api(req, res, url) {
           else {const ref=blocks.canonical('daily_item',{blok:x.blok});if(ref.block_refs_snapshot)db.prepare('UPDATE daily_item SET block_refs_snapshot=? WHERE id=?').run(ref.block_refs_snapshot,Number(inserted.lastInsertRowid));}
         }
         db.prepare('UPDATE daily_report SET hk_kegiatan=? WHERE id=?').run(activityGroups?JSON.stringify(activityGroups):null,reportId);
+        if(b.reconcile_manual_land)reconciledLand=reconcileManualLand(db,reportId,b.reconcile_manual_land,now);
         landResult=saveDailyLand(db,reportId,now,insertRow);
         if(activityGroups)reallocateEffectiveHK(db,reportId,activityGroups,status==='Selesai');
       });
       blocks.linkTable('daily_item');blocks.linkTable('lahan_harian');
       log(old ? 'ubah' : 'tambah', 'daily_report', reportId, { tanggal: b.tanggal, divisi, status, jumlah_kegiatan: (b.items || []).length });
+      if(reconciledLand)log('cocokkan progres dengan Daily','lahan_harian',reconciledLand.manual_id,reconciledLand);
       const savedResponse={...dailyPayload(db.prepare('SELECT * FROM daily_report WHERE id=?').get(reportId)),adjusted_land_items:landResult.adjusted};
       if(submissionKey)db.prepare('INSERT INTO _daily_submissions VALUES(?,?,?,?,?)').run(submissionKey,user.id,submissionHash,JSON.stringify(savedResponse),now());
       return send(res,200,savedResponse);
@@ -1623,7 +1626,7 @@ function readScope(req,url){
 
   if(p==='/api/reference-login'&&req.method==='POST')return [...authTables,'_gis_reference_tokens'];
   if((req.method==='POST'&&['/api/login','/api/logout'].includes(p))||(req.method==='GET'&&['/api/me','/api/settings','/api/excel/status','/api/backups'].includes(p)))return authTables;
-  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','_gis_planting_revisions','_gis_commodities','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
+  if(req.method==='POST'&&p==='/api/daily')return [...authTables,'_gis_block_versions','_gis_plantings','_gis_planting_revisions','_gis_commodities','lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok','gis_layer','_blocks','_block_links','_log','_import_revisions','_daily_revisions','_land_daily_covered','_land_schedule_revisions','_land_week_plan_snapshots','daily_report','daily_item','daily_photo','daily_week_plan','daily_week_item','_daily_submissions'];
   if(req.method!=='GET')return null;
   const land=['lahan_blok','lahan_harian','lahan_aktivitas','lahan_target','lahan_rencana','pisang_blok'];
   if(p==='/api/tables')return authTables;
